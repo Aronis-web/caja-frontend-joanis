@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "CajaFrontendJoanis",
+    "slug": "caja-frontend-joanis",
+    "scheme": "caja-frontend-joanis",
+    "version": "0.0.1",
+    "orientation": "default",
+    "userInterfaceStyle": "automatic",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.cajafrontend.joanis"
+    },
+    "android": {
+      "package": "com.cajafrontend.joanis",
+      "icon": "./assets/icon.png",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "permissions": [
+        "INTERNET"
+      ],
+      "softwareKeyboardLayoutMode": "pan",
+      "userInterfaceStyle": "automatic"
+    },
+    "extra": {
+      "apiUrl": "@env:API_URL",
+      "eas": {
+        "projectId": "your-project-id-here"
+      }
+    },
+    "plugins": [
+      "expo-font",
+      "expo-secure-store"
+    ]
+  }
+}

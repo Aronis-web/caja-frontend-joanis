@@ -1,0 +1,13 @@
+.expo/
+node_modules/
+*.log
+.expo-shared/
+
+# Environment variables - NEVER commit these files
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+web-build/
