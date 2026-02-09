@@ -38,12 +38,14 @@
     "extra": {
       "apiUrl": "@env:API_URL",
       "eas": {
-        "projectId": "your-project-id-here"
+        "projectId": "f092a6ab-4d46-4c88-8bdb-9e6c9a7d2a94"
       }
     },
     "plugins": [
       "expo-font",
-      "expo-secure-store"
-    ]
+      "expo-secure-store",
+      "expo-dev-client"
+    ],
+    "owner": "elnero"
   }
 }
