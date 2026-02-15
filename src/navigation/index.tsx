@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuthStore } from '@/store/auth';
@@ -14,7 +14,7 @@ import HomeScreen from '@/screens/Home/HomeScreen';
 const AuthStackNavigator = createNativeStackNavigator<AuthStackParamList>();
 const MainStackNavigator = createNativeStackNavigator<MainStackParamList>();
 
-const AuthStack = React.memo(() => {
+const AuthStack = React.memo(function AuthStack() {
   return (
     <AuthStackNavigator.Navigator
       screenOptions={{ headerShown: false }}
@@ -25,7 +25,7 @@ const AuthStack = React.memo(() => {
   );
 });
 
-const MainStack = React.memo(() => {
+const MainStack = React.memo(function MainStack() {
   return (
     <MainStackNavigator.Navigator screenOptions={{ headerShown: false }}>
       <MainStackNavigator.Screen name={MAIN_ROUTES.HOME} component={HomeScreen} />
@@ -35,21 +35,8 @@ const MainStack = React.memo(() => {
 
 export const Navigation = () => {
   const { isAuthenticated } = useAuthStore();
-  const [isReady, setIsReady] = useState(false);
-
-  useEffect(() => {
-    setIsReady(true);
-  }, []);
-
-  if (!isReady) {
-    return null;
-  }
 
   return (
-    <NavigationContainer>
-      {isAuthenticated ? <MainStack /> : <AuthStack />}
-    </NavigationContainer>
+    <NavigationContainer>{isAuthenticated ? <MainStack /> : <AuthStack />}</NavigationContainer>
   );
 };
-
-export default Navigation;

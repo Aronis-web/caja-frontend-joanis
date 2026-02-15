@@ -1,91 +1,55 @@
 import React from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  useWindowDimensions,
-} from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useAuthStore } from '@/store/auth';
-import { useScreenTracking } from '@/hooks/useScreenTracking';
 import { Ionicons } from '@expo/vector-icons';
+import { useAuthStore } from '@/store/auth';
 
 interface HomeScreenProps {
-  navigation: any;
+  navigation?: any;
 }
 
-export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
-  useScreenTracking('HomeScreen', 'HomeScreen');
-
+export const HomeScreen: React.FC<HomeScreenProps> = () => {
   const { user, logout } = useAuthStore();
-  const { width, height } = useWindowDimensions();
-
-  const isTablet = width >= 768 || height >= 768;
-  const isLandscape = width > height;
 
   const handleLogout = async () => {
     await logout();
   };
 
-  const getUserInitials = (name: string) => {
-    return name
-      .split(' ')
-      .map((word) => word[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
-  };
-
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.backgroundPattern}>
-        <View style={styles.circle1} />
-        <View style={styles.circle2} />
-        <View style={styles.circle3} />
+      <View style={styles.header}>
+        <View style={styles.logoContainer}>
+          <View style={styles.logoInner}>
+            <Text style={styles.logo}>CG</Text>
+          </View>
+        </View>
+        <Text style={styles.title}>Caja Grit</Text>
+        <Text style={styles.subtitle}>Sistema de Punto de Venta</Text>
       </View>
 
-      <View
-        style={[
-          styles.content,
-          isTablet && styles.contentTablet,
-          isTablet && isLandscape && styles.contentTabletLandscape,
-        ]}
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerLeft}>
-            <View style={[styles.avatarPlaceholder, isTablet && styles.avatarPlaceholderTablet]}>
-              <Text style={[styles.avatarText, isTablet && styles.avatarTextTablet]}>
-                {user?.name ? getUserInitials(user.name) : 'U'}
-              </Text>
-            </View>
-            <View style={styles.userInfo}>
-              <Text style={[styles.welcomeText, isTablet && styles.welcomeTextTablet]}>
-                Bienvenido
-              </Text>
-              <Text style={[styles.userName, isTablet && styles.userNameTablet]}>
-                {user?.name || 'Usuario'}
-              </Text>
-            </View>
-          </View>
-          <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-            <Ionicons name="log-out-outline" size={24} color="#FF6B6B" />
-          </TouchableOpacity>
+      <View style={styles.content}>
+        <View style={styles.welcomeCard}>
+          <Ionicons name="person-circle-outline" size={64} color="#6366F1" />
+          <Text style={styles.welcomeText}>Bienvenido</Text>
+          <Text style={styles.userName}>{user?.name || 'Usuario'}</Text>
+          <Text style={styles.userEmail}>{user?.email}</Text>
         </View>
 
-        {/* Main Content - Blank */}
-        <View style={styles.mainContent}>
-          <View style={styles.emptyState}>
-            <Ionicons name="home-outline" size={80} color="#DCC8FF" />
-            <Text style={[styles.emptyTitle, isTablet && styles.emptyTitleTablet]}>
-              Página de Inicio
-            </Text>
-            <Text style={[styles.emptySubtitle, isTablet && styles.emptySubtitleTablet]}>
-              Esta es tu página principal
-            </Text>
-          </View>
+        <View style={styles.infoCard}>
+          <Ionicons name="information-circle-outline" size={32} color="#6366F1" />
+          <Text style={styles.infoTitle}>Proyecto en Desarrollo</Text>
+          <Text style={styles.infoText}>
+            Esta es la pantalla principal de Caja Grit. Las funcionalidades del sistema de punto de
+            venta se agregarán próximamente.
+          </Text>
         </View>
+      </View>
+
+      <View style={styles.footer}>
+        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} activeOpacity={0.8}>
+          <Ionicons name="log-out-outline" size={20} color="#FFFFFF" />
+          <Text style={styles.logoutButtonText}>Cerrar Sesión</Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -94,133 +58,124 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#F8FAFC',
+  },
+  header: {
+    alignItems: 'center',
+    paddingVertical: 32,
     backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
   },
-  backgroundPattern: {
-    position: 'absolute',
-    width: '100%',
-    height: '100%',
+  logoContainer: {
+    marginBottom: 16,
   },
-  circle1: {
-    position: 'absolute',
-    width: 300,
-    height: 300,
-    borderRadius: 150,
-    backgroundColor: '#DCC8FF',
-    opacity: 0.05,
-    top: -100,
-    right: -100,
+  logoInner: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: '#6366F1',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#6366F1',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 6,
   },
-  circle2: {
-    position: 'absolute',
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: '#1ECAD0',
-    opacity: 0.05,
-    bottom: -50,
-    left: -50,
+  logo: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 1,
   },
-  circle3: {
-    position: 'absolute',
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-    backgroundColor: '#DCC8FF',
-    opacity: 0.05,
-    top: '50%',
-    right: -75,
+  title: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginBottom: 4,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#64748B',
+    fontWeight: '500',
   },
   content: {
     flex: 1,
-    paddingHorizontal: 24,
+    padding: 24,
   },
-  contentTablet: {
-    paddingHorizontal: 48,
-  },
-  contentTabletLandscape: {
-    paddingHorizontal: 64,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  welcomeCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 32,
     alignItems: 'center',
-    paddingVertical: 20,
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  avatarPlaceholder: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#DCC8FF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  avatarPlaceholderTablet: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-  },
-  avatarText: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1F2A44',
-  },
-  avatarTextTablet: {
-    fontSize: 22,
-  },
-  userInfo: {
-    justifyContent: 'center',
+    marginBottom: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
   },
   welcomeText: {
-    fontSize: 14,
-    color: '#4B587C',
-  },
-  welcomeTextTablet: {
-    fontSize: 16,
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 16,
   },
   userName: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1F2A44',
-  },
-  userNameTablet: {
-    fontSize: 22,
-  },
-  logoutButton: {
-    padding: 8,
-  },
-  mainContent: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  emptyState: {
-    alignItems: 'center',
-    paddingHorizontal: 40,
-  },
-  emptyTitle: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#1F2A44',
-    marginTop: 24,
-    marginBottom: 8,
-    textAlign: 'center',
+    color: '#1E293B',
+    marginTop: 8,
   },
-  emptyTitleTablet: {
-    fontSize: 32,
+  userEmail: {
+    fontSize: 14,
+    color: '#94A3B8',
+    marginTop: 4,
   },
-  emptySubtitle: {
-    fontSize: 16,
-    color: '#4B587C',
-    textAlign: 'center',
+  infoCard: {
+    backgroundColor: '#EEF2FF',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
   },
-  emptySubtitleTablet: {
+  infoTitle: {
     fontSize: 18,
+    fontWeight: '600',
+    color: '#4338CA',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  infoText: {
+    fontSize: 14,
+    color: '#6366F1',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  footer: {
+    padding: 24,
+  },
+  logoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EF4444',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  logoutButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8,
   },
 });
 

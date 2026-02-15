@@ -1,4 +1,3 @@
-# Project-Level Rules
 # SWEEP.md - Reglas y Configuración del Proyecto
 
 ## Reglas de Git
@@ -80,10 +79,8 @@ npm run validate
 ### Arquitectura
 - `src/app/` - Punto de entrada
 - `src/screens/` - Pantallas de la aplicación
-- `src/components/` - Componentes reutilizables
 - `src/navigation/` - Configuración de navegación
 - `src/store/` - Estado global (Zustand)
 - `src/services/` - Servicios (API, Auth)
 - `src/utils/` - Utilidades
-- `src/theme/` - Tema y estilos
 - `src/types/` - Tipos TypeScript

@@ -1,18 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { config } from '@/utils/config';
 import secureStorage from '@/utils/secureStorage';
-import {
-  LoginRequest,
-  LoginResponse,
-  RefreshTokenResponse,
-  User,
-  AuthError,
-  AuthErrorData,
-} from '@/types/auth';
+import { LoginResponse, RefreshTokenResponse, AuthError } from '@/types/auth';
 
-/**
- * AuthService - Handles all authentication operations
- */
 class AuthService {
   private readonly appId = config.APP_ID;
   private readonly baseUrl = config.API_URL;
@@ -25,9 +15,6 @@ class AuthService {
     this.restoreAuth();
   }
 
-  /**
-   * Login with email and password
-   */
   async login(email: string, password: string): Promise<LoginResponse> {
     try {
       const response = await fetch(`${this.baseUrl}/auth/login`, {
@@ -46,37 +33,6 @@ class AuthService {
 
       const data: LoginResponse = await response.json();
 
-      // If user doesn't have permissions, fetch them
-      if (data.user && (!data.user.permissions || data.user.permissions.length === 0)) {
-        try {
-          console.log('Fetching user permissions after login...');
-          const permissionsResponse = await fetch(
-            `${this.baseUrl}/iam/users/${data.user.id}/effective-permissions`,
-            {
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${data.accessToken}`,
-                'X-App-Id': this.appId,
-              },
-            }
-          );
-
-          if (permissionsResponse.ok) {
-            const permissions = await permissionsResponse.json();
-            if (Array.isArray(permissions)) {
-              data.user.permissions = permissions;
-              console.log('User permissions loaded:', permissions.length, 'permissions');
-            }
-          } else {
-            console.warn('Failed to fetch permissions:', permissionsResponse.status);
-            data.user.permissions = [];
-          }
-        } catch (permError) {
-          console.warn('Error fetching permissions during login:', permError);
-          data.user.permissions = [];
-        }
-      }
-
       // Store tokens and user data
       await this.storeAuthData(data);
 
@@ -89,12 +45,9 @@ class AuthService {
     }
   }
 
-  /**
-   * Refresh access token
-   */
   async refreshToken(): Promise<RefreshTokenResponse> {
     if (this.refreshPromise) {
-      console.log('🔄 Token refresh already in progress, reusing existing promise');
+      console.log('🔄 Token refresh already in progress');
       return this.refreshPromise;
     }
 
@@ -108,9 +61,6 @@ class AuthService {
     }
   }
 
-  /**
-   * Internal method to perform the actual token refresh
-   */
   private async performTokenRefresh(): Promise<RefreshTokenResponse> {
     try {
       console.log('🔄 Starting token refresh...');
@@ -135,13 +85,11 @@ class AuthService {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        console.error('❌ Token refresh failed:', response.status, errorData.message);
+        console.error('❌ Token refresh failed:', response.status);
         throw this.createAuthError(response.status, errorData.message || 'Token refresh failed');
       }
 
       const data: RefreshTokenResponse = await response.json();
-
-      // Update stored tokens
       await this.updateTokens(data);
 
       console.log('✅ Token refresh successful');
@@ -155,9 +103,6 @@ class AuthService {
     }
   }
 
-  /**
-   * Logout user
-   */
   async logout(): Promise<void> {
     try {
       await fetch(`${this.baseUrl}/auth/logout`, {
@@ -173,42 +118,18 @@ class AuthService {
     }
   }
 
-  /**
-   * Get current access token
-   */
   getAccessToken(): string | null {
     return this.accessToken;
   }
 
-  /**
-   * Manually set access token
-   */
   setAccessToken(token: string | null): void {
     this.accessToken = token;
-    console.log('🔐 AuthService: Token manually set, length:', token?.length);
   }
 
-  /**
-   * Check if user is authenticated
-   */
   isAuthenticated(): boolean {
     return !!this.accessToken && !this.isTokenExpired();
   }
 
-  /**
-   * Check if token should be refreshed
-   */
-  shouldRefreshToken(): boolean {
-    if (!this.tokenExpiresAt) {
-      return false;
-    }
-    const fiveMinutes = 5 * 60 * 1000;
-    return Date.now() >= this.tokenExpiresAt - fiveMinutes;
-  }
-
-  /**
-   * Check if token is expired
-   */
   isTokenExpired(): boolean {
     if (!this.tokenExpiresAt) {
       return false;
@@ -216,17 +137,12 @@ class AuthService {
     return Date.now() >= this.tokenExpiresAt;
   }
 
-  /**
-   * Store authentication data
-   */
   private async storeAuthData(data: LoginResponse): Promise<void> {
     this.accessToken = data.accessToken;
     this.refreshTokenValue = data.refreshToken;
     this.tokenExpiresAt = data.accessTokenExpiresIn
       ? Date.now() + data.accessTokenExpiresIn * 1000
       : null;
-
-    console.log('🔐 AuthService: Storing auth data, token length:', this.accessToken?.length);
 
     try {
       await secureStorage.setItem(config.STORAGE_KEYS.AUTH_TOKEN, data.accessToken);
@@ -237,16 +153,12 @@ class AuthService {
           this.tokenExpiresAt.toString()
         );
       }
-
       await AsyncStorage.setItem(config.STORAGE_KEYS.USER, JSON.stringify(data.user));
     } catch (error) {
       console.error('Failed to store auth data:', error);
     }
   }
 
-  /**
-   * Update tokens after refresh
-   */
   private async updateTokens(data: RefreshTokenResponse): Promise<void> {
     this.accessToken = data.accessToken;
     this.refreshTokenValue = data.refreshToken;
@@ -270,9 +182,6 @@ class AuthService {
     }
   }
 
-  /**
-   * Clear authentication data
-   */
   private async clearAuthData(): Promise<void> {
     this.accessToken = null;
     this.refreshTokenValue = null;
@@ -288,35 +197,25 @@ class AuthService {
     }
   }
 
-  /**
-   * Restore authentication from storage
-   */
   private async restoreAuth(): Promise<void> {
     try {
       const token = await secureStorage.getItem(config.STORAGE_KEYS.AUTH_TOKEN);
       const refreshToken = await secureStorage.getItem(config.STORAGE_KEYS.REFRESH_TOKEN);
       const tokenExpiresAtStr = await secureStorage.getItem(config.STORAGE_KEYS.TOKEN_EXPIRES_AT);
 
-      console.log('🔐 AuthService: Restoring auth from storage, has token:', !!token);
-
       if (token) {
         this.accessToken = token;
         this.refreshTokenValue = refreshToken;
         this.tokenExpiresAt = tokenExpiresAtStr ? parseInt(tokenExpiresAtStr, 10) : null;
 
-        console.log('🔐 AuthService: Token restored, length:', this.accessToken?.length);
-
         if (this.isTokenExpired() && this.refreshTokenValue) {
           try {
-            console.log('🔐 AuthService: Token expired, attempting refresh...');
             await this.refreshToken();
           } catch (error) {
-            console.error('🔐 AuthService: Token refresh failed, clearing auth:', error);
+            console.error('Token refresh failed, clearing auth:', error);
             await this.clearAuthData();
           }
         }
-      } else {
-        console.log('🔐 AuthService: No token found in storage');
       }
     } catch (error) {
       console.error('Failed to restore auth:', error);
@@ -324,11 +223,14 @@ class AuthService {
     }
   }
 
-  /**
-   * Create standardized auth error
-   */
   private createAuthError(status: number, message: string): AuthError {
-    let code: AuthErrorData['code'] = 'SERVER_ERROR';
+    let code:
+      | 'INVALID_CREDENTIALS'
+      | 'TOKEN_EXPIRED'
+      | 'TOKEN_INVALID'
+      | 'FORBIDDEN'
+      | 'NETWORK_ERROR'
+      | 'SERVER_ERROR' = 'SERVER_ERROR';
 
     switch (status) {
       case 400:
@@ -349,6 +251,5 @@ class AuthService {
   }
 }
 
-// Export singleton instance
 export const authService = new AuthService();
 export default authService;

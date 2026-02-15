@@ -14,22 +14,19 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/store/auth';
-import { useTenantStore } from '@/store/tenant';
-import { AUTH_ROUTES } from '@/constants/routes';
 
 interface LoginScreenProps {
-  navigation: any;
+  navigation?: any;
 }
 
-export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
+export const LoginScreen: React.FC<LoginScreenProps> = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const { width, height } = useWindowDimensions();
 
-  const { loginWithCredentials, isLoading, error, isAuthenticated } = useAuthStore();
-  const { clearTenantContext } = useTenantStore();
+  const { loginWithCredentials, isLoading, error } = useAuthStore();
 
   const isTablet = width >= 768 || height >= 768;
   const isLandscape = width > height;
@@ -50,10 +47,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
         return;
       }
 
-      console.log('✅ Login exitoso, limpiando contexto de tenant...');
-      await clearTenantContext();
-
-      console.log('✅ Login completado - La navegación se manejará automáticamente');
+      console.log('✅ Login exitoso');
     } catch (error) {
       console.error('❌ Error en handleLogin:', error);
       Alert.alert('Error', 'No se pudo conectar al servidor');
@@ -95,7 +89,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
                     isTablet && isLandscape && styles.logoLandscape,
                   ]}
                 >
-                  CJ
+                  CG
                 </Text>
               </View>
             </View>
@@ -115,95 +109,134 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
                 isTablet && isLandscape && styles.subtitleLandscape,
               ]}
             >
-              Inicia sesión para continuar
+              Inicia sesión en Caja Grit
             </Text>
           </View>
 
-          <View style={[styles.form, isTablet && styles.formTablet]}>
+          <View
+            style={[
+              styles.form,
+              isTablet && styles.formTablet,
+              isTablet && isLandscape && styles.formLandscape,
+            ]}
+          >
             <View style={styles.inputContainer}>
-              <Ionicons name="mail-outline" size={20} color="#4B587C" style={styles.inputIcon} />
-              <TextInput
-                style={[styles.input, isTablet && styles.inputTablet]}
-                placeholder="Correo electrónico"
-                placeholderTextColor="#9E9E9E"
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-            </View>
-
-            <View style={styles.inputContainer}>
-              <Ionicons
-                name="lock-closed-outline"
-                size={20}
-                color="#4B587C"
-                style={styles.inputIcon}
-              />
-              <TextInput
-                style={[styles.input, isTablet && styles.inputTablet]}
-                placeholder="Contraseña"
-                placeholderTextColor="#9E9E9E"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              <TouchableOpacity
-                onPress={() => setShowPassword(!showPassword)}
-                style={styles.eyeIcon}
+              <Text style={[styles.inputLabel, isTablet && styles.inputLabelTablet]}>
+                Correo electrónico
+              </Text>
+              <View
+                style={[
+                  styles.inputWrapper,
+                  isTablet && styles.inputWrapperTablet,
+                  isTablet && isLandscape && styles.inputWrapperLandscape,
+                ]}
               >
-                <Ionicons
-                  name={showPassword ? 'eye-outline' : 'eye-off-outline'}
-                  size={20}
-                  color="#4B587C"
+                <TextInput
+                  style={[
+                    styles.input,
+                    isTablet && styles.inputTablet,
+                    isTablet && isLandscape && styles.inputLandscape,
+                  ]}
+                  placeholder="correo@empresa.com"
+                  placeholderTextColor="#94A3B8"
+                  value={email}
+                  onChangeText={setEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
                 />
-              </TouchableOpacity>
+              </View>
             </View>
 
-            <View style={styles.optionsContainer}>
-              <TouchableOpacity
-                style={styles.rememberMeContainer}
-                onPress={() => setRememberMe(!rememberMe)}
+            <View style={styles.inputContainer}>
+              <Text style={[styles.inputLabel, isTablet && styles.inputLabelTablet]}>
+                Contraseña
+              </Text>
+              <View
+                style={[
+                  styles.inputWrapper,
+                  isTablet && styles.inputWrapperTablet,
+                  isTablet && isLandscape && styles.inputWrapperLandscape,
+                ]}
               >
-                <View style={[styles.checkbox, rememberMe && styles.checkboxChecked]}>
-                  {rememberMe && <Ionicons name="checkmark" size={16} color="#FFFFFF" />}
+                <TextInput
+                  style={[
+                    styles.input,
+                    styles.inputWithIcon,
+                    isTablet && styles.inputTablet,
+                    isTablet && isLandscape && styles.inputLandscape,
+                  ]}
+                  placeholder="Ingresa tu contraseña"
+                  placeholderTextColor="#94A3B8"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  autoCorrect={false}
+                />
+                <TouchableOpacity
+                  style={styles.eyeButton}
+                  onPress={() => setShowPassword(!showPassword)}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons
+                    name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                    size={22}
+                    color="#64748B"
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.rememberMeContainer}>
+              <TouchableOpacity
+                style={styles.checkboxContainer}
+                onPress={() => setRememberMe(!rememberMe)}
+                activeOpacity={0.7}
+              >
+                <View
+                  style={[
+                    styles.checkbox,
+                    rememberMe && styles.checkboxChecked,
+                    isTablet && styles.checkboxTablet,
+                  ]}
+                >
+                  {rememberMe && (
+                    <Ionicons name="checkmark" size={isTablet ? 18 : 16} color="#FFFFFF" />
+                  )}
                 </View>
-                <Text style={styles.rememberMeText}>Recordarme</Text>
+                <Text style={[styles.rememberMeText, isTablet && styles.rememberMeTextTablet]}>
+                  Mantener sesión iniciada
+                </Text>
               </TouchableOpacity>
             </View>
 
             <TouchableOpacity
               style={[
-                styles.loginButton,
-                isTablet && styles.loginButtonTablet,
-                isLoading && styles.loginButtonDisabled,
+                styles.button,
+                isLoading && styles.buttonDisabled,
+                isTablet && styles.buttonTablet,
+                isTablet && isLandscape && styles.buttonLandscape,
               ]}
               onPress={handleLogin}
               disabled={isLoading}
+              activeOpacity={0.9}
             >
-              {isLoading ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text
-                  style={[
-                    styles.loginButtonText,
-                    isTablet && styles.loginButtonTextTablet,
-                  ]}
-                >
-                  Iniciar Sesión
-                </Text>
-              )}
-            </TouchableOpacity>
-
-            {error && (
-              <View style={styles.errorContainer}>
-                <Ionicons name="alert-circle-outline" size={20} color="#FF6B6B" />
-                <Text style={styles.errorText}>{error}</Text>
+              <View style={[styles.buttonInner, isLoading && styles.buttonInnerDisabled]}>
+                {isLoading ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <Text style={[styles.buttonText, isTablet && styles.buttonTextTablet]}>
+                    Iniciar Sesión
+                  </Text>
+                )}
               </View>
-            )}
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.footer}>
+            <Text style={[styles.footerText, isTablet && styles.footerTextTablet]}>
+              © 2024 Caja Grit
+            </Text>
           </View>
         </View>
       </KeyboardAvoidingView>
@@ -214,20 +247,22 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F8FAFC',
   },
   backgroundPattern: {
     position: 'absolute',
-    width: '100%',
-    height: '100%',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    overflow: 'hidden',
   },
   circle1: {
     position: 'absolute',
     width: 300,
     height: 300,
     borderRadius: 150,
-    backgroundColor: '#DCC8FF',
-    opacity: 0.1,
+    backgroundColor: 'rgba(99, 102, 241, 0.08)',
     top: -100,
     right: -100,
   },
@@ -236,9 +271,8 @@ const styles = StyleSheet.create({
     width: 200,
     height: 200,
     borderRadius: 100,
-    backgroundColor: '#1ECAD0',
-    opacity: 0.1,
-    bottom: -50,
+    backgroundColor: 'rgba(139, 92, 246, 0.06)',
+    bottom: 100,
     left: -50,
   },
   circle3: {
@@ -246,31 +280,19 @@ const styles = StyleSheet.create({
     width: 150,
     height: 150,
     borderRadius: 75,
-    backgroundColor: '#DCC8FF',
-    opacity: 0.1,
+    backgroundColor: 'rgba(59, 130, 246, 0.05)',
     top: '50%',
-    left: -75,
+    right: 50,
   },
   content: {
     flex: 1,
     justifyContent: 'center',
-    paddingHorizontal: 24,
-  },
-  contentTablet: {
-    paddingHorizontal: 48,
-    maxWidth: 600,
-    alignSelf: 'center',
-    width: '100%',
-  },
-  contentTabletLandscape: {
-    maxWidth: 500,
+    paddingHorizontal: 32,
+    paddingVertical: 40,
   },
   header: {
     alignItems: 'center',
-    marginBottom: 40,
-  },
-  headerLandscape: {
-    marginBottom: 30,
+    marginBottom: 48,
   },
   logoContainer: {
     marginBottom: 24,
@@ -278,150 +300,240 @@ const styles = StyleSheet.create({
   logoInner: {
     width: 80,
     height: 80,
-    borderRadius: 40,
-    backgroundColor: '#DCC8FF',
+    borderRadius: 24,
+    backgroundColor: '#6366F1',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  logoInnerTablet: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-  },
-  logoInnerLandscape: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    shadowColor: '#6366F1',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 8,
   },
   logo: {
     fontSize: 32,
-    fontWeight: '700',
-    color: '#1F2A44',
-  },
-  logoTablet: {
-    fontSize: 40,
-  },
-  logoLandscape: {
-    fontSize: 32,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 1,
   },
   title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#1F2A44',
-    marginBottom: 8,
-  },
-  titleTablet: {
-    fontSize: 36,
-  },
-  titleLandscape: {
     fontSize: 32,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginBottom: 8,
+    textAlign: 'center',
   },
   subtitle: {
     fontSize: 16,
-    color: '#4B587C',
-  },
-  subtitleTablet: {
-    fontSize: 18,
-  },
-  subtitleLandscape: {
-    fontSize: 16,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 24,
+    fontWeight: '400',
   },
   form: {
-    width: '100%',
-  },
-  formTablet: {
-    width: '100%',
+    marginBottom: 40,
   },
   inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-    borderRadius: 12,
-    marginBottom: 16,
-    paddingHorizontal: 16,
-    height: 56,
-  },
-  inputIcon: {
-    marginRight: 12,
-  },
-  input: {
-    flex: 1,
-    fontSize: 16,
-    color: '#1F2A44',
-  },
-  inputTablet: {
-    fontSize: 18,
-  },
-  eyeIcon: {
-    padding: 8,
-  },
-  optionsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     marginBottom: 24,
   },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
+  },
+  inputWrapper: {
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  input: {
+    width: '100%',
+    height: 52,
+    paddingHorizontal: 16,
+    fontSize: 16,
+    color: '#1E293B',
+    fontWeight: '500',
+  },
+  inputWithIcon: {
+    paddingRight: 48,
+  },
+  eyeButton: {
+    position: 'absolute',
+    right: 16,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 40,
+    height: '100%',
+  },
   rememberMeContainer: {
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  checkboxContainer: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   checkbox: {
     width: 20,
     height: 20,
-    borderRadius: 4,
+    borderRadius: 6,
     borderWidth: 2,
-    borderColor: '#DCC8FF',
-    marginRight: 8,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 10,
   },
   checkboxChecked: {
-    backgroundColor: '#DCC8FF',
-    borderColor: '#DCC8FF',
+    backgroundColor: '#6366F1',
+    borderColor: '#6366F1',
+  },
+  checkboxTablet: {
+    width: 24,
+    height: 24,
+    borderRadius: 7,
+    marginRight: 12,
   },
   rememberMeText: {
     fontSize: 14,
-    color: '#4B587C',
+    color: '#64748B',
+    fontWeight: '500',
   },
-  loginButton: {
-    backgroundColor: '#1ECAD0',
+  rememberMeTextTablet: {
+    fontSize: 16,
+  },
+  button: {
+    width: '100%',
+    height: 52,
     borderRadius: 12,
-    height: 56,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#1ECAD0',
+    marginTop: 20,
+    shadowColor: '#6366F1',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 4,
   },
-  loginButtonTablet: {
-    height: 64,
+  buttonDisabled: {
+    shadowOpacity: 0,
+    elevation: 0,
   },
-  loginButtonDisabled: {
-    opacity: 0.6,
+  buttonInner: {
+    flex: 1,
+    backgroundColor: '#6366F1',
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  loginButtonText: {
+  buttonInnerDisabled: {
+    backgroundColor: '#94A3B8',
+  },
+  buttonText: {
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
-    color: '#FFFFFF',
   },
-  loginButtonTextTablet: {
+  footer: {
+    alignItems: 'center',
+  },
+  footerText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontWeight: '500',
+  },
+  // Tablet styles
+  contentTablet: {
+    maxWidth: 500,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  logoInnerTablet: {
+    width: 100,
+    height: 100,
+    borderRadius: 28,
+  },
+  logoTablet: {
+    fontSize: 40,
+  },
+  titleTablet: {
+    fontSize: 38,
+  },
+  subtitleTablet: {
     fontSize: 18,
   },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 16,
-    padding: 12,
-    backgroundColor: '#FFE5E5',
-    borderRadius: 8,
+  formTablet: {
+    marginBottom: 48,
   },
-  errorText: {
+  inputLabelTablet: {
+    fontSize: 16,
+  },
+  inputWrapperTablet: {
+    borderRadius: 14,
+  },
+  inputTablet: {
+    height: 60,
+    fontSize: 18,
+    paddingHorizontal: 20,
+  },
+  buttonTablet: {
+    height: 60,
+    borderRadius: 14,
+  },
+  buttonTextTablet: {
+    fontSize: 18,
+  },
+  footerTextTablet: {
     fontSize: 14,
-    color: '#FF6B6B',
-    marginLeft: 8,
-    flex: 1,
+  },
+  // Landscape styles
+  contentTabletLandscape: {
+    maxWidth: 700,
+    paddingVertical: 10,
+    justifyContent: 'center',
+  },
+  headerLandscape: {
+    marginBottom: 12,
+    paddingTop: 0,
+  },
+  logoInnerLandscape: {
+    width: 70,
+    height: 70,
+    borderRadius: 20,
+  },
+  logoLandscape: {
+    fontSize: 30,
+  },
+  titleLandscape: {
+    fontSize: 28,
+    marginTop: 12,
+  },
+  subtitleLandscape: {
+    fontSize: 15,
+    marginTop: 6,
+  },
+  formLandscape: {
+    marginBottom: 20,
+  },
+  inputWrapperLandscape: {
+    borderRadius: 12,
+  },
+  inputLandscape: {
+    height: 50,
+    fontSize: 16,
+    paddingHorizontal: 18,
+  },
+  buttonLandscape: {
+    height: 50,
+    borderRadius: 12,
+    marginTop: 16,
   },
 });
 

@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "CajaFrontendJoanis",
-    "slug": "caja-frontend-joanis",
-    "scheme": "caja-frontend-joanis",
+    "name": "CajaGrit",
+    "slug": "caja-grit",
+    "scheme": "caja-grit",
     "version": "0.0.1",
     "orientation": "default",
     "userInterfaceStyle": "automatic",
@@ -20,10 +20,10 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.cajafrontend.joanis"
+      "bundleIdentifier": "com.caja.grit"
     },
     "android": {
-      "package": "com.cajafrontend.joanis",
+      "package": "com.caja.grit",
       "icon": "./assets/icon.png",
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
@@ -36,16 +36,11 @@
       "userInterfaceStyle": "automatic"
     },
     "extra": {
-      "apiUrl": "@env:API_URL",
-      "eas": {
-        "projectId": "f092a6ab-4d46-4c88-8bdb-9e6c9a7d2a94"
-      }
+      "apiUrl": "@env:API_URL"
     },
     "plugins": [
       "expo-font",
-      "expo-secure-store",
-      "expo-dev-client"
-    ],
-    "owner": "elnero"
+      "expo-secure-store"
+    ]
   }
 }

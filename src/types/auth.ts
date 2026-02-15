@@ -31,7 +31,7 @@ export interface LoginResponse {
 }
 
 export interface RefreshTokenRequest {
-  refreshToken?: string; // Optional for web (cookie-based), required for mobile
+  refreshToken?: string;
 }
 
 export interface RefreshTokenResponse {
@@ -79,7 +79,6 @@ export interface AuthState {
   error: string | null;
 }
 
-// Permission checking utilities
 export type Permission = string;
 
 export interface PermissionCheck {
@@ -88,28 +87,4 @@ export interface PermissionCheck {
   hasAllPermissions: (permissions: Permission[]) => boolean;
   hasRole: (roleCode: string) => boolean;
   hasAnyRole: (roleCodes: string[]) => boolean;
-}
-
-// API Response types
-export interface ApiResponse<T = any> {
-  data: T;
-  message?: string;
-  status: number;
-}
-
-export interface PaginatedResponse<T = any> {
-  data: T[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
-}
-
-// Request headers for authenticated requests
-export interface AuthHeaders {
-  'Content-Type': 'application/json';
-  Authorization: `Bearer ${string}`;
-  'X-App-Id': string;
 }
