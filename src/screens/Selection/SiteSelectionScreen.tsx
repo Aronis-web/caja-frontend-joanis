@@ -103,11 +103,19 @@ export const SiteSelectionScreen: React.FC<SiteSelectionScreenProps> = ({ naviga
       );
 
       console.log('📋 Scopes filtrados para la empresa:', companyScopes.length);
+      console.log('📋 Primer scope (ejemplo):', JSON.stringify(companyScopes[0], null, 2));
 
       // Extract unique sites from scopes
       const sitesMap = new Map<string, Site>();
 
-      companyScopes.forEach((scope) => {
+      companyScopes.forEach((scope, index) => {
+        console.log(`📋 Procesando scope ${index + 1}:`, {
+          siteId: scope.siteId,
+          hasSiteObject: !!scope.site,
+          siteName: scope.site_name,
+          siteObjectName: scope.site?.name,
+        });
+
         if (scope.site && scope.site.id) {
           sitesMap.set(scope.site.id, {
             id: scope.site.id,
@@ -116,11 +124,24 @@ export const SiteSelectionScreen: React.FC<SiteSelectionScreenProps> = ({ naviga
             companyId: scope.site.companyId,
             isActive: scope.site.isActive,
           });
+        } else if (scope.siteId) {
+          // If we have siteId but no site object, create a basic site entry
+          console.log(
+            `⚠️ Scope ${index + 1} tiene siteId pero no objeto site, creando entrada básica`
+          );
+          sitesMap.set(scope.siteId, {
+            id: scope.siteId,
+            code: scope.siteId.substring(0, 8), // Use first 8 chars of ID as code
+            name: scope.site_name || 'Sede sin nombre',
+            companyId: currentCompany.id,
+            isActive: true,
+          });
         }
       });
 
       const sitesArray = Array.from(sitesMap.values());
       console.log('📋 Sedes procesadas:', sitesArray.length, 'sedes encontradas');
+      console.log('📋 Sedes:', JSON.stringify(sitesArray, null, 2));
 
       if (sitesArray.length === 0) {
         Alert.alert(
