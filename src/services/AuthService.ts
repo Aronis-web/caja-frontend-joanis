@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { config } from '@/utils/config';
 import secureStorage from '@/utils/secureStorage';
-import { LoginResponse, RefreshTokenResponse, AuthError } from '@/types/auth';
+import { LoginResponse, RefreshTokenResponse, AuthError, Company, Site } from '@/types/auth';
 
 class AuthService {
   private readonly appId = config.APP_ID;
@@ -10,19 +10,47 @@ class AuthService {
   private refreshTokenValue: string | null = null;
   private tokenExpiresAt: number | null = null;
   private refreshPromise: Promise<RefreshTokenResponse> | null = null;
+  private currentCompany: Company | null = null;
+  private currentSite: Site | null = null;
 
   constructor() {
     this.restoreAuth();
   }
 
+  setCurrentCompany(company: Company | null): void {
+    this.currentCompany = company;
+  }
+
+  setCurrentSite(site: Site | null): void {
+    this.currentSite = site;
+  }
+
+  getCurrentCompany(): Company | null {
+    return this.currentCompany;
+  }
+
+  getCurrentSite(): Site | null {
+    return this.currentSite;
+  }
+
   async login(email: string, password: string): Promise<LoginResponse> {
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-App-Id': this.appId,
+      };
+
+      // Add company and site headers if available
+      if (this.currentCompany?.id) {
+        headers['X-Company-Id'] = this.currentCompany.id;
+      }
+      if (this.currentSite?.id) {
+        headers['X-Site-Id'] = this.currentSite.id;
+      }
+
       const response = await fetch(`${this.baseUrl}/auth/login`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-App-Id': this.appId,
-        },
+        headers,
         body: JSON.stringify({ email, password }),
       });
 
@@ -69,6 +97,14 @@ class AuthService {
         'X-App-Id': this.appId,
       };
 
+      // Add company and site headers if available
+      if (this.currentCompany?.id) {
+        headers['X-Company-Id'] = this.currentCompany.id;
+      }
+      if (this.currentSite?.id) {
+        headers['X-Site-Id'] = this.currentSite.id;
+      }
+
       if (this.refreshTokenValue) {
         headers['Content-Type'] = 'application/json';
       }
@@ -105,17 +141,59 @@ class AuthService {
 
   async logout(): Promise<void> {
     try {
+      const headers: Record<string, string> = {
+        'X-App-Id': this.appId,
+      };
+
+      // Add company and site headers if available
+      if (this.currentCompany?.id) {
+        headers['X-Company-Id'] = this.currentCompany.id;
+      }
+      if (this.currentSite?.id) {
+        headers['X-Site-Id'] = this.currentSite.id;
+      }
+
       await fetch(`${this.baseUrl}/auth/logout`, {
         method: 'POST',
-        headers: {
-          'X-App-Id': this.appId,
-        },
+        headers,
       });
     } catch (error) {
       console.warn('Logout endpoint call failed:', error);
     } finally {
       await this.clearAuthData();
     }
+  }
+
+  async makeAuthenticatedRequest<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-App-Id': this.appId,
+      ...((options.headers as Record<string, string>) || {}),
+    };
+
+    if (this.accessToken) {
+      headers['Authorization'] = `Bearer ${this.accessToken}`;
+    }
+
+    // Add company and site headers if available
+    if (this.currentCompany?.id) {
+      headers['X-Company-Id'] = this.currentCompany.id;
+    }
+    if (this.currentSite?.id) {
+      headers['X-Site-Id'] = this.currentSite.id;
+    }
+
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      ...options,
+      headers,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw this.createAuthError(response.status, errorData.message || 'Request failed');
+    }
+
+    return await response.json();
   }
 
   getAccessToken(): string | null {

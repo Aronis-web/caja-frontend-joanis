@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/store/auth';
@@ -9,10 +9,45 @@ interface HomeScreenProps {
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = () => {
-  const { user, logout } = useAuthStore();
+  const { user, currentCompany, currentSite, logout, setCurrentCompany, setCurrentSite } =
+    useAuthStore();
 
   const handleLogout = async () => {
-    await logout();
+    Alert.alert('Cerrar Sesión', '¿Estás seguro de que deseas cerrar sesión?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Cerrar Sesión',
+        style: 'destructive',
+        onPress: async () => {
+          await logout();
+        },
+      },
+    ]);
+  };
+
+  const handleChangeCompany = async () => {
+    Alert.alert('Cambiar Empresa', '¿Deseas cambiar de empresa y sede?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Cambiar',
+        onPress: async () => {
+          await setCurrentSite(null);
+          await setCurrentCompany(null);
+        },
+      },
+    ]);
+  };
+
+  const handleChangeSite = async () => {
+    Alert.alert('Cambiar Sede', '¿Deseas cambiar de sede?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Cambiar',
+        onPress: async () => {
+          await setCurrentSite(null);
+        },
+      },
+    ]);
   };
 
   return (
@@ -33,6 +68,39 @@ export const HomeScreen: React.FC<HomeScreenProps> = () => {
           <Text style={styles.welcomeText}>Bienvenido</Text>
           <Text style={styles.userName}>{user?.name || 'Usuario'}</Text>
           <Text style={styles.userEmail}>{user?.email}</Text>
+        </View>
+
+        <View style={styles.contextCard}>
+          <View style={styles.contextHeader}>
+            <Ionicons name="business-outline" size={24} color="#6366F1" />
+            <Text style={styles.contextTitle}>Contexto Actual</Text>
+          </View>
+
+          <View style={styles.contextItem}>
+            <Text style={styles.contextLabel}>Empresa</Text>
+            <Text style={styles.contextValue}>{currentCompany?.name || 'No seleccionada'}</Text>
+            {currentCompany?.ruc && (
+              <Text style={styles.contextDetail}>RUC: {currentCompany.ruc}</Text>
+            )}
+            <TouchableOpacity style={styles.changeButton} onPress={handleChangeCompany}>
+              <Ionicons name="swap-horizontal-outline" size={16} color="#FFFFFF" />
+              <Text style={styles.changeButtonText}>Cambiar Empresa</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.divider} />
+
+          <View style={styles.contextItem}>
+            <Text style={styles.contextLabel}>Sede</Text>
+            <Text style={styles.contextValue}>{currentSite?.name || 'No seleccionada'}</Text>
+            {currentSite?.code && (
+              <Text style={styles.contextDetail}>Código: {currentSite.code}</Text>
+            )}
+            <TouchableOpacity style={styles.changeButton} onPress={handleChangeSite}>
+              <Ionicons name="swap-horizontal-outline" size={16} color="#FFFFFF" />
+              <Text style={styles.changeButtonText}>Cambiar Sede</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.infoCard}>
@@ -132,6 +200,71 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#94A3B8',
     marginTop: 4,
+  },
+  contextCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  contextHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  contextTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginLeft: 8,
+  },
+  contextItem: {
+    marginBottom: 8,
+  },
+  contextLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  contextValue: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginBottom: 4,
+  },
+  contextDetail: {
+    fontSize: 14,
+    color: '#94A3B8',
+    marginBottom: 12,
+  },
+  changeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#6366F1',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+  },
+  changeButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#E2E8F0',
+    marginVertical: 16,
   },
   infoCard: {
     backgroundColor: '#EEF2FF',

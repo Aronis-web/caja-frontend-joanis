@@ -7,6 +7,22 @@ export interface Role {
   description?: string;
 }
 
+export interface Company {
+  id: string;
+  name: string;
+  alias?: string;
+  ruc?: string;
+  isActive: boolean;
+}
+
+export interface Site {
+  id: string;
+  code: string;
+  name: string;
+  companyId: string;
+  isActive: boolean;
+}
+
 export interface User {
   id: string;
   email: string;

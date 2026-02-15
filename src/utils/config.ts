@@ -12,6 +12,8 @@ export const config = {
 
     // AsyncStorage keys - for non-sensitive data
     USER: '@caja:user',
+    CURRENT_COMPANY: '@caja:current_company',
+    CURRENT_SITE: '@caja:current_site',
   },
 } as const;
 

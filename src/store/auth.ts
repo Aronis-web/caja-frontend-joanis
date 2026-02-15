@@ -5,7 +5,7 @@ import { config } from '@/utils/config';
 import secureStorage from '@/utils/secureStorage';
 import { authService } from '@/services/AuthService';
 import { PermissionCheck, Permission } from '@/types/auth';
-import type { User } from '@/types/auth';
+import type { User, Company, Site } from '@/types/auth';
 
 interface AuthState extends PermissionCheck {
   user: User | null;
@@ -15,12 +15,16 @@ interface AuthState extends PermissionCheck {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+  currentCompany: Company | null;
+  currentSite: Site | null;
 
   // Actions
   setUser: (user: User | null) => void;
   setToken: (token: string | null) => void;
   setRefreshToken: (refreshToken: string | null) => void;
   setTokenExpiresAt: (expiresAt: number | null) => void;
+  setCurrentCompany: (company: Company | null) => void;
+  setCurrentSite: (site: Site | null) => void;
   loginWithCredentials: (email: string, password: string, rememberMe?: boolean) => Promise<boolean>;
   logout: () => Promise<void>;
   setLoading: (isLoading: boolean) => void;
@@ -47,8 +51,30 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isAuthenticated: false,
   isLoading: true,
   error: null,
+  currentCompany: null,
+  currentSite: null,
 
   setUser: (user) => set({ user, isAuthenticated: !!user }),
+
+  setCurrentCompany: async (company) => {
+    set({ currentCompany: company });
+    if (company) {
+      await AsyncStorage.setItem(config.STORAGE_KEYS.CURRENT_COMPANY, JSON.stringify(company));
+    } else {
+      await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_COMPANY);
+    }
+    authService.setCurrentCompany(company);
+  },
+
+  setCurrentSite: async (site) => {
+    set({ currentSite: site });
+    if (site) {
+      await AsyncStorage.setItem(config.STORAGE_KEYS.CURRENT_SITE, JSON.stringify(site));
+    } else {
+      await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_SITE);
+    }
+    authService.setCurrentSite(site);
+  },
 
   setToken: (token) => {
     if (token === undefined) {
@@ -95,6 +121,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       console.log('✅ Login successful');
 
+      // Clear previous company/site selection
+      await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_COMPANY);
+      await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_SITE);
+
       await secureStorage.setItem(config.STORAGE_KEYS.AUTH_TOKEN, response.accessToken);
       await secureStorage.setItem(config.STORAGE_KEYS.REFRESH_TOKEN, response.refreshToken);
       await secureStorage.setItem(config.STORAGE_KEYS.REMEMBER_ME, rememberMe ? 'true' : 'false');
@@ -122,6 +152,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         isAuthenticated: true,
         error: null,
         isLoading: false,
+        currentCompany: null,
+        currentSite: null,
       });
 
       return true;
@@ -137,9 +169,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       await authService.logout();
       await get().clearInvalidAuth();
-    } catch (error) {
+    } catch (_error) {
       await get().clearInvalidAuth();
     }
+    // Clear company and site selection
+    set({ currentCompany: null, currentSite: null });
+    await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_COMPANY);
+    await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_SITE);
   },
 
   setLoading: (isLoading) => set({ isLoading }),
@@ -155,6 +191,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const refreshToken = await secureStorage.getItem(config.STORAGE_KEYS.REFRESH_TOKEN);
       const tokenExpiresAtStr = await secureStorage.getItem(config.STORAGE_KEYS.TOKEN_EXPIRES_AT);
       const userJson = await AsyncStorage.getItem(config.STORAGE_KEYS.USER);
+      const companyJson = await AsyncStorage.getItem(config.STORAGE_KEYS.CURRENT_COMPANY);
+      const siteJson = await AsyncStorage.getItem(config.STORAGE_KEYS.CURRENT_SITE);
 
       if (token && userJson) {
         let user;
@@ -202,7 +240,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           }
         }
 
+        // Load company and site if available
+        let currentCompany = null;
+        let currentSite = null;
+
+        try {
+          currentCompany = companyJson ? JSON.parse(companyJson) : null;
+          currentSite = siteJson ? JSON.parse(siteJson) : null;
+        } catch (parseError) {
+          console.error('❌ Failed to parse company/site JSON:', parseError);
+        }
+
         authService.setAccessToken(currentToken);
+        authService.setCurrentCompany(currentCompany);
+        authService.setCurrentSite(currentSite);
 
         set({
           user,
@@ -210,6 +261,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           refreshToken,
           tokenExpiresAt,
           isAuthenticated: true,
+          currentCompany,
+          currentSite,
         });
         console.log('✅ Auth initialized successfully');
       } else {
@@ -258,6 +311,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await secureStorage.deleteItem(config.STORAGE_KEYS.TOKEN_EXPIRES_AT);
       await secureStorage.deleteItem(config.STORAGE_KEYS.REMEMBER_ME);
       await AsyncStorage.removeItem(config.STORAGE_KEYS.USER);
+      await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_COMPANY);
+      await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_SITE);
 
       set({
         user: null,
@@ -266,9 +321,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         tokenExpiresAt: null,
         isAuthenticated: false,
         error: null,
+        currentCompany: null,
+        currentSite: null,
       });
 
       authService.setAccessToken(null);
+      authService.setCurrentCompany(null);
+      authService.setCurrentSite(null);
     } catch (error) {
       console.error('Error clearing auth:', error);
     }
