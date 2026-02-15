@@ -48,19 +48,36 @@ export const CompanySelectionScreen: React.FC<CompanySelectionScreenProps> = ({ 
       console.log('🔍 Cargando empresas para userId:', user.id);
 
       // Fetch companies from API using the same endpoint as admin-frontend
-      const response = await authService.makeAuthenticatedRequest<Company[]>(
+      const response = await authService.makeAuthenticatedRequest<{ data: Company[] } | Company[]>(
         `/companies?userId=${user.id}`
       );
 
-      console.log('📦 Empresas recibidas:', response?.length || 0);
+      console.log('📦 Respuesta completa del servidor:', JSON.stringify(response, null, 2));
+      console.log('📦 Tipo de respuesta:', typeof response);
+      console.log('📦 Es array:', Array.isArray(response));
 
-      if (!response || !Array.isArray(response)) {
+      // Handle both response formats: { data: Company[] } or Company[]
+      let companiesData: Company[] = [];
+
+      if (Array.isArray(response)) {
+        companiesData = response;
+      } else if (
+        response &&
+        typeof response === 'object' &&
+        'data' in response &&
+        Array.isArray(response.data)
+      ) {
+        companiesData = response.data;
+      } else {
         console.warn('⚠️ Respuesta inválida del servidor');
+        console.warn('⚠️ Respuesta recibida:', response);
         setCompanies([]);
         return;
       }
 
-      if (response.length === 0) {
+      console.log('📦 Empresas procesadas:', companiesData.length);
+
+      if (companiesData.length === 0) {
         Alert.alert(
           'Sin Empresas',
           'No tienes acceso a ninguna empresa. Contacta al administrador.',
@@ -77,7 +94,8 @@ export const CompanySelectionScreen: React.FC<CompanySelectionScreenProps> = ({ 
       }
 
       // Filter active companies
-      const activeCompanies = response.filter((c) => c.isActive);
+      const activeCompanies = companiesData.filter((c) => c.isActive);
+      console.log('📦 Empresas activas:', activeCompanies.length);
       setCompanies(activeCompanies);
 
       // If user has only one company, auto-select it
