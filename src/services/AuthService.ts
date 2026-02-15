@@ -48,11 +48,22 @@ class AuthService {
         headers['X-Site-Id'] = this.currentSite.id;
       }
 
+      console.log('🌐 Enviando petición de login a:', `${this.baseUrl}/auth/login`);
+      console.log('📋 Headers:', headers);
+      console.log('📧 Email:', email);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos timeout
+
       const response = await fetch(`${this.baseUrl}/auth/login`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ email, password }),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
+      console.log('✅ Respuesta recibida, status:', response.status);
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -66,8 +77,12 @@ class AuthService {
 
       return data;
     } catch (error) {
+      console.error('❌ Error en login:', error);
       if (error instanceof AuthError) {
         throw error;
+      }
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw this.createAuthError(0, 'Timeout: El servidor tardó demasiado en responder');
       }
       throw this.createAuthError(0, 'Network error during login');
     }

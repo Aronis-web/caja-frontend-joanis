@@ -105,7 +105,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       set({ isLoading: true, error: null });
 
+      console.log('📡 Llamando a authService.login...');
       const response = await authService.login(email, password);
+      console.log('📡 Respuesta recibida del servidor');
 
       if (!response.user || !response.user.id) {
         throw new Error('Invalid user data received from server');
