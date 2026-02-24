@@ -6,6 +6,7 @@ const http = require('http');
 const mime = require('mime-types');
 
 const isDev = process.env.NODE_ENV === 'development';
+const isPackaged = app.isPackaged;
 
 let mainWindow;
 let server;
@@ -31,7 +32,19 @@ function findFile(dir, filename) {
 
 // Crear servidor HTTP simple para servir archivos estáticos
 function createServer() {
-  const webBuildPath = path.join(__dirname, 'web-build');
+  // En producción empaquetada, web-build está en app.asar.unpacked
+  let webBuildPath;
+  if (isPackaged) {
+    // Cuando está empaquetado, los archivos desempaquetados están en app.asar.unpacked
+    const appPath = app.getAppPath();
+    webBuildPath = appPath.replace('app.asar', 'app.asar.unpacked') + '/web-build';
+  } else {
+    webBuildPath = path.join(__dirname, 'web-build');
+  }
+
+  console.log('App is packaged:', isPackaged);
+  console.log('Web build path:', webBuildPath);
+  console.log('Web build exists:', fs.existsSync(webBuildPath));
 
   server = http.createServer((req, res) => {
     // Decodificar URL para manejar caracteres especiales

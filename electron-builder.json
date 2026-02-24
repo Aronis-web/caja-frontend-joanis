@@ -6,9 +6,13 @@
   },
   "files": [
     "web-build/**/*",
+    "web-build/assets/**/*",
     "electron.js",
     "package.json",
     "node_modules/**/*"
+  ],
+  "asarUnpack": [
+    "web-build/**"
   ],
   "win": {
     "target": [

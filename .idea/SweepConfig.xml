@@ -11,5 +11,6 @@
       </set>
     </option>
     <option name="bashAutoApproveMode" value="RUN_EVERYTHING" />
+    <option name="hideAutocompleteExclusionBanner" value="true" />
   </component>
 </project>

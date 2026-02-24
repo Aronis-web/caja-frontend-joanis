@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit",
     "validate": "npm run typecheck && npm run lint && npm run format:check",
     "electron": "cross-env NODE_ENV=development concurrently \"npm run web\" \"wait-on http://localhost:8081 && electron .\"",
-    "electron:build": "expo export --platform web --output-dir web-build && node fix-html.js && electron-builder build --win --x64",
+    "electron:build": "expo export --platform web --output-dir web-build && node fix-html.js && electron-builder build --win --x64 && node copy-assets.js",
     "dist": "npm run electron:build"
   },
   "dependencies": {
@@ -55,6 +55,7 @@
     "eslint-plugin-prettier": "^5.5.5",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.0.0",
+    "fs-extra": "^11.3.3",
     "png-to-ico": "^3.0.1",
     "prettier": "^3.8.1",
     "typescript": "~5.9.2",
