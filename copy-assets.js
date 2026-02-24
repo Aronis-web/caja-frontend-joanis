@@ -9,6 +9,7 @@ console.log('Desde:', sourceDir);
 console.log('Hacia:', targetDir);
 
 if (fs.existsSync(sourceDir)) {
+  // Copiar a dist/win-unpacked/resources/app.asar.unpacked
   fs.copySync(sourceDir, targetDir, { overwrite: true });
   console.log('✓ Assets copiados exitosamente');
 } else {

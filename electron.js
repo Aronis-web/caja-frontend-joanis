@@ -10,6 +10,7 @@ const isPackaged = app.isPackaged;
 
 let mainWindow;
 let server;
+let logStream;
 
 // Función para buscar archivo recursivamente
 function findFile(dir, filename) {
@@ -48,10 +49,9 @@ function findFile(dir, filename) {
 
 // Crear servidor HTTP simple para servir archivos estáticos
 function createServer() {
-  // En producción empaquetada, web-build está en app.asar.unpacked
+  // Con asar, web-build está en el asar pero assets está en app.asar.unpacked
   let webBuildPath;
   if (isPackaged) {
-    // Cuando está empaquetado, los archivos desempaquetados están en app.asar.unpacked
     const appPath = app.getAppPath();
     webBuildPath = appPath.replace('app.asar', 'app.asar.unpacked') + '/web-build';
   } else {
@@ -59,6 +59,7 @@ function createServer() {
   }
 
   console.log('App is packaged:', isPackaged);
+  console.log('__dirname:', __dirname);
   console.log('Web build path:', webBuildPath);
   console.log('Web build exists:', fs.existsSync(webBuildPath));
 
@@ -193,6 +194,29 @@ function createWindow(port) {
 }
 
 app.on('ready', () => {
+  // Configurar logging después de que la app esté lista
+  const logFile = path.join(app.getPath('userData'), 'electron-server.log');
+  logStream = fs.createWriteStream(logFile, { flags: 'a' });
+  const originalLog = console.log;
+  const originalError = console.error;
+
+  console.log = (...args) => {
+    const message = args.join(' ') + '\n';
+    logStream.write(`[LOG] ${new Date().toISOString()} - ${message}`);
+    originalLog.apply(console, args);
+  };
+
+  console.error = (...args) => {
+    const message = args.join(' ') + '\n';
+    logStream.write(`[ERROR] ${new Date().toISOString()} - ${message}`);
+    originalError.apply(console, args);
+  };
+
+  console.log('=== Electron App Starting ===');
+  console.log('Log file:', logFile);
+  console.log('Is packaged:', isPackaged);
+  console.log('Is dev:', isDev);
+
   if (isDev) {
     createWindow(8081);
   } else {
