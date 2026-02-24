@@ -10,6 +10,25 @@ const isDev = process.env.NODE_ENV === 'development';
 let mainWindow;
 let server;
 
+// Función para buscar archivo recursivamente
+function findFile(dir, filename) {
+  const files = fs.readdirSync(dir);
+
+  for (const file of files) {
+    const filePath = path.join(dir, file);
+    const stat = fs.statSync(filePath);
+
+    if (stat.isDirectory()) {
+      const found = findFile(filePath, filename);
+      if (found) return found;
+    } else if (file === filename) {
+      return filePath;
+    }
+  }
+
+  return null;
+}
+
 // Crear servidor HTTP simple para servir archivos estáticos
 function createServer() {
   const webBuildPath = path.join(__dirname, 'web-build');
@@ -19,9 +38,13 @@ function createServer() {
     let requestPath = decodeURIComponent(req.url);
     let filePath = path.join(webBuildPath, requestPath === '/' ? 'index.html' : requestPath);
 
-    // Si el archivo no existe, intentar buscar en assets
-    if (!fs.existsSync(filePath) && requestPath.includes('.ttf')) {
-      filePath = path.join(webBuildPath, 'assets', requestPath);
+    // Si el archivo no existe y es una fuente, buscar recursivamente
+    if (!fs.existsSync(filePath) && (requestPath.includes('.ttf') || requestPath.includes('.woff'))) {
+      const filename = path.basename(requestPath);
+      const foundPath = findFile(webBuildPath, filename);
+      if (foundPath) {
+        filePath = foundPath;
+      }
     }
 
     fs.readFile(filePath, (err, data) => {
@@ -35,7 +58,8 @@ function createServer() {
       const mimeType = mime.lookup(filePath) || 'application/octet-stream';
       res.writeHead(200, {
         'Content-Type': mimeType,
-        'Access-Control-Allow-Origin': '*'
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'public, max-age=31536000'
       });
       res.end(data);
     });
