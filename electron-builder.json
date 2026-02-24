@@ -1,0 +1,26 @@
+{
+  "appId": "com.caja.grit",
+  "productName": "CajaGrit",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "web-build/**/*",
+    "electron.js",
+    "package.json",
+    "node_modules/**/*"
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ],
+    "artifactName": "${productName}-${version}-Portable.${ext}",
+    "signAndEditExecutable": false
+  },
+  "extraMetadata": {
+    "main": "electron.js"
+  }
+}
