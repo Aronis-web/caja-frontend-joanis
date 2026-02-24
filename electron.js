@@ -36,33 +36,70 @@ function createServer() {
   server = http.createServer((req, res) => {
     // Decodificar URL para manejar caracteres especiales
     let requestPath = decodeURIComponent(req.url);
+
+    // Remover query strings
+    requestPath = requestPath.split('?')[0];
+
     let filePath = path.join(webBuildPath, requestPath === '/' ? 'index.html' : requestPath);
 
-    // Si el archivo no existe y es una fuente, buscar recursivamente
-    if (!fs.existsSync(filePath) && (requestPath.includes('.ttf') || requestPath.includes('.woff'))) {
+    // Log para debug
+    console.log('Request:', requestPath);
+    console.log('File path:', filePath);
+
+    // Función para servir archivo
+    const serveFile = (filePathToServe) => {
+      fs.readFile(filePathToServe, (err, data) => {
+        if (err) {
+          console.error('Error reading file:', err.message);
+          res.writeHead(500);
+          res.end('Error reading file');
+          return;
+        }
+
+        const mimeType = mime.lookup(filePathToServe) || 'application/octet-stream';
+        console.log('Serving file:', filePathToServe, 'Type:', mimeType);
+        res.writeHead(200, {
+          'Content-Type': mimeType,
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'public, max-age=31536000'
+        });
+        res.end(data);
+      });
+    };
+
+    // Si el archivo existe, servirlo directamente
+    let fileExists = false;
+    try {
+      fileExists = fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+      console.log('File exists:', fileExists);
+    } catch (err) {
+      console.error('Error checking file:', err.message);
+    }
+
+    if (fileExists) {
+      serveFile(filePath);
+      return;
+    }
+
+    // Si no existe y es una fuente o imagen, buscar recursivamente
+    if (requestPath.includes('.ttf') || requestPath.includes('.woff') || requestPath.includes('.woff2') || requestPath.includes('.png') || requestPath.includes('.jpg')) {
       const filename = path.basename(requestPath);
+      console.log('Searching for file:', filename);
       const foundPath = findFile(webBuildPath, filename);
+
       if (foundPath) {
-        filePath = foundPath;
+        console.log('Found file at:', foundPath);
+        serveFile(foundPath);
+        return;
+      } else {
+        console.error('File not found after recursive search:', filename);
       }
     }
 
-    fs.readFile(filePath, (err, data) => {
-      if (err) {
-        console.error('File not found:', requestPath);
-        res.writeHead(404);
-        res.end('File not found');
-        return;
-      }
-
-      const mimeType = mime.lookup(filePath) || 'application/octet-stream';
-      res.writeHead(200, {
-        'Content-Type': mimeType,
-        'Access-Control-Allow-Origin': '*',
-        'Cache-Control': 'public, max-age=31536000'
-      });
-      res.end(data);
-    });
+    // Archivo no encontrado
+    console.error('File not found:', requestPath);
+    res.writeHead(404);
+    res.end('File not found');
   });
 
   server.listen(0, 'localhost', () => {
