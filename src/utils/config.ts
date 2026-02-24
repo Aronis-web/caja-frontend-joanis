@@ -14,6 +14,7 @@ export const config = {
     USER: '@caja:user',
     CURRENT_COMPANY: '@caja:current_company',
     CURRENT_SITE: '@caja:current_site',
+    SELECTED_CASH_REGISTER: '@caja:selected_cash_register',
   },
 } as const;
 

@@ -189,7 +189,9 @@ export const SiteSelectionScreen: React.FC<SiteSelectionScreenProps> = ({ naviga
 
       await setCurrentSite(site);
       console.log('✅ Sede seleccionada y guardada');
-      // Navigation will automatically switch to MainStack when currentSite is set
+
+      // Navigate to cash register selection
+      navigation?.navigate('CashRegisterSelection' as never);
     } catch (error) {
       console.error('❌ Error selecting site:', error);
       Alert.alert('Error', 'No se pudo seleccionar la sede');
