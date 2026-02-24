@@ -13,18 +13,34 @@ let server;
 
 // Función para buscar archivo recursivamente
 function findFile(dir, filename) {
-  const files = fs.readdirSync(dir);
-
-  for (const file of files) {
-    const filePath = path.join(dir, file);
-    const stat = fs.statSync(filePath);
-
-    if (stat.isDirectory()) {
-      const found = findFile(filePath, filename);
-      if (found) return found;
-    } else if (file === filename) {
-      return filePath;
+  try {
+    if (!fs.existsSync(dir)) {
+      console.log('Directory does not exist:', dir);
+      return null;
     }
+
+    const files = fs.readdirSync(dir);
+
+    for (const file of files) {
+      const filePath = path.join(dir, file);
+
+      try {
+        const stat = fs.statSync(filePath);
+
+        if (stat.isDirectory()) {
+          const found = findFile(filePath, filename);
+          if (found) return found;
+        } else if (file === filename) {
+          console.log('Found matching file:', filePath);
+          return filePath;
+        }
+      } catch (err) {
+        console.error('Error accessing file:', filePath, err.message);
+        continue;
+      }
+    }
+  } catch (err) {
+    console.error('Error reading directory:', dir, err.message);
   }
 
   return null;
