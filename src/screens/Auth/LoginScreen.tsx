@@ -100,7 +100,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = () => {
                 isTablet && isLandscape && styles.titleLandscape,
               ]}
             >
-              Bienvenido
+              ¡Bienvenido de nuevo! 👋
             </Text>
             <Text
               style={[
@@ -109,7 +109,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = () => {
                 isTablet && isLandscape && styles.subtitleLandscape,
               ]}
             >
-              Inicia sesión en Caja Grit
+              Inicia sesión en Caja Grit - v0.0.2
             </Text>
           </View>
 
