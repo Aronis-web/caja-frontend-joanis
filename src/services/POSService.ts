@@ -26,7 +26,7 @@ class POSService {
   private baseURL: string;
 
   constructor() {
-    this.baseURL = `${config.API_URL}/api`;
+    this.baseURL = config.API_URL;
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
