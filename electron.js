@@ -16,6 +16,13 @@ let logStream;
 // Configurar auto-updater
 autoUpdater.autoDownload = false; // No descargar automáticamente
 autoUpdater.autoInstallOnAppQuit = true; // Instalar al cerrar la app
+autoUpdater.allowDowngrade = false; // No permitir downgrades
+autoUpdater.allowPrerelease = false; // No permitir pre-releases
+
+// Configuración adicional para Windows
+if (process.platform === 'win32') {
+  autoUpdater.forceDevUpdateConfig = false;
+}
 
 // Función para buscar archivo recursivamente
 function findFile(dir, filename) {
@@ -177,9 +184,12 @@ function createWindow(port) {
   }
 
   mainWindow.on('closed', () => {
+    console.log('Ventana principal cerrada');
     mainWindow = null;
     if (server) {
-      server.close();
+      server.close(() => {
+        console.log('Servidor cerrado después de cerrar ventana');
+      });
     }
   });
 
@@ -244,6 +254,17 @@ function setupAutoUpdater() {
   // Error al verificar actualizaciones
   autoUpdater.on('error', (err) => {
     console.error('Error en auto-updater:', err);
+
+    // Mostrar error al usuario solo si es un error crítico durante la descarga
+    if (err.message && err.message.includes('download')) {
+      dialog.showMessageBox(mainWindow, {
+        type: 'error',
+        title: 'Error de Actualización',
+        message: 'No se pudo descargar la actualización',
+        detail: 'Por favor, intenta nuevamente más tarde o descarga la actualización manualmente desde GitHub.',
+        buttons: ['OK']
+      });
+    }
   });
 
   // Progreso de descarga
@@ -260,16 +281,37 @@ function setupAutoUpdater() {
       type: 'info',
       title: 'Actualización Lista',
       message: 'La actualización ha sido descargada',
-      detail: 'La aplicación se reiniciará para instalar la actualización.',
-      buttons: ['Reiniciar Ahora', 'Reiniciar Más Tarde'],
+      detail: 'La aplicación se cerrará e instalará la actualización automáticamente.',
+      buttons: ['Instalar Ahora', 'Instalar al Cerrar'],
       defaultId: 0,
       cancelId: 1
     }).then((result) => {
       if (result.response === 0) {
-        // Instalar y reiniciar inmediatamente
-        autoUpdater.quitAndInstall(false, true);
+        console.log('Usuario eligió instalar ahora');
+
+        // Cerrar el servidor HTTP primero
+        if (server) {
+          server.close(() => {
+            console.log('Servidor HTTP cerrado');
+          });
+        }
+
+        // Cerrar todas las ventanas
+        if (mainWindow) {
+          mainWindow.removeAllListeners('close');
+          mainWindow.close();
+        }
+
+        // Esperar un momento para asegurar que todo se cierre
+        setTimeout(() => {
+          console.log('Instalando actualización...');
+          // isSilent = false (mostrar instalador), isForceRunAfter = true (ejecutar después)
+          autoUpdater.quitAndInstall(false, true);
+        }, 500);
+      } else {
+        console.log('Usuario eligió instalar al cerrar');
+        // Si elige "Más tarde", se instalará al cerrar la app (autoInstallOnAppQuit = true)
       }
-      // Si elige "Más tarde", se instalará al cerrar la app (autoInstallOnAppQuit = true)
     });
   });
 
@@ -324,10 +366,40 @@ app.on('ready', () => {
   setupAutoUpdater();
 });
 
-app.on('window-all-closed', () => {
+app.on('before-quit', (event) => {
+  console.log('Aplicación a punto de cerrarse');
+
+  // Cerrar el servidor HTTP si existe
   if (server) {
-    server.close();
+    server.close(() => {
+      console.log('Servidor HTTP cerrado en before-quit');
+    });
   }
+
+  // Cerrar el stream de logs
+  if (logStream) {
+    logStream.end();
+  }
+});
+
+app.on('window-all-closed', () => {
+  console.log('Todas las ventanas cerradas');
+
+  // Cerrar el servidor HTTP
+  if (server) {
+    server.close(() => {
+      console.log('Servidor HTTP cerrado completamente');
+    });
+  }
+
+  // Cerrar el stream de logs
+  if (logStream) {
+    logStream.end(() => {
+      console.log('Stream de logs cerrado');
+    });
+  }
+
+  // En Windows y Linux, cerrar la aplicación
   if (process.platform !== 'darwin') {
     app.quit();
   }

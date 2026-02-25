@@ -28,7 +28,8 @@
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
     "allowElevation": true,
-    "perMachine": false
+    "perMachine": false,
+    "differentialPackage": true
   },
   "publish": {
     "provider": "github",
