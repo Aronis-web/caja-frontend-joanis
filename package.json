@@ -16,7 +16,9 @@
     "validate": "npm run typecheck && npm run lint && npm run format:check",
     "electron": "cross-env NODE_ENV=development concurrently \"npm run web\" \"wait-on http://localhost:8081 && electron .\"",
     "electron:build": "expo export --platform web --output-dir web-build && node fix-html.js && electron-builder build --win --x64 && node copy-assets.js",
-    "dist": "npm run electron:build"
+    "dist": "npm run electron:build",
+    "publish": "npm run electron:build -- --publish always",
+    "publish:draft": "npm run electron:build -- --publish onTagOrDraft"
   },
   "dependencies": {
     "@expo-google-fonts/baloo-2": "^0.4.2",
@@ -26,6 +28,7 @@
     "@react-navigation/native": "^6.1.18",
     "@react-navigation/native-stack": "^6.11.0",
     "axios": "^1.6.0",
+    "electron-updater": "^6.8.3",
     "expo": "~54.0.33",
     "expo-font": "~14.0.11",
     "expo-secure-store": "~15.0.8",

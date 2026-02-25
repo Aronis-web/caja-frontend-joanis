@@ -5,23 +5,37 @@
     "output": "dist"
   },
   "files": [
-    "web-build/**/*",
     "electron.js",
     "package.json",
     "node_modules/**/*"
   ],
-  "asarUnpack": [
-    "web-build/assets/**/*"
+  "extraResources": [
+    {
+      "from": "web-build",
+      "to": "web-build",
+      "filter": ["**/*"]
+    }
   ],
   "win": {
     "target": [
-      {
-        "target": "portable",
-        "arch": ["x64"]
-      }
+      "nsis"
     ],
-    "artifactName": "${productName}-${version}-Portable.${ext}",
-    "signAndEditExecutable": false
+    "signAndEditExecutable": false,
+    "publisherName": "CajaGrit"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "allowElevation": true,
+    "perMachine": false
+  },
+  "publish": {
+    "provider": "github",
+    "owner": "TU_USUARIO_GITHUB",
+    "repo": "TU_REPOSITORIO",
+    "private": false
   },
   "extraMetadata": {
     "main": "electron.js"

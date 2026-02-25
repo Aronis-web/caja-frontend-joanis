@@ -25,7 +25,7 @@ npm start
 
 ### Build
 
-#### Generar APK de Producción
+#### Generar APK de Producción (Android)
 Para generar el APK del proyecto usando EAS Build:
 
 ```bash
@@ -39,6 +39,29 @@ npx eas-cli build --platform android --profile production
 - Al finalizar, se proporciona un enlace de descarga del APK
 - El proceso toma aproximadamente 10-20 minutos
 - Requiere cuenta de Expo configurada
+
+#### Generar Ejecutable de Escritorio (Windows)
+
+**Build Local (sin publicar):**
+```bash
+npm run dist
+```
+Genera el instalador en `dist/CajaGrit Setup X.X.X.exe`
+
+**Publicar Actualización Automática:**
+```powershell
+# Configurar token de GitHub (solo primera vez)
+$env:GH_TOKEN="tu_token_github"
+
+# Publicar nueva versión
+.\publish-update.ps1 -Version "0.0.2"
+```
+
+**Notas:**
+- Requiere configurar GitHub Releases (ver `QUICK_UPDATE_GUIDE.md`)
+- Las apps instaladas se actualizan automáticamente
+- El sistema verifica actualizaciones al iniciar y cada 4 horas
+- Usa Semantic Versioning (MAJOR.MINOR.PATCH)
 
 ### Test
 

@@ -1,9 +1,10 @@
-const { app, BrowserWindow, protocol } = require('electron');
+const { app, BrowserWindow, protocol, dialog } = require('electron');
 const path = require('path');
 const url = require('url');
 const fs = require('fs');
 const http = require('http');
 const mime = require('mime-types');
+const { autoUpdater } = require('electron-updater');
 
 const isDev = process.env.NODE_ENV === 'development';
 const isPackaged = app.isPackaged;
@@ -11,6 +12,10 @@ const isPackaged = app.isPackaged;
 let mainWindow;
 let server;
 let logStream;
+
+// Configurar auto-updater
+autoUpdater.autoDownload = false; // No descargar automáticamente
+autoUpdater.autoInstallOnAppQuit = true; // Instalar al cerrar la app
 
 // Función para buscar archivo recursivamente
 function findFile(dir, filename) {
@@ -49,17 +54,15 @@ function findFile(dir, filename) {
 
 // Crear servidor HTTP simple para servir archivos estáticos
 function createServer() {
-  // Con asar, web-build está en el asar pero assets está en app.asar.unpacked
-  let webBuildPath;
-  if (isPackaged) {
-    const appPath = app.getAppPath();
-    webBuildPath = appPath.replace('app.asar', 'app.asar.unpacked') + '/web-build';
-  } else {
-    webBuildPath = path.join(__dirname, 'web-build');
-  }
+  // Use process.resourcesPath to get the correct path when packaged
+  // extraResources copies web-build to process.resourcesPath/web-build
+  const webBuildPath = isPackaged
+    ? path.join(process.resourcesPath, 'web-build')
+    : path.join(__dirname, 'web-build');
 
   console.log('App is packaged:', isPackaged);
   console.log('__dirname:', __dirname);
+  console.log('Resources path:', isPackaged ? process.resourcesPath : 'N/A');
   console.log('Web build path:', webBuildPath);
   console.log('Web build exists:', fs.existsSync(webBuildPath));
 
@@ -193,6 +196,100 @@ function createWindow(port) {
   });
 }
 
+// ===== SISTEMA DE ACTUALIZACIONES AUTOMÁTICAS =====
+
+// Configurar eventos del auto-updater
+function setupAutoUpdater() {
+  // Solo verificar actualizaciones en producción
+  if (isDev) {
+    console.log('Auto-updater deshabilitado en modo desarrollo');
+    return;
+  }
+
+  console.log('Configurando auto-updater...');
+
+  // Cuando hay una actualización disponible
+  autoUpdater.on('update-available', (info) => {
+    console.log('Actualización disponible:', info.version);
+
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Actualización Disponible',
+      message: `Nueva versión ${info.version} disponible`,
+      detail: '¿Deseas descargar e instalar la actualización ahora?',
+      buttons: ['Descargar', 'Más tarde'],
+      defaultId: 0,
+      cancelId: 1
+    }).then((result) => {
+      if (result.response === 0) {
+        // Usuario eligió descargar
+        autoUpdater.downloadUpdate();
+
+        // Mostrar progreso de descarga
+        dialog.showMessageBox(mainWindow, {
+          type: 'info',
+          title: 'Descargando Actualización',
+          message: 'La actualización se está descargando en segundo plano...',
+          buttons: ['OK']
+        });
+      }
+    });
+  });
+
+  // Cuando NO hay actualizaciones disponibles
+  autoUpdater.on('update-not-available', (info) => {
+    console.log('No hay actualizaciones disponibles');
+  });
+
+  // Error al verificar actualizaciones
+  autoUpdater.on('error', (err) => {
+    console.error('Error en auto-updater:', err);
+  });
+
+  // Progreso de descarga
+  autoUpdater.on('download-progress', (progressObj) => {
+    const percent = Math.round(progressObj.percent);
+    console.log(`Descargando actualización: ${percent}%`);
+  });
+
+  // Actualización descargada y lista para instalar
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log('Actualización descargada:', info.version);
+
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Actualización Lista',
+      message: 'La actualización ha sido descargada',
+      detail: 'La aplicación se reiniciará para instalar la actualización.',
+      buttons: ['Reiniciar Ahora', 'Reiniciar Más Tarde'],
+      defaultId: 0,
+      cancelId: 1
+    }).then((result) => {
+      if (result.response === 0) {
+        // Instalar y reiniciar inmediatamente
+        autoUpdater.quitAndInstall(false, true);
+      }
+      // Si elige "Más tarde", se instalará al cerrar la app (autoInstallOnAppQuit = true)
+    });
+  });
+
+  // Verificar actualizaciones al iniciar (después de 3 segundos)
+  setTimeout(() => {
+    console.log('Verificando actualizaciones...');
+    autoUpdater.checkForUpdates().catch(err => {
+      console.error('Error al verificar actualizaciones:', err);
+    });
+  }, 3000);
+
+  // Verificar actualizaciones cada 4 horas
+  setInterval(() => {
+    console.log('Verificación periódica de actualizaciones...');
+    autoUpdater.checkForUpdates().catch(err => {
+      console.error('Error al verificar actualizaciones:', err);
+    });
+  }, 4 * 60 * 60 * 1000); // 4 horas
+}
+
 app.on('ready', () => {
   // Configurar logging después de que la app esté lista
   const logFile = path.join(app.getPath('userData'), 'electron-server.log');
@@ -222,6 +319,9 @@ app.on('ready', () => {
   } else {
     createServer();
   }
+
+  // Inicializar sistema de actualizaciones automáticas
+  setupAutoUpdater();
 });
 
 app.on('window-all-closed', () => {
