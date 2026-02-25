@@ -33,8 +33,8 @@
   },
   "publish": {
     "provider": "github",
-    "owner": "TU_USUARIO_GITHUB",
-    "repo": "TU_REPOSITORIO",
+    "owner": "Aronis-web",
+    "repo": "caja-frontend-joanis",
     "private": false
   },
   "extraMetadata": {

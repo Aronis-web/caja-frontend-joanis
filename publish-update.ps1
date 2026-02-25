@@ -65,6 +65,6 @@ Write-Host "  ✓ Actualización publicada exitosamente" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "Versión: $Version" -ForegroundColor Cyan
-Write-Host "Release: https://github.com/TU_USUARIO/TU_REPOSITORIO/releases" -ForegroundColor Cyan
+Write-Host "Release: https://github.com/Aronis-web/caja-frontend-joanis/releases" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Las aplicaciones instaladas recibirán la notificación automáticamente." -ForegroundColor Yellow
