@@ -28,11 +28,11 @@
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
     "allowElevation": true,
-    "perMachine": false,
+    "perMachine": true,
     "differentialPackage": true,
     "deleteAppDataOnUninstall": false,
-    "runAfterFinish": true,
-    "include": "installer.nsh"
+    "runAfterFinish": false,
+    "guid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
   },
   "publish": {
     "provider": "github",

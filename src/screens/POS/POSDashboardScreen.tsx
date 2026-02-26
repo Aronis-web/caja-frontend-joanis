@@ -25,6 +25,11 @@ export default function POSDashboardScreen() {
 
   const [refreshing, setRefreshing] = useState(false);
 
+  console.log('📊 POSDashboardScreen renderizado');
+  console.log('📊 selectedCashRegister:', selectedCashRegister?.name);
+  console.log('📊 currentSession:', currentSession?.id);
+  console.log('📊 navigation:', navigation);
+
   useEffect(() => {
     if (!selectedCashRegister) {
       navigation.navigate(ROUTES.CASH_REGISTER_SELECTION as never);
@@ -46,6 +51,7 @@ export default function POSDashboardScreen() {
   };
 
   const handleOpenSession = () => {
+    console.log('🔓 Navegando a OpenSession...');
     navigation.navigate(ROUTES.OPEN_SESSION as never);
   };
 
@@ -172,7 +178,10 @@ export default function POSDashboardScreen() {
         {!currentSession ? (
           <TouchableOpacity
             style={[styles.actionButton, styles.primaryButton]}
-            onPress={handleOpenSession}
+            onPress={() => {
+              console.log('🔘 Botón "Abrir Caja" presionado');
+              handleOpenSession();
+            }}
           >
             <Text style={styles.actionButtonIcon}>🔓</Text>
             <Text style={styles.actionButtonText}>Abrir Caja</Text>
