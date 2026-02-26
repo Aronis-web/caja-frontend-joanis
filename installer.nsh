@@ -1,11 +1,24 @@
 !macro customInit
   ; Cerrar la aplicación si está ejecutándose
   DetailPrint "Cerrando CajaGrit si está en ejecución..."
+
+  ; Intentar cerrar múltiples veces para asegurar que se cierre
   nsExec::Exec 'taskkill /F /IM CajaGrit.exe /T'
   Pop $0
+  Sleep 1000
+
   nsExec::Exec 'taskkill /F /IM electron.exe /T'
   Pop $0
-  Sleep 3000
+  Sleep 1000
+
+  ; Segundo intento
+  nsExec::Exec 'taskkill /F /IM CajaGrit.exe /T'
+  Pop $0
+  Sleep 1000
+
+  nsExec::Exec 'taskkill /F /IM electron.exe /T'
+  Pop $0
+  Sleep 2000
 
   DetailPrint "Preparando instalación..."
 !macroend
