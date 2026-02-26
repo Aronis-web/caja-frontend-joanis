@@ -29,7 +29,13 @@
     "createStartMenuShortcut": true,
     "allowElevation": true,
     "perMachine": false,
-    "differentialPackage": true
+    "differentialPackage": true,
+    "deleteAppDataOnUninstall": false,
+    "installerLanguages": ["es"],
+    "language": "es",
+    "warningsAsErrors": false,
+    "runAfterFinish": true,
+    "menuCategory": true
   },
   "publish": {
     "provider": "github",
