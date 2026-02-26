@@ -7,6 +7,12 @@
 - No acumules cambios sin hacer commit.
 - Cada modificación debe ser versionada de inmediato.
 
+### Versionado y Builds
+- **IMPORTANTE**: Después de cada modificación funcional, se debe generar una nueva versión del instalador.
+- Incrementar la versión en `package.json` (seguir Semantic Versioning: MAJOR.MINOR.PATCH)
+- Generar el nuevo instalador con `npm run dist`
+- Esto asegura que los usuarios siempre tengan la última versión con las correcciones
+
 ## Reglas de Documentación
 
 ### Archivos de Documentación
