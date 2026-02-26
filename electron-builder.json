@@ -31,11 +31,7 @@
     "perMachine": false,
     "differentialPackage": true,
     "deleteAppDataOnUninstall": false,
-    "installerLanguages": ["Spanish"],
-    "language": "Spanish",
-    "warningsAsErrors": false,
-    "runAfterFinish": true,
-    "menuCategory": true
+    "runAfterFinish": true
   },
   "publish": {
     "provider": "github",
