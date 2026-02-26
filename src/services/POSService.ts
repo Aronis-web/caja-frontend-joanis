@@ -34,10 +34,10 @@ class POSService {
     const currentCompany = authService.getCurrentCompany();
     const currentSite = authService.getCurrentSite();
 
-    const headers: HeadersInit = {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'x-app-id': config.APP_ID,
-      ...options.headers,
+      ...(options.headers as Record<string, string>),
     };
 
     if (token) {
@@ -109,7 +109,7 @@ class POSService {
   }
 
   async getActiveSession(cashRegisterId: string): Promise<Session> {
-    return this.request<Session>(`/pos/sessions/active/${cashRegisterId}`);
+    return this.request<Session>(`/pos/sessions/current/${cashRegisterId}`);
   }
 
   async getSession(sessionId: string): Promise<Session> {
