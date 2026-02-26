@@ -42,7 +42,8 @@ export default function CashRegisterSelectionScreen() {
     try {
       setLoading(true);
       const registers = await loadCashRegistersBySite(currentSite.id);
-      setCashRegisters(registers.filter((r) => r.isActive));
+      // Filter by status === 'ACTIVE' (API returns status, not isActive)
+      setCashRegisters(registers.filter((r) => r.status === 'ACTIVE'));
     } catch (error) {
       Alert.alert('Error', 'No se pudieron cargar las cajas registradoras');
     } finally {

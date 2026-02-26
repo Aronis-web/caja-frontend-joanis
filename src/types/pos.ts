@@ -8,11 +8,23 @@ export interface CashRegister {
   code: string;
   siteId: string;
   emissionPointId: string;
-  isActive: boolean;
+  status: 'ACTIVE' | 'INACTIVE';
+  isActive?: boolean; // Deprecated, use status instead
+  isOpen: boolean;
   currentSessionId: string | null;
+  currentUserId: string | null;
+  allowNegativeBalance: boolean;
+  requiresManagerApproval: boolean;
+  maxCashAmountCents: number | null;
+  metadata: any;
+  companyId: string;
   createdAt: string;
   updatedAt: string;
+  createdBy: string;
+  deletedAt: string | null;
   emissionPoint?: EmissionPoint;
+  site?: any;
+  company?: any;
 }
 
 export interface EmissionPoint {
