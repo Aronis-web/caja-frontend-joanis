@@ -31,8 +31,8 @@
     "perMachine": false,
     "differentialPackage": true,
     "deleteAppDataOnUninstall": false,
-    "installerLanguages": ["es"],
-    "language": "es",
+    "installerLanguages": ["Spanish"],
+    "language": "Spanish",
     "warningsAsErrors": false,
     "runAfterFinish": true,
     "menuCategory": true
