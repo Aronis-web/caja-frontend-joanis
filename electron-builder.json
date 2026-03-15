@@ -23,15 +23,16 @@
     "signAndEditExecutable": false
   },
   "nsis": {
-    "oneClick": false,
-    "allowToChangeInstallationDirectory": true,
+    "oneClick": true,
+    "allowToChangeInstallationDirectory": false,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
     "allowElevation": true,
-    "perMachine": true,
+    "perMachine": false,
     "differentialPackage": true,
     "deleteAppDataOnUninstall": false,
-    "runAfterFinish": false,
+    "runAfterFinish": true,
+    "include": "build/installer.nsh",
     "guid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
   },
   "publish": {
