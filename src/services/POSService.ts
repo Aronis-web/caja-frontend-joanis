@@ -201,44 +201,60 @@ class POSService {
       `/catalog/products/autocomplete?q=${encodeURIComponent(query)}&limit=${limit}`
     );
 
+    console.log(`🔍 Búsqueda de productos: "${query}" - ${products.length} resultados`);
+
     // Agregar campos calculados para compatibilidad con el código existente
-    return products.map((product) => ({
-      ...product,
-      code: product.sku,
-      name: product.title,
-      isActive: product.status === 'ACTIVE',
-      imageUrl: product.photos && product.photos.length > 0 ? product.photos[0] : undefined,
+    return products.map((product) => {
       // Obtener el precio de la primera presentación del primer perfil
-      price:
+      let price = 0;
+      if (
         product.priceProfiles &&
         product.priceProfiles.length > 0 &&
         product.priceProfiles[0].prices &&
         product.priceProfiles[0].prices.length > 0
-          ? product.priceProfiles[0].prices[0].priceCents / 100
-          : 0,
-      // Por ahora no tenemos stock en la respuesta, se puede agregar después
-      stock: 999,
-      taxRate: 0.18, // IGV por defecto
-    }));
+      ) {
+        price = product.priceProfiles[0].prices[0].priceCents / 100;
+      }
+
+      const mappedProduct = {
+        ...product,
+        code: product.sku || '',
+        name: product.title || 'Sin nombre',
+        description: product.title || '',
+        isActive: product.status === 'ACTIVE' || product.status === 'PRELIMINARY',
+        imageUrl: product.photos && product.photos.length > 0 ? product.photos[0] : undefined,
+        price,
+        stock: 999, // Por ahora no tenemos stock en la respuesta
+        taxRate: 0.18, // IGV por defecto (18%)
+      };
+
+      return mappedProduct;
+    });
   }
 
   async getProduct(id: string): Promise<Product> {
     const product = await this.request<Product>(`/catalog/products/${id}`);
 
+    // Obtener el precio de la primera presentación del primer perfil
+    let price = 0;
+    if (
+      product.priceProfiles &&
+      product.priceProfiles.length > 0 &&
+      product.priceProfiles[0].prices &&
+      product.priceProfiles[0].prices.length > 0
+    ) {
+      price = product.priceProfiles[0].prices[0].priceCents / 100;
+    }
+
     // Agregar campos calculados para compatibilidad
     return {
       ...product,
-      code: product.sku,
-      name: product.title,
-      isActive: product.status === 'ACTIVE',
+      code: product.sku || '',
+      name: product.title || 'Sin nombre',
+      description: product.title || '',
+      isActive: product.status === 'ACTIVE' || product.status === 'PRELIMINARY',
       imageUrl: product.photos && product.photos.length > 0 ? product.photos[0] : undefined,
-      price:
-        product.priceProfiles &&
-        product.priceProfiles.length > 0 &&
-        product.priceProfiles[0].prices &&
-        product.priceProfiles[0].prices.length > 0
-          ? product.priceProfiles[0].prices[0].priceCents / 100
-          : 0,
+      price,
       stock: 999,
       taxRate: 0.18,
     };

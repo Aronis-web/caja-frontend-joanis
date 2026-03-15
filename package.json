@@ -1,7 +1,7 @@
 {
   "name": "CajaGrit",
   "private": true,
-  "version": "0.0.33",
+  "version": "0.0.34",
   "description": "Sistema de Punto de Venta (POS) para gestión de cajas registradoras",
   "author": "Aronis Web",
   "main": "index.js",

@@ -74,10 +74,15 @@ export default function NewSaleScreen() {
 
     try {
       setSearching(true);
-      const results = await posService.searchProducts(query);
-      setSearchResults(results.filter((p) => p.isActive && p.stock > 0));
+      const results = await posService.searchProducts(query, 20);
+      console.log('🔍 Productos encontrados:', results.length);
+      console.log('📦 Primer producto:', results[0]);
+      // El backend ya filtra por productos activos, no necesitamos filtrar aquí
+      setSearchResults(results);
     } catch (error) {
-      console.error('Error searching products:', error);
+      console.error('❌ Error searching products:', error);
+      Alert.alert('Error', 'No se pudieron buscar productos. Verifica tu conexión.');
+      setSearchResults([]);
     } finally {
       setSearching(false);
     }
