@@ -35,12 +35,12 @@
     "signAndEditExecutable": false
   },
   "nsis": {
-    "oneClick": false,
-    "allowToChangeInstallationDirectory": true,
+    "oneClick": true,
+    "perMachine": false,
+    "allowElevation": true,
+    "allowToChangeInstallationDirectory": false,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "allowElevation": true,
-    "perMachine": false,
     "differentialPackage": true,
     "deleteAppDataOnUninstall": false,
     "runAfterFinish": true,

@@ -29,48 +29,40 @@ export default function OpenSessionScreen() {
 
   const handleOpenSession = async () => {
     if (!selectedCashRegister || !user) {
-      Alert.alert('Error', 'Información de caja o usuario no disponible');
+      console.error('❌ Error: Información de caja o usuario no disponible');
       return;
     }
 
     const balance = parseFloat(openingBalance);
     if (isNaN(balance) || balance < 0) {
-      Alert.alert('Error', 'El balance de apertura debe ser un número válido mayor o igual a 0');
+      console.error('❌ Error: El balance de apertura debe ser un número válido mayor o igual a 0');
       return;
     }
 
-    Alert.alert(
-      'Confirmar Apertura',
-      `¿Está seguro de abrir la caja con un balance inicial de S/ ${balance.toFixed(2)}?`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Abrir Caja',
-          onPress: async () => {
-            try {
-              await openSession(
-                selectedCashRegister.id,
-                user.id,
-                balance,
-                notes || `Apertura de caja - ${new Date().toLocaleDateString('es-PE')}`
-              );
+    try {
+      console.log('🔄 Iniciando apertura de sesión...');
+      console.log('📊 Balance inicial:', balance);
+      console.log('🏪 Caja registradora:', selectedCashRegister.name);
 
-              Alert.alert('Éxito', 'La caja ha sido abierta exitosamente', [
-                {
-                  text: 'OK',
-                  onPress: () => navigation.navigate(ROUTES.POS_DASHBOARD as never),
-                },
-              ]);
-            } catch (error) {
-              Alert.alert(
-                'Error',
-                error instanceof Error ? error.message : 'No se pudo abrir la sesión'
-              );
-            }
-          },
-        },
-      ]
-    );
+      await openSession(
+        selectedCashRegister.id,
+        user.id,
+        balance,
+        notes || `Apertura de caja - ${new Date().toLocaleDateString('es-PE')}`
+      );
+
+      console.log('✅ Sesión abierta exitosamente');
+      console.log('🔙 Navegando de vuelta al dashboard...');
+
+      // Navegar de vuelta al dashboard
+      navigation.goBack();
+    } catch (error) {
+      console.error('❌ Error al abrir sesión:', error);
+      console.error(
+        '❌ Mensaje de error:',
+        error instanceof Error ? error.message : 'Error desconocido'
+      );
+    }
   };
 
   return (

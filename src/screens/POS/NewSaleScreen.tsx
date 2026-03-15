@@ -57,8 +57,8 @@ export default function NewSaleScreen() {
 
   useEffect(() => {
     if (!currentSession) {
-      Alert.alert('Error', 'No hay sesión activa');
-      navigation.goBack();
+      // Si no hay sesión activa, redirigir a abrir sesión
+      navigation.navigate(ROUTES.OPEN_SESSION as never);
     }
   }, [currentSession]);
 

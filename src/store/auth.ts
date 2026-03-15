@@ -123,9 +123,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       console.log('✅ Login successful');
 
-      // Clear previous company/site selection
-      await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_COMPANY);
-      await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_SITE);
+      // Don't clear company/site selection on login
+      // This allows resuming active sessions
+      // await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_COMPANY);
+      // await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_SITE);
 
       await secureStorage.setItem(config.STORAGE_KEYS.AUTH_TOKEN, response.accessToken);
       await secureStorage.setItem(config.STORAGE_KEYS.REFRESH_TOKEN, response.refreshToken);
@@ -146,6 +147,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       authService.setAccessToken(response.accessToken);
 
+      // Try to load previously selected company and site
+      let savedCompany = null;
+      let savedSite = null;
+      try {
+        const companyData = await AsyncStorage.getItem(config.STORAGE_KEYS.CURRENT_COMPANY);
+        const siteData = await AsyncStorage.getItem(config.STORAGE_KEYS.CURRENT_SITE);
+        if (companyData) savedCompany = JSON.parse(companyData);
+        if (siteData) savedSite = JSON.parse(siteData);
+        console.log('📦 Empresa guardada cargada:', savedCompany?.name);
+        console.log('🏪 Sede guardada cargada:', savedSite?.name);
+      } catch (error) {
+        console.log('ℹ️ No hay empresa/sede guardada');
+      }
+
       set({
         user: response.user,
         token: response.accessToken,
@@ -154,8 +169,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         isAuthenticated: true,
         error: null,
         isLoading: false,
-        currentCompany: null,
-        currentSite: null,
+        currentCompany: savedCompany,
+        currentSite: savedSite,
       });
 
       return true;

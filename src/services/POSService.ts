@@ -95,7 +95,7 @@ class POSService {
 
   // Sessions
   async openSession(data: OpenSessionRequest): Promise<Session> {
-    return this.request<Session>('/pos/sessions/open', {
+    return this.request<Session>(`/pos/sessions/open/${data.cashRegisterId}`, {
       method: 'POST',
       body: JSON.stringify(data),
     });

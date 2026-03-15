@@ -47,16 +47,16 @@ export interface Session {
   userId: string;
   openedAt: string;
   closedAt?: string;
-  openingBalance: number;
-  closingBalance?: number;
-  expectedBalance?: number;
-  difference?: number;
-  currentBalance: number;
+  openingCashCents: number;
+  closingCashCents?: number;
+  expectedCashCents?: number;
+  differenceCents?: number;
+  currentCashCents: number;
   status: 'open' | 'closed';
   notes?: string;
-  totalSales?: number;
-  totalCashIn?: number;
-  totalCashOut?: number;
+  totalSalesCents?: number;
+  totalCashInCents?: number;
+  totalCashOutCents?: number;
   totalTransactions?: number;
   cashRegister?: CashRegister;
   user?: {
@@ -68,13 +68,13 @@ export interface Session {
 }
 
 export interface SessionSummary {
-  openingBalance: number;
-  sales: number;
-  cashIn: number;
-  cashOut: number;
-  expectedBalance: number;
-  actualBalance: number;
-  difference: number;
+  openingCashCents: number;
+  salesCents: number;
+  cashInCents: number;
+  cashOutCents: number;
+  expectedCashCents: number;
+  actualCashCents: number;
+  differenceCents: number;
 }
 
 export interface Transaction {
@@ -179,12 +179,12 @@ export interface Customer {
 export interface OpenSessionRequest {
   cashRegisterId: string;
   userId: string;
-  openingBalance: number;
+  openingCashCents: number;
   notes?: string;
 }
 
 export interface CloseSessionRequest {
-  closingBalance: number;
+  closingCashCents: number;
   notes?: string;
 }
 

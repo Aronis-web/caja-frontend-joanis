@@ -1,0 +1,7 @@
+{
+  "tag_name": "v0.0.30",
+  "name": "CajaGrit v0.0.30 - Nueva Venta como Pantalla Principal",
+  "body": "### Cambios en v0.0.30\n\n- **NUEVO**: Pantalla \"Nueva Venta\" es ahora el home principal del POS\n  - Al tener una sesión activa, el usuario va directo a Nueva Venta\n  - Interfaz más eficiente para cajeros que realizan ventas constantemente\n  - Si no hay sesión activa, automáticamente redirige a Abrir Sesión\n  - El dashboard de resumen sigue disponible desde el menú de navegación\n\n### Flujo optimizado para cajeros\n\n1. Usuario hace login con sesión activa\n2. Va directo a pantalla de Nueva Venta ✅\n3. Puede comenzar a vender inmediatamente\n4. Acceso rápido a todas las funciones del POS\n\n### Cambios previos (v0.0.29)\n\n- Navegación directa al dashboard si hay sesión activa\n- Login carga automáticamente empresa, sede y caja guardadas\n- No es necesario pasar por selección si hay sesión abierta\n\n### Cambios previos (v0.0.28)\n\n- Carga automática de sesión activa al iniciar\n- Prevención del error \"Cash register is already open\"\n- Sincronización automática cada 30 segundos\n\n### Instalación\n\n1. Descarga e instala `CajaGrit Setup 0.0.30.exe`\n2. Comienza a vender inmediatamente",
+  "draft": false,
+  "prerelease": false
+}

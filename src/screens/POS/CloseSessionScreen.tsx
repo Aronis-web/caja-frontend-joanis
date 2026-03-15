@@ -50,7 +50,9 @@ export default function CloseSessionScreen() {
   const calculateDifference = () => {
     const balance = parseFloat(closingBalance);
     if (isNaN(balance) || !summary?.summary) return 0;
-    return balance - summary.summary.expectedBalance;
+    // Convertir expectedCashCents a soles para comparar
+    const expectedBalanceInSoles = (summary.summary.expectedCashCents || 0) / 100;
+    return balance - expectedBalanceInSoles;
   };
 
   const handleCloseSession = async () => {
@@ -72,7 +74,7 @@ export default function CloseSessionScreen() {
     Alert.alert(
       'Confirmar Cierre',
       `¿Está seguro de cerrar la caja?\n\n` +
-        `Balance esperado: S/ ${summary?.summary?.expectedBalance.toFixed(2) || '0.00'}\n` +
+        `Balance esperado: S/ ${((summary?.summary?.expectedCashCents || 0) / 100).toFixed(2)}\n` +
         `Balance contado: S/ ${balance.toFixed(2)}` +
         differenceText,
       [
@@ -117,7 +119,11 @@ export default function CloseSessionScreen() {
     );
   }
 
-  const formatCurrency = (amount: number) => `S/ ${amount.toFixed(2)}`;
+  const formatCurrency = (amountInCents: number) => {
+    // Convertir de centavos a soles
+    const amountInSoles = amountInCents / 100;
+    return `S/ ${amountInSoles.toFixed(2)}`;
+  };
 
   return (
     <ScrollView style={styles.container}>
@@ -134,28 +140,28 @@ export default function CloseSessionScreen() {
           <View style={styles.summaryRow}>
             <Text style={styles.summaryLabel}>Balance Inicial:</Text>
             <Text style={styles.summaryValue}>
-              {formatCurrency(summary?.summary?.openingBalance || 0)}
+              {formatCurrency(summary?.summary?.openingCashCents || 0)}
             </Text>
           </View>
 
           <View style={styles.summaryRow}>
             <Text style={styles.summaryLabel}>+ Ventas:</Text>
             <Text style={[styles.summaryValue, styles.positiveValue]}>
-              {formatCurrency(summary?.summary?.sales || 0)}
+              {formatCurrency(summary?.summary?.salesCents || 0)}
             </Text>
           </View>
 
           <View style={styles.summaryRow}>
             <Text style={styles.summaryLabel}>+ Ingresos:</Text>
             <Text style={[styles.summaryValue, styles.positiveValue]}>
-              {formatCurrency(summary?.summary?.cashIn || 0)}
+              {formatCurrency(summary?.summary?.cashInCents || 0)}
             </Text>
           </View>
 
           <View style={styles.summaryRow}>
             <Text style={styles.summaryLabel}>- Retiros:</Text>
             <Text style={[styles.summaryValue, styles.negativeValue]}>
-              {formatCurrency(summary?.summary?.cashOut || 0)}
+              {formatCurrency(summary?.summary?.cashOutCents || 0)}
             </Text>
           </View>
 
@@ -164,7 +170,7 @@ export default function CloseSessionScreen() {
           <View style={styles.summaryRow}>
             <Text style={styles.summaryLabelBold}>Balance Esperado:</Text>
             <Text style={styles.summaryValueBold}>
-              {formatCurrency(summary?.summary?.expectedBalance || 0)}
+              {formatCurrency(summary?.summary?.expectedCashCents || 0)}
             </Text>
           </View>
         </View>

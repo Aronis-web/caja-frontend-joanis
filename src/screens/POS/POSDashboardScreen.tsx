@@ -21,7 +21,8 @@ import { ROUTES } from '@/constants/routes';
 export default function POSDashboardScreen() {
   const navigation = useNavigation();
   const user = useAuthStore((state) => state.user);
-  const { selectedCashRegister, currentSession, refreshSession, isLoading } = usePOSStore();
+  const { selectedCashRegister, currentSession, refreshSession, loadActiveSession, isLoading } =
+    usePOSStore();
 
   const [refreshing, setRefreshing] = useState(false);
 
@@ -35,6 +36,19 @@ export default function POSDashboardScreen() {
       navigation.navigate(ROUTES.CASH_REGISTER_SELECTION as never);
       return;
     }
+
+    // Cargar sesión activa al iniciar
+    const loadSession = async () => {
+      try {
+        console.log('🔄 Cargando sesión activa para caja:', selectedCashRegister.id);
+        await loadActiveSession(selectedCashRegister.id);
+        console.log('✅ Sesión activa cargada');
+      } catch (error) {
+        console.log('ℹ️ No hay sesión activa o error al cargar:', error);
+      }
+    };
+
+    loadSession();
 
     // Refresh session every 30 seconds
     const interval = setInterval(() => {
@@ -87,8 +101,10 @@ export default function POSDashboardScreen() {
     navigation.navigate(ROUTES.CLOSE_SESSION as never);
   };
 
-  const formatCurrency = (amount: number) => {
-    return `S/ ${amount.toFixed(2)}`;
+  const formatCurrency = (amountInCents: number) => {
+    // Convertir de centavos a soles
+    const amountInSoles = amountInCents / 100;
+    return `S/ ${amountInSoles.toFixed(2)}`;
   };
 
   const formatDateTime = (dateString: string) => {
@@ -130,13 +146,15 @@ export default function POSDashboardScreen() {
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Balance Actual:</Text>
             <Text style={styles.infoValueHighlight}>
-              {formatCurrency(currentSession.currentBalance)}
+              {formatCurrency(currentSession.currentCashCents)}
             </Text>
           </View>
 
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Ventas del día:</Text>
-            <Text style={styles.infoValue}>{formatCurrency(currentSession.totalSales || 0)}</Text>
+            <Text style={styles.infoValue}>
+              {formatCurrency(currentSession.totalSalesCents || 0)}
+            </Text>
           </View>
 
           <View style={styles.infoRow}>

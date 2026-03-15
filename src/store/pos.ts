@@ -139,10 +139,12 @@ export const usePOSStore = create<POSState>((set, get) => ({
   openSession: async (cashRegisterId, userId, openingBalance, notes) => {
     try {
       set({ isLoading: true, error: null });
+      // Convertir de soles a centavos (multiplicar por 100)
+      const openingCashCents = Math.round(openingBalance * 100);
       const session = await posService.openSession({
         cashRegisterId,
         userId,
-        openingBalance,
+        openingCashCents,
         notes,
       });
       set({ currentSession: session, isLoading: false });
@@ -157,8 +159,10 @@ export const usePOSStore = create<POSState>((set, get) => ({
   closeSession: async (sessionId, closingBalance, notes) => {
     try {
       set({ isLoading: true, error: null });
+      // Convertir de soles a centavos (multiplicar por 100)
+      const closingCashCents = Math.round(closingBalance * 100);
       const session = await posService.closeSession(sessionId, {
-        closingBalance,
+        closingCashCents,
         notes,
       });
       set({ currentSession: null, isLoading: false });

@@ -68,8 +68,13 @@ const POSStack = React.memo(function POSStack() {
   return (
     <POSStackNavigator.Navigator
       screenOptions={{ headerShown: true }}
-      initialRouteName={POS_ROUTES.POS_DASHBOARD}
+      initialRouteName={POS_ROUTES.NEW_SALE}
     >
+      <POSStackNavigator.Screen
+        name={POS_ROUTES.NEW_SALE}
+        component={NewSaleScreen}
+        options={{ title: 'Nueva Venta', headerShown: false }}
+      />
       <POSStackNavigator.Screen
         name={POS_ROUTES.POS_DASHBOARD}
         component={POSDashboardScreen}
@@ -84,11 +89,6 @@ const POSStack = React.memo(function POSStack() {
         name={POS_ROUTES.CLOSE_SESSION}
         component={CloseSessionScreen}
         options={{ title: 'Cerrar Sesión' }}
-      />
-      <POSStackNavigator.Screen
-        name={POS_ROUTES.NEW_SALE}
-        component={NewSaleScreen}
-        options={{ title: 'Nueva Venta', headerShown: false }}
       />
       <POSStackNavigator.Screen
         name={POS_ROUTES.SALE_DETAIL}

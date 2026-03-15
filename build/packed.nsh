@@ -1,0 +1,1 @@
+!define NSIS_PACKEDVERSION 1 
