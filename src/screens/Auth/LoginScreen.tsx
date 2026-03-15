@@ -15,6 +15,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/store/auth';
 
+// Importar versión desde package.json
+const packageJson = require('../../../package.json');
+
 interface LoginScreenProps {
   navigation?: any;
 }
@@ -109,7 +112,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = () => {
                 isTablet && isLandscape && styles.subtitleLandscape,
               ]}
             >
-              Inicia sesión en Caja Grit - v0.0.2
+              Inicia sesión en Caja Grit - v{packageJson.version}
             </Text>
           </View>
 
