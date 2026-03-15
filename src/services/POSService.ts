@@ -224,7 +224,7 @@ class POSService {
         isActive: product.status === 'ACTIVE' || product.status === 'PRELIMINARY',
         imageUrl: product.photos && product.photos.length > 0 ? product.photos[0] : undefined,
         price,
-        stock: 999, // Por ahora no tenemos stock en la respuesta
+        stock: 999, // Stock placeholder - se obtiene al seleccionar el producto con getProduct()
         taxRate: 0.18, // IGV por defecto (18%)
       };
 
@@ -234,6 +234,18 @@ class POSService {
 
   async getProduct(id: string): Promise<Product> {
     const product = await this.request<Product>(`/catalog/products/${id}`);
+
+    // Obtener stock total del producto
+    let stock = 0;
+    try {
+      const stockResponse = await this.request<{ total: number }>(
+        `/admin/inventory/stock/product/${id}/total`
+      );
+      stock = stockResponse.total || 0;
+    } catch (error) {
+      console.warn(`⚠️ No se pudo obtener stock para producto ${id}:`, error);
+      stock = 0; // Si falla, asumimos sin stock
+    }
 
     // Obtener el precio de la primera presentación del primer perfil
     let price = 0;
@@ -255,7 +267,7 @@ class POSService {
       isActive: product.status === 'ACTIVE' || product.status === 'PRELIMINARY',
       imageUrl: product.photos && product.photos.length > 0 ? product.photos[0] : undefined,
       price,
-      stock: 999,
+      stock,
       taxRate: 0.18,
     };
   }

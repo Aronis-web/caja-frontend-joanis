@@ -88,10 +88,26 @@ export default function NewSaleScreen() {
     }
   };
 
-  const handleAddProduct = (product: Product) => {
-    addItemToCart(product, 1);
-    setSearchQuery('');
-    setSearchResults([]);
+  const handleAddProduct = async (product: Product) => {
+    try {
+      // Obtener información completa del producto incluyendo stock real
+      console.log(`📦 Obteniendo stock para producto: ${product.name}`);
+      const fullProduct = await posService.getProduct(product.id);
+
+      console.log(`✅ Stock disponible: ${fullProduct.stock} unidades`);
+
+      if (fullProduct.stock <= 0) {
+        Alert.alert('Sin Stock', `El producto "${fullProduct.name}" no tiene stock disponible.`);
+        return;
+      }
+
+      addItemToCart(fullProduct, 1);
+      setSearchQuery('');
+      setSearchResults([]);
+    } catch (error) {
+      console.error('❌ Error al obtener producto:', error);
+      Alert.alert('Error', 'No se pudo agregar el producto. Intenta nuevamente.');
+    }
   };
 
   const handleProcessSale = () => {
