@@ -165,12 +165,23 @@ class POSService {
 
   async downloadSalePDF(saleId: string, documentId: string): Promise<Blob> {
     const token = authService.getAccessToken();
+    const currentCompany = authService.getCurrentCompany();
+    const currentSite = authService.getCurrentSite();
+
     const headers: HeadersInit = {
       'x-app-id': config.APP_ID,
     };
 
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    if (currentCompany) {
+      headers['x-company-id'] = currentCompany.id;
+    }
+
+    if (currentSite) {
+      headers['x-site-id'] = currentSite.id;
     }
 
     const response = await fetch(`${this.baseURL}/sales/${saleId}/documents/${documentId}/pdf`, {
