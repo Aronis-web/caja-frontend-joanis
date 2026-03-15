@@ -152,16 +152,56 @@ export interface SaleInfo {
   message: string;
 }
 
-export interface Product {
+export interface ProductPresentation {
   id: string;
   code: string;
   name: string;
+  isBase: boolean;
+  factorToBase: number;
+}
+
+export interface ProductPresentationPrice {
+  presentationId: string;
+  presentationCode: string;
+  presentationName: string;
+  priceCents: number;
+  currency: string;
+  isOverridden: boolean;
+}
+
+export interface ProductPriceProfile {
+  profileId: string;
+  profileCode: string;
+  profileName: string;
+  prices: ProductPresentationPrice[];
+}
+
+export interface ProductCategory {
+  id: string;
+  name: string;
+}
+
+export interface Product {
+  id: string;
+  correlativeNumber: number;
+  title: string;
+  sku: string;
+  barcode?: string;
+  status: string;
+  costCents: number;
+  currency: string;
+  category: ProductCategory;
+  presentations: ProductPresentation[];
+  priceProfiles: ProductPriceProfile[];
+  photos: string[];
+  // Campos calculados para compatibilidad
+  code?: string;
+  name?: string;
   description?: string;
-  price: number;
-  stock: number;
-  taxRate: number;
-  isActive: boolean;
-  category?: string;
+  price?: number;
+  stock?: number;
+  taxRate?: number;
+  isActive?: boolean;
   imageUrl?: string;
 }
 

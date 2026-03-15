@@ -196,12 +196,52 @@ class POSService {
   }
 
   // Products (for sale creation)
-  async searchProducts(query: string): Promise<Product[]> {
-    return this.request<Product[]>(`/products/search?q=${encodeURIComponent(query)}`);
+  async searchProducts(query: string, limit: number = 10): Promise<Product[]> {
+    const products = await this.request<Product[]>(
+      `/catalog/products/autocomplete?q=${encodeURIComponent(query)}&limit=${limit}`
+    );
+
+    // Agregar campos calculados para compatibilidad con el código existente
+    return products.map((product) => ({
+      ...product,
+      code: product.sku,
+      name: product.title,
+      isActive: product.status === 'ACTIVE',
+      imageUrl: product.photos && product.photos.length > 0 ? product.photos[0] : undefined,
+      // Obtener el precio de la primera presentación del primer perfil
+      price:
+        product.priceProfiles &&
+        product.priceProfiles.length > 0 &&
+        product.priceProfiles[0].prices &&
+        product.priceProfiles[0].prices.length > 0
+          ? product.priceProfiles[0].prices[0].priceCents / 100
+          : 0,
+      // Por ahora no tenemos stock en la respuesta, se puede agregar después
+      stock: 999,
+      taxRate: 0.18, // IGV por defecto
+    }));
   }
 
   async getProduct(id: string): Promise<Product> {
-    return this.request<Product>(`/products/${id}`);
+    const product = await this.request<Product>(`/catalog/products/${id}`);
+
+    // Agregar campos calculados para compatibilidad
+    return {
+      ...product,
+      code: product.sku,
+      name: product.title,
+      isActive: product.status === 'ACTIVE',
+      imageUrl: product.photos && product.photos.length > 0 ? product.photos[0] : undefined,
+      price:
+        product.priceProfiles &&
+        product.priceProfiles.length > 0 &&
+        product.priceProfiles[0].prices &&
+        product.priceProfiles[0].prices.length > 0
+          ? product.priceProfiles[0].prices[0].priceCents / 100
+          : 0,
+      stock: 999,
+      taxRate: 0.18,
+    };
   }
 
   // Customers (for sale creation)
