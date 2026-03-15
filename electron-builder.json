@@ -35,8 +35,8 @@
     "signAndEditExecutable": false
   },
   "nsis": {
-    "oneClick": true,
-    "allowToChangeInstallationDirectory": false,
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
     "allowElevation": true,
@@ -45,6 +45,8 @@
     "deleteAppDataOnUninstall": false,
     "runAfterFinish": true,
     "warningsAsErrors": false,
+    "displayLanguageSelector": false,
+    "installerLanguages": ["en_US"],
     "guid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
   },
   "publish": {
