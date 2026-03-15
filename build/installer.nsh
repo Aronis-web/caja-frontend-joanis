@@ -1,29 +1,34 @@
 ; Script NSIS personalizado para cerrar la aplicación antes de instalar/actualizar
 
 !macro customInit
-  ; Cerrar la aplicación si está en ejecución antes de instalar
-  ${ifNot} ${isUpdated}
-    ; Buscar y cerrar el proceso CajaGrit.exe
-    nsExec::Exec 'taskkill /F /IM "CajaGrit.exe" /T'
-    Pop $0
+  ; Intentar cerrar la aplicación de forma amigable primero
+  nsExec::Exec 'taskkill /IM "CajaGrit.exe"'
+  Pop $0
+  Sleep 2000
 
-    ; Esperar un momento para que el proceso se cierre completamente
-    Sleep 1000
-  ${endIf}
-!macroend
-
-!macro customInstall
-  ; Cerrar la aplicación si está en ejecución durante la instalación
+  ; Si aún está corriendo, forzar el cierre
   nsExec::Exec 'taskkill /F /IM "CajaGrit.exe" /T'
   Pop $0
-
-  ; Esperar un momento para que el proceso se cierre completamente
   Sleep 1000
 !macroend
 
-!macro preInit
-  ; Cerrar la aplicación antes de que comience la instalación
+!macro customInstall
+  ; Cerrar todos los procesos relacionados
   nsExec::Exec 'taskkill /F /IM "CajaGrit.exe" /T'
   Pop $0
-  Sleep 500
+  Sleep 1500
+!macroend
+
+!macro preInit
+  ; Cerrar antes de iniciar la instalación
+  nsExec::Exec 'taskkill /F /IM "CajaGrit.exe" /T'
+  Pop $0
+  Sleep 1000
+!macroend
+
+!macro customUnInit
+  ; Cerrar al desinstalar
+  nsExec::Exec 'taskkill /F /IM "CajaGrit.exe" /T'
+  Pop $0
+  Sleep 1000
 !macroend
