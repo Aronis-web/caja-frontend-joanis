@@ -54,6 +54,9 @@ export default function NewSaleScreen() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showCustomerSearch, setShowCustomerSearch] = useState(false);
+  const [showRecentSales, setShowRecentSales] = useState(false);
+  const [recentSales, setRecentSales] = useState<any[]>([]);
+  const [loadingSales, setLoadingSales] = useState(false);
 
   useEffect(() => {
     if (!currentSession) {
@@ -100,6 +103,22 @@ export default function NewSaleScreen() {
     setShowPaymentModal(true);
   };
 
+  const handleLoadRecentSales = async () => {
+    if (!currentSession) return;
+
+    try {
+      setLoadingSales(true);
+      const sales = await posService.getRecentSales(currentSession.id, 20);
+      setRecentSales(sales);
+      setShowRecentSales(true);
+    } catch (error) {
+      console.error('Error loading recent sales:', error);
+      Alert.alert('Error', 'No se pudieron cargar las ventas recientes');
+    } finally {
+      setLoadingSales(false);
+    }
+  };
+
   const handleCompleteSale = async () => {
     const total = getCartTotal();
     const paymentsTotal = getPaymentsTotal();
@@ -119,12 +138,6 @@ export default function NewSaleScreen() {
         `${result.message}\n\nEl documento se está generando en segundo plano.`,
         [
           {
-            text: 'Ver Venta',
-            onPress: () => {
-              navigation.navigate(ROUTES.SALE_DETAIL as never, { saleId: result.saleId });
-            },
-          },
-          {
             text: 'Nueva Venta',
             onPress: () => {
               clearCart();
@@ -135,6 +148,14 @@ export default function NewSaleScreen() {
           },
         ]
       );
+
+      // Limpiar automáticamente después de 2 segundos
+      setTimeout(() => {
+        clearCart();
+        clearPayments();
+        setSelectedCustomer(null);
+        setDocumentType('03');
+      }, 2000);
     } catch (error) {
       Alert.alert('Error', error instanceof Error ? error.message : 'No se pudo procesar la venta');
     }
@@ -196,9 +217,25 @@ export default function NewSaleScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Nueva Venta</Text>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Text style={styles.closeButton}>✕</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.recentSalesButton}
+            onPress={handleLoadRecentSales}
+            disabled={loadingSales}
+          >
+            {loadingSales ? (
+              <ActivityIndicator size="small" color="#007AFF" />
+            ) : (
+              <>
+                <Text style={styles.recentSalesIcon}>📋</Text>
+                <Text style={styles.recentSalesText}>Últimas Ventas</Text>
+              </>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => navigation.navigate(ROUTES.POS_DASHBOARD as never)}>
+            <Text style={styles.menuButton}>☰</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.content}>
@@ -424,6 +461,85 @@ export default function NewSaleScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Recent Sales Modal */}
+      <Modal
+        visible={showRecentSales}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowRecentSales(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.salesModalContent}>
+            <View style={styles.salesModalHeader}>
+              <Text style={styles.modalTitle}>Últimas Ventas</Text>
+              <TouchableOpacity onPress={() => setShowRecentSales(false)}>
+                <Text style={styles.closeButton}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.salesList}>
+              {recentSales.length === 0 ? (
+                <View style={styles.emptySales}>
+                  <Text style={styles.emptySalesText}>No hay ventas registradas</Text>
+                </View>
+              ) : (
+                recentSales.map((sale) => (
+                  <TouchableOpacity
+                    key={sale.id}
+                    style={styles.saleItem}
+                    onPress={() => {
+                      setShowRecentSales(false);
+                      navigation.navigate(ROUTES.SALE_DETAIL as never, { saleId: sale.id });
+                    }}
+                  >
+                    <View style={styles.saleItemHeader}>
+                      <Text style={styles.saleNumber}>{sale.saleNumber}</Text>
+                      <Text style={[styles.saleStatus, styles[`status_${sale.status}`]]}>
+                        {sale.status === 'completed'
+                          ? '✓ Completada'
+                          : sale.status === 'processing'
+                            ? '⏳ Procesando'
+                            : sale.status === 'pending'
+                              ? '⏸ Pendiente'
+                              : sale.status === 'rejected'
+                                ? '✗ Rechazada'
+                                : '✗ Cancelada'}
+                      </Text>
+                    </View>
+                    <View style={styles.saleItemDetails}>
+                      <Text style={styles.saleDocType}>
+                        {sale.documentType === '01' ? 'Factura' : 'Boleta'}
+                        {sale.documentNumber ? ` - ${sale.documentNumber}` : ''}
+                      </Text>
+                      <Text style={styles.saleTotal}>{formatCurrency(sale.total)}</Text>
+                    </View>
+                    {sale.customer && (
+                      <Text style={styles.saleCustomer}>Cliente: {sale.customer.name}</Text>
+                    )}
+                    <Text style={styles.saleDate}>
+                      {new Date(sale.createdAt).toLocaleString('es-PE', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </Text>
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={[styles.button, styles.closeModalButton]}
+              onPress={() => setShowRecentSales(false)}
+            >
+              <Text style={styles.closeModalButtonText}>Cerrar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -446,6 +562,33 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     color: '#333',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  recentSalesButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F0F0',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    gap: 6,
+  },
+  recentSalesIcon: {
+    fontSize: 18,
+  },
+  recentSalesText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#007AFF',
+  },
+  menuButton: {
+    fontSize: 24,
+    color: '#666',
+    padding: 4,
   },
   closeButton: {
     fontSize: 24,
@@ -820,6 +963,113 @@ const styles = StyleSheet.create({
     backgroundColor: '#4CAF50',
   },
   modalConfirmButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  salesModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 24,
+    width: '90%',
+    maxWidth: 700,
+    maxHeight: '85%',
+  },
+  salesModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  salesList: {
+    flex: 1,
+    marginBottom: 16,
+  },
+  emptySales: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  emptySalesText: {
+    fontSize: 16,
+    color: '#999',
+  },
+  saleItem: {
+    backgroundColor: '#F9F9F9',
+    padding: 16,
+    borderRadius: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  saleItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  saleNumber: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  saleStatus: {
+    fontSize: 12,
+    fontWeight: '600',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  status_completed: {
+    backgroundColor: '#E8F5E9',
+    color: '#4CAF50',
+  },
+  status_processing: {
+    backgroundColor: '#FFF3E0',
+    color: '#FF9800',
+  },
+  status_pending: {
+    backgroundColor: '#E3F2FD',
+    color: '#2196F3',
+  },
+  status_rejected: {
+    backgroundColor: '#FFEBEE',
+    color: '#F44336',
+  },
+  status_cancelled: {
+    backgroundColor: '#F5F5F5',
+    color: '#9E9E9E',
+  },
+  saleItemDetails: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  saleDocType: {
+    fontSize: 14,
+    color: '#666',
+  },
+  saleTotal: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+  },
+  saleCustomer: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 4,
+  },
+  saleDate: {
+    fontSize: 12,
+    color: '#999',
+  },
+  closeModalButton: {
+    backgroundColor: '#007AFF',
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  closeModalButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',

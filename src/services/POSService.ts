@@ -159,6 +159,10 @@ class POSService {
     return this.request<SaleInfo>(`/pos/sales/info/${saleId}`);
   }
 
+  async getRecentSales(sessionId: string, limit: number = 20): Promise<Sale[]> {
+    return this.request<Sale[]>(`/pos/sales?sessionId=${sessionId}&limit=${limit}`);
+  }
+
   async downloadSalePDF(saleId: string, documentId: string): Promise<Blob> {
     const token = authService.getAccessToken();
     const headers: HeadersInit = {
