@@ -52,10 +52,10 @@ export default function OpenSessionScreen() {
       );
 
       console.log('✅ Sesión abierta exitosamente');
-      console.log('🔙 Navegando de vuelta al dashboard...');
+      console.log('🔙 Navegando a Nueva Venta...');
 
-      // Navegar de vuelta al dashboard
-      navigation.goBack();
+      // Navegar a Nueva Venta
+      navigation.navigate(ROUTES.NEW_SALE as never);
     } catch (error) {
       console.error('❌ Error al abrir sesión:', error);
       console.error(
