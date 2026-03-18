@@ -15,6 +15,7 @@ import {
   Alert,
   ActivityIndicator,
   Modal,
+  Image,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { usePOSStore } from '@/store/pos';
@@ -72,9 +73,14 @@ export default function NewSaleScreen() {
       return;
     }
 
+    if (!currentSession) {
+      Alert.alert('Error', 'No hay una sesión activa. Por favor, abre una sesión primero.');
+      return;
+    }
+
     try {
       setSearching(true);
-      const results = await posService.searchProducts(query, 20);
+      const results = await posService.searchProducts(query, 20, currentSession.cashRegisterId);
       console.log('🔍 Productos encontrados:', results.length);
       console.log('📦 Primer producto:', results[0]);
       // El backend ya filtra por productos activos, no necesitamos filtrar aquí
@@ -90,22 +96,25 @@ export default function NewSaleScreen() {
 
   const handleAddProduct = async (product: Product) => {
     try {
-      // Obtener información completa del producto incluyendo stock real
-      console.log(`📦 Obteniendo stock para producto: ${product.name}`);
-      const fullProduct = await posService.getProduct(product.id);
+      console.log(`📦 Agregando producto: ${product.name}`);
+      console.log(`📸 Imagen del producto: ${product.imageUrl || 'Sin imagen'}`);
+      console.log(`💰 Precio de venta: S/ ${product.price || 0}`);
+      console.log(`📊 Stock disponible: ${product.stock || 0} unidades`);
 
-      console.log(`✅ Stock disponible: ${fullProduct.stock} unidades`);
+      // El nuevo endpoint ya incluye el stock disponible
+      const stock = product.stock || 0;
 
-      if (fullProduct.stock <= 0) {
-        Alert.alert('Sin Stock', `El producto "${fullProduct.name}" no tiene stock disponible.`);
+      if (!stock || stock <= 0) {
+        Alert.alert('Sin Stock', `El producto "${product.name}" no tiene stock disponible.`);
         return;
       }
 
-      addItemToCart(fullProduct, 1);
+      // El producto ya viene con toda la información necesaria del endpoint
+      addItemToCart(product, 1);
       setSearchQuery('');
       setSearchResults([]);
     } catch (error) {
-      console.error('❌ Error al obtener producto:', error);
+      console.error('❌ Error al agregar producto:', error);
       Alert.alert('Error', 'No se pudo agregar el producto. Intenta nuevamente.');
     }
   };
@@ -186,48 +195,75 @@ export default function NewSaleScreen() {
 
   const renderProductItem = ({ item }: { item: Product }) => (
     <TouchableOpacity style={styles.productItem} onPress={() => handleAddProduct(item)}>
+      {item.imageUrl ? (
+        <Image source={{ uri: item.imageUrl }} style={styles.productImage} resizeMode="cover" />
+      ) : (
+        <View style={styles.productImagePlaceholder}>
+          <Text style={styles.productImagePlaceholderText}>📦</Text>
+        </View>
+      )}
       <View style={styles.productInfo}>
         <Text style={styles.productName}>{item.name}</Text>
         <Text style={styles.productCode}>Código: {item.code}</Text>
-        <Text style={styles.productStock}>Stock: {item.stock}</Text>
+        <Text style={styles.productPrice}>{formatCurrency(item.price || 0)}</Text>
       </View>
-      <Text style={styles.productPrice}>{formatCurrency(item.price)}</Text>
     </TouchableOpacity>
   );
 
   const renderCartItem = ({ item, index }: { item: any; index: number }) => {
-    const itemTotal = item.quantity * item.unitPrice - (item.discount || 0);
-    const itemTax = itemTotal * (item.taxRate / 100);
+    const unitPrice = item.unitPrice || 0;
+    const taxRate = item.taxRate || 0;
+    const itemTotal = item.quantity * unitPrice - (item.discount || 0);
+    const itemTax = itemTotal * (taxRate / 100);
     const itemTotalWithTax = itemTotal + itemTax;
 
     return (
       <View style={styles.cartItem}>
-        <View style={styles.cartItemHeader}>
-          <Text style={styles.cartItemName}>{item.productName}</Text>
-          <TouchableOpacity onPress={() => removeCartItem(index)}>
-            <Text style={styles.removeButton}>✕</Text>
-          </TouchableOpacity>
-        </View>
+        <View style={styles.cartItemRow}>
+          {/* Imagen del producto */}
+          {item.imageUrl ? (
+            <Image
+              source={{ uri: item.imageUrl }}
+              style={styles.cartItemImage}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={styles.cartItemImagePlaceholder}>
+              <Text style={styles.cartItemImagePlaceholderText}>📦</Text>
+            </View>
+          )}
 
-        <View style={styles.cartItemDetails}>
-          <View style={styles.quantityControl}>
-            <TouchableOpacity
-              style={styles.quantityButton}
-              onPress={() => updateCartItem(index, item.quantity - 1)}
-            >
-              <Text style={styles.quantityButtonText}>-</Text>
-            </TouchableOpacity>
-            <Text style={styles.quantityText}>{item.quantity}</Text>
-            <TouchableOpacity
-              style={styles.quantityButton}
-              onPress={() => updateCartItem(index, item.quantity + 1)}
-            >
-              <Text style={styles.quantityButtonText}>+</Text>
-            </TouchableOpacity>
+          {/* Información del producto */}
+          <View style={styles.cartItemInfo}>
+            <View style={styles.cartItemHeader}>
+              <Text style={styles.cartItemName}>{item.productName}</Text>
+              <TouchableOpacity onPress={() => removeCartItem(index)}>
+                <Text style={styles.removeButton}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.cartItemPrice}>Precio: {formatCurrency(unitPrice)} c/u</Text>
+
+            <View style={styles.cartItemDetails}>
+              <View style={styles.quantityControl}>
+                <TouchableOpacity
+                  style={styles.quantityButton}
+                  onPress={() => updateCartItem(index, item.quantity - 1)}
+                >
+                  <Text style={styles.quantityButtonText}>-</Text>
+                </TouchableOpacity>
+                <Text style={styles.quantityText}>{item.quantity}</Text>
+                <TouchableOpacity
+                  style={styles.quantityButton}
+                  onPress={() => updateCartItem(index, item.quantity + 1)}
+                >
+                  <Text style={styles.quantityButtonText}>+</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.cartItemTotal}>Total: {formatCurrency(itemTotalWithTax)}</Text>
+            </View>
           </View>
-
-          <Text style={styles.cartItemPrice}>{formatCurrency(item.unitPrice)} c/u</Text>
-          <Text style={styles.cartItemTotal}>{formatCurrency(itemTotalWithTax)}</Text>
         </View>
       </View>
     );
@@ -511,12 +547,12 @@ export default function NewSaleScreen() {
                     style={styles.saleItem}
                     onPress={() => {
                       setShowRecentSales(false);
-                      navigation.navigate(ROUTES.SALE_DETAIL as never, { saleId: sale.id });
+                      navigation.navigate(ROUTES.SALE_DETAIL as never, { saleId: sale.id } as never);
                     }}
                   >
                     <View style={styles.saleItemHeader}>
                       <Text style={styles.saleNumber}>{sale.saleNumber}</Text>
-                      <Text style={[styles.saleStatus, styles[`status_${sale.status}`]]}>
+                      <Text style={styles.saleStatus}>
                         {sale.status === 'completed'
                           ? '✓ Completada'
                           : sale.status === 'processing'
@@ -653,17 +689,35 @@ const styles = StyleSheet.create({
   },
   productItem: {
     backgroundColor: '#FFFFFF',
-    padding: 16,
+    padding: 12,
     borderRadius: 8,
-    marginBottom: 8,
+    marginBottom: 12,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#E0E0E0',
+    gap: 12,
+  },
+  productImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 8,
+    backgroundColor: '#F5F5F5',
+  },
+  productImagePlaceholder: {
+    width: 100,
+    height: 100,
+    borderRadius: 8,
+    backgroundColor: '#F5F5F5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  productImagePlaceholderText: {
+    fontSize: 40,
   },
   productInfo: {
     flex: 1,
+    justifyContent: 'center',
   },
   productName: {
     fontSize: 16,
@@ -674,11 +728,7 @@ const styles = StyleSheet.create({
   productCode: {
     fontSize: 12,
     color: '#666',
-  },
-  productStock: {
-    fontSize: 12,
-    color: '#4CAF50',
-    marginTop: 2,
+    marginBottom: 4,
   },
   productPrice: {
     fontSize: 18,
@@ -747,11 +797,36 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F0F0F0',
   },
+  cartItemRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  cartItemImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    backgroundColor: '#F5F5F5',
+  },
+  cartItemImagePlaceholder: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    backgroundColor: '#F5F5F5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cartItemImagePlaceholderText: {
+    fontSize: 32,
+  },
+  cartItemInfo: {
+    flex: 1,
+    justifyContent: 'space-between',
+  },
   cartItemHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 4,
   },
   cartItemName: {
     fontSize: 14,
@@ -768,6 +843,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginTop: 4,
   },
   quantityControl: {
     flexDirection: 'row',
@@ -797,11 +873,12 @@ const styles = StyleSheet.create({
   cartItemPrice: {
     fontSize: 12,
     color: '#666',
+    marginBottom: 4,
   },
   cartItemTotal: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: 'bold',
-    color: '#333',
+    color: '#007AFF',
   },
   totalsContainer: {
     padding: 16,

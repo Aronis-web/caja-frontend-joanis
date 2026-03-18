@@ -3,6 +3,7 @@
  * Handles all POS-related API calls
  */
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { config } from '@/utils/config';
 import { authService } from './AuthService';
 import type {
@@ -196,44 +197,114 @@ class POSService {
   }
 
   // Products (for sale creation)
-  async searchProducts(query: string, limit: number = 10): Promise<Product[]> {
-    const products = await this.request<Product[]>(
-      `/catalog/products/autocomplete?q=${encodeURIComponent(query)}&limit=${limit}`
+  async searchProducts(
+    query: string,
+    limit: number = 10,
+    cashRegisterId?: string
+  ): Promise<Product[]> {
+    // Si no se proporciona cashRegisterId, intentar obtenerlo de la sesión guardada
+    let registerId = cashRegisterId;
+    if (!registerId) {
+      const currentSession = await this.getCurrentSession();
+      if (!currentSession) {
+        throw new Error('No hay una sesión activa. Por favor, abre una sesión primero.');
+      }
+      registerId = currentSession.cashRegisterId;
+    }
+
+    const response = await this.request<{
+      results: Product[];
+      total: number;
+      query: string;
+      cashRegisterId: string;
+    }>(
+      `/pos/cash-registers/products/search?cashRegisterId=${registerId}&query=${encodeURIComponent(query)}&limit=${limit}`
     );
 
-    console.log(`🔍 Búsqueda de productos: "${query}" - ${products.length} resultados`);
+    console.log(`🔍 Búsqueda de productos: "${query}" - ${response.results.length} resultados`);
 
-    // Agregar campos calculados para compatibilidad con el código existente
-    return products.map((product) => {
-      // Obtener el precio de la primera presentación del primer perfil
-      let price = 0;
-      if (
-        product.priceProfiles &&
-        product.priceProfiles.length > 0 &&
-        product.priceProfiles[0].prices &&
-        product.priceProfiles[0].prices.length > 0
-      ) {
-        price = product.priceProfiles[0].prices[0].priceCents / 100;
+    // Log del primer producto para debug
+    if (response.results.length > 0) {
+      console.log(
+        '🔍 DEBUG - Primer producto del endpoint POS:',
+        JSON.stringify(
+          {
+            id: response.results[0].id,
+            name: response.results[0].name,
+            sku: response.results[0].sku,
+            barcode: response.results[0].barcode,
+            salePriceCents: response.results[0].salePriceCents,
+            availableStock: response.results[0].availableStock,
+            imageUrl: response.results[0].imageUrl,
+            categoryName: response.results[0].categoryName,
+            taxType: response.results[0].taxType,
+          },
+          null,
+          2
+        )
+      );
+    }
+
+    // Mapear los productos del nuevo endpoint
+    return response.results.map((product) => {
+      // Usar salePriceCents del endpoint (convertir de centavos a soles)
+      const price = product.salePriceCents ? product.salePriceCents / 100 : 0;
+
+      // Determinar la tasa de impuesto según el taxType
+      let taxRate = 0;
+      if (product.taxType === 'GRAVADO') {
+        taxRate = 0.18; // IGV 18%
+      } else if (product.taxType === 'EXONERADO' || product.taxType === 'INAFECTO') {
+        taxRate = 0; // Sin IGV
       }
 
       const mappedProduct = {
         ...product,
-        code: product.sku || '',
-        name: product.title || 'Sin nombre',
-        description: product.title || '',
-        isActive: product.status === 'ACTIVE' || product.status === 'PRELIMINARY',
-        imageUrl: product.photos && product.photos.length > 0 ? product.photos[0] : undefined,
+        code: product.sku || product.barcode || '',
+        description: product.name || '',
         price,
-        stock: 999, // Stock placeholder - se obtiene al seleccionar el producto con getProduct()
-        taxRate: 0.18, // IGV por defecto (18%)
+        stock: product.availableStock || 0,
+        taxRate,
+        isActive: true, // Si está en los resultados, está activo
       };
+
+      console.log(`📦 Producto mapeado: ${product.name} - Precio: S/ ${price} - Stock: ${product.availableStock}`);
 
       return mappedProduct;
     });
   }
 
+  // Método auxiliar para obtener la sesión actual
+  private async getCurrentSession(): Promise<Session | null> {
+    try {
+      // Intentar obtener desde AsyncStorage
+      const sessionData = await AsyncStorage.getItem('@pos_current_session');
+      if (sessionData) {
+        return JSON.parse(sessionData);
+      }
+      return null;
+    } catch (error) {
+      console.error('Error obteniendo sesión actual:', error);
+      return null;
+    }
+  }
+
   async getProduct(id: string): Promise<Product> {
     const product = await this.request<Product>(`/catalog/products/${id}`);
+
+    console.log(
+      '🔍 DEBUG - Producto del backend:',
+      JSON.stringify(
+        {
+          id: product.id,
+          title: product.title,
+          costCents: product.costCents,
+          photos: product.photos,
+        },
+        null,
+        2
+      )
+    );
 
     // Obtener stock total del producto
     let stock = 0;
@@ -247,16 +318,32 @@ class POSService {
       stock = 0; // Si falla, asumimos sin stock
     }
 
-    // Obtener el precio de la primera presentación del primer perfil
+    // Usar costCents como precio
     let price = 0;
-    if (
-      product.priceProfiles &&
-      product.priceProfiles.length > 0 &&
-      product.priceProfiles[0].prices &&
-      product.priceProfiles[0].prices.length > 0
-    ) {
-      price = product.priceProfiles[0].prices[0].priceCents / 100;
+    if (product.costCents && product.costCents > 0) {
+      price = product.costCents / 100;
+      console.log('💰 Precio desde costCents:', price);
     }
+
+    // Intentar obtener la imagen
+    let imageUrl: string | undefined = undefined;
+    if (product.photos && product.photos.length > 0) {
+      imageUrl = product.photos[0];
+      console.log('📸 Imagen desde photos[0]:', imageUrl);
+    }
+
+    console.log(
+      '✅ Producto procesado:',
+      JSON.stringify(
+        {
+          price,
+          imageUrl,
+          stock,
+        },
+        null,
+        2
+      )
+    );
 
     // Agregar campos calculados para compatibilidad
     return {
@@ -265,11 +352,15 @@ class POSService {
       name: product.title || 'Sin nombre',
       description: product.title || '',
       isActive: product.status === 'ACTIVE' || product.status === 'PRELIMINARY',
-      imageUrl: product.photos && product.photos.length > 0 ? product.photos[0] : undefined,
+      imageUrl,
       price,
       stock,
       taxRate: 0.18,
     };
+  }
+
+  async getProductStock(id: string): Promise<{ total: number }> {
+    return this.request<{ total: number }>(`/admin/inventory/stock/product/${id}/total`);
   }
 
   // Customers (for sale creation)

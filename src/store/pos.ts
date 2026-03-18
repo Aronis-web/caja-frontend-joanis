@@ -43,7 +43,7 @@ interface POSState {
   closeSession: (sessionId: string, closingBalance: number, notes?: string) => Promise<Session>;
   loadActiveSession: (cashRegisterId: string) => Promise<void>;
   refreshSession: () => Promise<void>;
-  setCurrentSession: (session: Session | null) => void;
+  setCurrentSession: (session: Session | null) => Promise<void>;
 
   // Actions - Payment Methods
   loadPaymentMethods: () => Promise<void>;
@@ -79,6 +79,7 @@ interface POSState {
 }
 
 const STORAGE_KEY = '@caja:selected_cash_register';
+const SESSION_STORAGE_KEY = '@pos_current_session';
 
 // Initialize store with persisted data
 const initializeStore = async () => {
@@ -147,6 +148,8 @@ export const usePOSStore = create<POSState>((set, get) => ({
         openingCashCents,
         notes,
       });
+      // Guardar sesión en AsyncStorage para uso del servicio
+      await AsyncStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
       set({ currentSession: session, isLoading: false });
       return session;
     } catch (error) {
@@ -165,6 +168,8 @@ export const usePOSStore = create<POSState>((set, get) => ({
         closingCashCents,
         notes,
       });
+      // Eliminar sesión de AsyncStorage
+      await AsyncStorage.removeItem(SESSION_STORAGE_KEY);
       set({ currentSession: null, isLoading: false });
       get().clearCart();
       get().clearPayments();
@@ -180,8 +185,11 @@ export const usePOSStore = create<POSState>((set, get) => ({
     try {
       set({ isLoading: true, error: null });
       const session = await posService.getActiveSession(cashRegisterId);
+      // Guardar sesión en AsyncStorage para uso del servicio
+      await AsyncStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
       set({ currentSession: session, isLoading: false });
     } catch (error) {
+      await AsyncStorage.removeItem(SESSION_STORAGE_KEY);
       set({ currentSession: null, isLoading: false });
       throw error;
     }
@@ -199,7 +207,12 @@ export const usePOSStore = create<POSState>((set, get) => ({
     }
   },
 
-  setCurrentSession: (session) => {
+  setCurrentSession: async (session) => {
+    if (session) {
+      await AsyncStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+    } else {
+      await AsyncStorage.removeItem(SESSION_STORAGE_KEY);
+    }
     set({ currentSession: session });
   },
 
@@ -222,6 +235,13 @@ export const usePOSStore = create<POSState>((set, get) => ({
     const { cartItems } = get();
     const existingIndex = cartItems.findIndex((item) => item.productId === product.id);
 
+    console.log('🛒 Agregando al carrito:', {
+      name: product.name,
+      price: product.price,
+      imageUrl: product.imageUrl,
+      taxRate: product.taxRate,
+    });
+
     if (existingIndex >= 0) {
       // Update existing item
       const newItems = [...cartItems];
@@ -236,7 +256,9 @@ export const usePOSStore = create<POSState>((set, get) => ({
         unitPrice: product.price,
         discount: 0,
         taxRate: product.taxRate,
+        imageUrl: product.imageUrl,
       };
+      console.log('✅ Item agregado al carrito:', newItem);
       set({ cartItems: [...cartItems, newItem] });
     }
   },
@@ -298,7 +320,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
   getCartSubtotal: () => {
     const { cartItems } = get();
     return cartItems.reduce((total, item) => {
-      const itemSubtotal = item.quantity * item.unitPrice - (item.discount || 0);
+      const itemSubtotal = item.quantity * (item.unitPrice || 0) - (item.discount || 0);
       return total + itemSubtotal;
     }, 0);
   },
@@ -306,8 +328,8 @@ export const usePOSStore = create<POSState>((set, get) => ({
   getCartTax: () => {
     const { cartItems } = get();
     return cartItems.reduce((total, item) => {
-      const itemSubtotal = item.quantity * item.unitPrice - (item.discount || 0);
-      const itemTax = itemSubtotal * (item.taxRate / 100);
+      const itemSubtotal = item.quantity * (item.unitPrice || 0) - (item.discount || 0);
+      const itemTax = itemSubtotal * ((item.taxRate || 0) / 100);
       return total + itemTax;
     }, 0);
   },

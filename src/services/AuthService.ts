@@ -55,6 +55,7 @@ class AuthService {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos timeout
 
+      console.log('🚀 Enviando fetch request...');
       const response = await fetch(`${this.baseUrl}/auth/login`, {
         method: 'POST',
         headers,
@@ -64,6 +65,7 @@ class AuthService {
 
       clearTimeout(timeoutId);
       console.log('✅ Respuesta recibida, status:', response.status);
+      console.log('📦 Response headers:', Object.fromEntries(response.headers.entries()));
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -78,6 +80,11 @@ class AuthService {
       return data;
     } catch (error) {
       console.error('❌ Error en login:', error);
+      console.error('❌ Error type:', error instanceof Error ? error.constructor.name : typeof error);
+      console.error('❌ Error message:', error instanceof Error ? error.message : String(error));
+      if (error instanceof Error) {
+        console.error('❌ Error stack:', error.stack);
+      }
       if (error instanceof AuthError) {
         throw error;
       }

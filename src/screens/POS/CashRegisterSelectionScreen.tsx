@@ -54,7 +54,8 @@ export default function CashRegisterSelectionScreen() {
   const handleSelectCashRegister = async (cashRegister: CashRegister) => {
     try {
       await setSelectedCashRegister(cashRegister);
-      navigation.navigate(ROUTES.POS_DASHBOARD as never);
+      // No navegamos manualmente - el Navigation component detectará el cambio
+      // y automáticamente mostrará el POSStack con initialRouteName=NEW_SALE
     } catch (error) {
       Alert.alert('Error', 'No se pudo seleccionar la caja');
     }

@@ -93,12 +93,13 @@ export interface SaleItem {
   productId: string;
   productName?: string;
   quantity: number;
-  unitPrice: number;
+  unitPrice?: number;
   discount?: number;
-  taxRate: number;
+  taxRate?: number;
   subtotal?: number;
   tax?: number;
   total?: number;
+  imageUrl?: string;
 }
 
 export interface SalePayment {
@@ -183,26 +184,31 @@ export interface ProductCategory {
 
 export interface Product {
   id: string;
-  correlativeNumber: number;
-  title: string;
-  sku: string;
+  correlativeNumber?: number;
+  title?: string;
+  sku?: string;
   barcode?: string;
-  status: string;
-  costCents: number;
-  currency: string;
-  category: ProductCategory;
-  presentations: ProductPresentation[];
-  priceProfiles: ProductPriceProfile[];
-  photos: string[];
+  status?: string;
+  costCents?: number;
+  currency?: string;
+  category?: ProductCategory;
+  presentations?: ProductPresentation[];
+  priceProfiles?: ProductPriceProfile[];
+  photos?: string[];
+  // Campos del nuevo endpoint de búsqueda POS
+  name?: string;
+  salePriceCents?: number;
+  availableStock?: number;
+  imageUrl?: string;
+  categoryName?: string;
+  taxType?: string;
   // Campos calculados para compatibilidad
   code?: string;
-  name?: string;
   description?: string;
   price?: number;
   stock?: number;
   taxRate?: number;
   isActive?: boolean;
-  imageUrl?: string;
 }
 
 export interface Customer {

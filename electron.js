@@ -1,13 +1,23 @@
+console.log('[ELECTRON] 📂 Cargando electron.js...');
+console.log('[ELECTRON] 🔧 NODE_ENV:', process.env.NODE_ENV);
+
 const { app, BrowserWindow, protocol, dialog } = require('electron');
 const path = require('path');
 const url = require('url');
 const fs = require('fs');
 const http = require('http');
 const mime = require('mime-types');
+
+console.log('[ELECTRON] ✅ Módulos básicos cargados');
+
 const { autoUpdater } = require('electron-updater');
 
+console.log('[ELECTRON] ✅ electron-updater cargado');
+
 const isDev = process.env.NODE_ENV === 'development';
-const isPackaged = app.isPackaged;
+let isPackaged = false; // Se inicializará en app.whenReady()
+
+console.log('[ELECTRON] 🎯 isDev:', isDev);
 
 let mainWindow;
 let server;
@@ -150,6 +160,9 @@ function createServer() {
 }
 
 function createWindow(port) {
+  console.log('[ELECTRON] 🚀 Creando ventana de Electron...');
+  console.log('[ELECTRON] 🔧 Modo desarrollo:', isDev);
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -158,16 +171,19 @@ function createWindow(port) {
     title: 'CajaGrit - Sistema POS',
     icon: path.join(__dirname, 'assets/icon.png'),
     webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
       enableRemoteModule: false,
-      webSecurity: false,
+      webSecurity: false, // Deshabilitar webSecurity para evitar CORS en desarrollo
       allowRunningInsecureContent: true,
     },
     autoHideMenuBar: true,
     backgroundColor: '#ffffff',
     show: false,
   });
+
+  console.log('[ELECTRON] ✅ Ventana creada, webSecurity deshabilitado');
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
@@ -176,8 +192,71 @@ function createWindow(port) {
   // En desarrollo, carga desde el servidor de Expo
   // En producción, carga desde el servidor HTTP local
   if (isDev) {
+    // Interceptar y modificar el HTML antes de que se cargue
+    const { session } = mainWindow.webContents;
+
+    session.webRequest.onBeforeSendHeaders((details, callback) => {
+      // Agregar headers CORS a todas las peticiones
+      const requestHeaders = { ...details.requestHeaders };
+
+      // Si es una petición al backend, agregar headers necesarios
+      if (details.url.includes('api.app-joanis-backend.com')) {
+        console.log('[ELECTRON] 🌐 Interceptando petición al backend:', details.url);
+        requestHeaders['Origin'] = 'https://app.app-joanis-backend.com';
+      }
+
+      callback({ requestHeaders });
+    });
+
+    session.webRequest.onHeadersReceived((details, callback) => {
+      const responseHeaders = details.responseHeaders || {};
+
+      // Permitir CORS para todas las respuestas
+      responseHeaders['Access-Control-Allow-Origin'] = ['*'];
+      responseHeaders['Access-Control-Allow-Methods'] = ['GET, POST, PUT, DELETE, OPTIONS'];
+      responseHeaders['Access-Control-Allow-Headers'] = ['*'];
+      responseHeaders['Access-Control-Allow-Credentials'] = ['true'];
+
+      // Permitir módulos ES
+      if (!details.url.includes('api.app-joanis-backend.com')) {
+        responseHeaders['Content-Security-Policy'] = ["default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval';"];
+      }
+
+      callback({ responseHeaders });
+    });
+
     mainWindow.loadURL('http://localhost:8081');
     mainWindow.webContents.openDevTools();
+
+    // Log de todas las solicitudes de red
+    mainWindow.webContents.session.webRequest.onBeforeRequest((details, callback) => {
+      console.log('[ELECTRON] 🌐 Request:', details.url);
+      callback({});
+    });
+
+    // Log de errores de consola con más detalle
+    mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+      const levelStr = ['verbose', 'info', 'warning', 'error'][level] || 'log';
+      const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+
+      // Colorear según el nivel
+      const prefix = level === 3 ? '❌' : level === 2 ? '⚠️' : level === 1 ? 'ℹ️' : '📝';
+
+      console.log(`[${timestamp}] ${prefix} [BROWSER] ${message}`);
+      if (sourceId && line) {
+        console.log(`           └─ ${sourceId}:${line}`);
+      }
+    });
+
+    // Log cuando se carga un script
+    mainWindow.webContents.on('did-finish-load', () => {
+      console.log('[ELECTRON] ✅ Página cargada completamente');
+    });
+
+    // Log de errores de carga
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+      console.error('[ELECTRON] ❌ Error cargando:', errorCode, errorDescription, validatedURL);
+    });
   } else {
     mainWindow.loadURL(`http://localhost:${port}`);
     mainWindow.webContents.openDevTools();
@@ -333,6 +412,13 @@ function setupAutoUpdater() {
 }
 
 app.on('ready', () => {
+  // Inicializar isPackaged ahora que app está listo
+  isPackaged = app.isPackaged;
+
+  console.log('[ELECTRON] 🚀 App ready event triggered');
+  console.log('[ELECTRON] 📦 Is packaged:', isPackaged);
+  console.log('[ELECTRON] 🔧 Is dev:', isDev);
+
   // Configurar logging después de que la app esté lista
   const logFile = path.join(app.getPath('userData'), 'electron-server.log');
   logStream = fs.createWriteStream(logFile, { flags: 'a' });
@@ -357,8 +443,10 @@ app.on('ready', () => {
   console.log('Is dev:', isDev);
 
   if (isDev) {
+    console.log('[ELECTRON] 🎯 Modo desarrollo - creando ventana en puerto 8081');
     createWindow(8081);
   } else {
+    console.log('[ELECTRON] 🎯 Modo producción - creando servidor');
     createServer();
   }
 

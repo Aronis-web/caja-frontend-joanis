@@ -13,26 +13,32 @@ const isSecureStoreAvailable = Platform.OS === 'ios' || Platform.OS === 'android
 
 export async function setSecureItem(key: string, value: string): Promise<void> {
   try {
+    console.log(`🔐 [SecureStorage] Guardando item: ${key} (usando ${isSecureStoreAvailable ? 'SecureStore' : 'AsyncStorage'})`);
     if (isSecureStoreAvailable) {
       await SecureStore.setItemAsync(key, value);
     } else {
       await AsyncStorage.setItem(`secure:${key}`, value);
     }
+    console.log(`✅ [SecureStorage] Item guardado: ${key}`);
   } catch (error) {
-    console.error(`Error storing secure item ${key}:`, error);
+    console.error(`❌ [SecureStorage] Error storing secure item ${key}:`, error);
     throw error;
   }
 }
 
 export async function getSecureItem(key: string): Promise<string | null> {
   try {
+    console.log(`🔍 [SecureStorage] Obteniendo item: ${key}`);
+    let value;
     if (isSecureStoreAvailable) {
-      return await SecureStore.getItemAsync(key);
+      value = await SecureStore.getItemAsync(key);
     } else {
-      return await AsyncStorage.getItem(`secure:${key}`);
+      value = await AsyncStorage.getItem(`secure:${key}`);
     }
+    console.log(`${value ? '✅' : 'ℹ️'} [SecureStorage] Item ${key}: ${value ? 'encontrado' : 'no encontrado'}`);
+    return value;
   } catch (error) {
-    console.error(`Error retrieving secure item ${key}:`, error);
+    console.error(`❌ [SecureStorage] Error retrieving secure item ${key}:`, error);
     return null;
   }
 }
