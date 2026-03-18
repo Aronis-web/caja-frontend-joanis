@@ -45,6 +45,7 @@ export default function NewSaleScreen() {
     getPaymentsTotal,
     createSale,
     isLoading,
+    initializeFromStorage,
   } = usePOSStore();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -58,6 +59,15 @@ export default function NewSaleScreen() {
   const [showRecentSales, setShowRecentSales] = useState(false);
   const [recentSales, setRecentSales] = useState<any[]>([]);
   const [loadingSales, setLoadingSales] = useState(false);
+
+  // Initialize store from AsyncStorage on mount
+  useEffect(() => {
+    const initialize = async () => {
+      console.log('🔄 Inicializando store desde AsyncStorage...');
+      await initializeFromStorage();
+    };
+    initialize();
+  }, []);
 
   useEffect(() => {
     if (!currentSession) {

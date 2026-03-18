@@ -75,6 +75,7 @@ interface POSState {
   // Utility
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
+  initializeFromStorage: () => Promise<void>;
   reset: () => void;
 }
 
@@ -423,6 +424,23 @@ export const usePOSStore = create<POSState>((set, get) => ({
   // Utility
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
+
+  // Initialize store from AsyncStorage
+  initializeFromStorage: async () => {
+    try {
+      // Cargar sesión guardada
+      const sessionData = await AsyncStorage.getItem(SESSION_STORAGE_KEY);
+      if (sessionData) {
+        const session = JSON.parse(sessionData);
+        console.log('🔄 Sesión cargada desde AsyncStorage:', session.id);
+        set({ currentSession: session });
+      } else {
+        console.log('ℹ️ No hay sesión guardada en AsyncStorage');
+      }
+    } catch (error) {
+      console.error('❌ Error cargando sesión desde AsyncStorage:', error);
+    }
+  },
 
   reset: () => {
     set({
