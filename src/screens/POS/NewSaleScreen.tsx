@@ -67,22 +67,31 @@ export default function NewSaleScreen() {
   }, [currentSession]);
 
   const handleSearchProducts = async (query: string) => {
+    console.log('🔍 handleSearchProducts llamado con query:', query);
     setSearchQuery(query);
     if (query.length < 2) {
+      console.log('⚠️ Query muy corto, limpiando resultados');
       setSearchResults([]);
       return;
     }
 
+    console.log('📋 currentSession:', currentSession);
     if (!currentSession) {
+      console.error('❌ No hay sesión activa');
       Alert.alert('Error', 'No hay una sesión activa. Por favor, abre una sesión primero.');
       return;
     }
 
+    console.log('🔑 cashRegisterId:', currentSession.cashRegisterId);
+
     try {
       setSearching(true);
+      console.log('🚀 Iniciando búsqueda de productos...');
       const results = await posService.searchProducts(query, 20, currentSession.cashRegisterId);
-      console.log('🔍 Productos encontrados:', results.length);
-      console.log('📦 Primer producto:', results[0]);
+      console.log('✅ Productos encontrados:', results.length);
+      if (results.length > 0) {
+        console.log('📦 Primer producto:', results[0]);
+      }
       // El backend ya filtra por productos activos, no necesitamos filtrar aquí
       setSearchResults(results);
     } catch (error) {
