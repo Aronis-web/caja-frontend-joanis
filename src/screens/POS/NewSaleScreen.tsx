@@ -220,11 +220,10 @@ export default function NewSaleScreen() {
   );
 
   const renderCartItem = ({ item, index }: { item: any; index: number }) => {
-    const unitPrice = item.unitPrice || 0;
+    const unitPrice = item.unitPrice || 0; // Este precio ya incluye IGV
     const taxRate = item.taxRate || 0;
+    // El total del item es simplemente cantidad * precio (que ya incluye IGV) - descuento
     const itemTotal = item.quantity * unitPrice - (item.discount || 0);
-    const itemTax = itemTotal * (taxRate / 100);
-    const itemTotalWithTax = itemTotal + itemTax;
 
     return (
       <View style={styles.cartItem}>
@@ -251,7 +250,7 @@ export default function NewSaleScreen() {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.cartItemPrice}>Precio: {formatCurrency(unitPrice)} c/u</Text>
+            <Text style={styles.cartItemPrice}>Precio: {formatCurrency(unitPrice)} c/u (inc. IGV)</Text>
 
             <View style={styles.cartItemDetails}>
               <View style={styles.quantityControl}>
@@ -270,7 +269,7 @@ export default function NewSaleScreen() {
                 </TouchableOpacity>
               </View>
 
-              <Text style={styles.cartItemTotal}>Total: {formatCurrency(itemTotalWithTax)}</Text>
+              <Text style={styles.cartItemTotal}>Total: {formatCurrency(itemTotal)}</Text>
             </View>
           </View>
         </View>

@@ -320,7 +320,16 @@ export const usePOSStore = create<POSState>((set, get) => ({
   getCartSubtotal: () => {
     const { cartItems } = get();
     return cartItems.reduce((total, item) => {
-      const itemSubtotal = item.quantity * (item.unitPrice || 0) - (item.discount || 0);
+      // El unitPrice ya incluye el IGV, necesitamos extraer el precio base
+      const itemTotalWithTax = item.quantity * (item.unitPrice || 0) - (item.discount || 0);
+      const taxRate = item.taxRate || 0;
+
+      // Si hay IGV, calcular el precio base: precioTotal / (1 + tasaIGV)
+      // Ejemplo: Si precio = 118 y IGV = 18%, entonces base = 118 / 1.18 = 100
+      const itemSubtotal = taxRate > 0
+        ? itemTotalWithTax / (1 + taxRate / 100)
+        : itemTotalWithTax;
+
       return total + itemSubtotal;
     }, 0);
   },
@@ -328,8 +337,16 @@ export const usePOSStore = create<POSState>((set, get) => ({
   getCartTax: () => {
     const { cartItems } = get();
     return cartItems.reduce((total, item) => {
-      const itemSubtotal = item.quantity * (item.unitPrice || 0) - (item.discount || 0);
-      const itemTax = itemSubtotal * ((item.taxRate || 0) / 100);
+      // El unitPrice ya incluye el IGV, extraemos el IGV del total
+      const itemTotalWithTax = item.quantity * (item.unitPrice || 0) - (item.discount || 0);
+      const taxRate = item.taxRate || 0;
+
+      // Si hay IGV, calcular: IGV = precioTotal - precioBase
+      // Ejemplo: Si precio = 118 y IGV = 18%, entonces IGV = 118 - (118/1.18) = 18
+      const itemTax = taxRate > 0
+        ? itemTotalWithTax - (itemTotalWithTax / (1 + taxRate / 100))
+        : 0;
+
       return total + itemTax;
     }, 0);
   },
@@ -340,7 +357,12 @@ export const usePOSStore = create<POSState>((set, get) => ({
   },
 
   getCartTotal: () => {
-    return get().getCartSubtotal() + get().getCartTax();
+    // El total es simplemente la suma de los precios de venta (que ya incluyen IGV)
+    const { cartItems } = get();
+    return cartItems.reduce((total, item) => {
+      const itemTotal = item.quantity * (item.unitPrice || 0) - (item.discount || 0);
+      return total + itemTotal;
+    }, 0);
   },
 
   getPaymentsTotal: () => {
