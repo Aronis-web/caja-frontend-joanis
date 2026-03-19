@@ -290,96 +290,43 @@ function createWindow(port) {
 
 ipcMain.handle('print-pdf', async (event, { base64Data, filename }) => {
   try {
-    console.log('[ELECTRON] 🖨️ Iniciando impresión de PDF:', filename);
+    console.log('[ELECTRON] 🖨️ Iniciando descarga de PDF:', filename);
 
-    // Crear archivo temporal
-    const tempDir = os.tmpdir();
-    const tempFilePath = path.join(tempDir, filename);
+    // Obtener la carpeta de Descargas del usuario
+    const downloadsPath = app.getPath('downloads');
+    const filePath = path.join(downloadsPath, filename);
+
+    console.log('[ELECTRON] 📂 Ruta de descarga:', filePath);
 
     // Convertir base64 a buffer y guardar
     const buffer = Buffer.from(base64Data, 'base64');
-    fs.writeFileSync(tempFilePath, buffer);
+    fs.writeFileSync(filePath, buffer);
 
-    console.log('[ELECTRON] 📄 PDF guardado temporalmente en:', tempFilePath);
+    console.log('[ELECTRON] ✅ PDF guardado en Descargas');
 
-    // Crear una ventana invisible para cargar el PDF
-    const printWindow = new BrowserWindow({
-      show: false,
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-      }
-    });
+    // Abrir el PDF con el visor predeterminado del sistema
+    const { shell } = require('electron');
+    const openResult = await shell.openPath(filePath);
 
-    return new Promise((resolve) => {
-      let printDialogOpened = false;
+    if (openResult) {
+      console.error('[ELECTRON] ❌ Error al abrir PDF:', openResult);
+      return {
+        success: true,
+        downloaded: true,
+        path: filePath,
+        opened: false,
+        error: openResult
+      };
+    }
 
-      // Cuando el contenido se carga
-      printWindow.webContents.on('did-finish-load', () => {
-        console.log('[ELECTRON] ✅ PDF cargado en ventana invisible');
+    console.log('[ELECTRON] ✅ PDF abierto con el visor del sistema');
 
-        // Esperar un momento para que el PDF se renderice
-        setTimeout(() => {
-          if (!printDialogOpened) {
-            printDialogOpened = true;
-            console.log('[ELECTRON] 🖨️ Abriendo diálogo de impresión...');
-
-            // Abrir el diálogo de impresión
-            printWindow.webContents.print({
-              silent: false,
-              printBackground: true,
-              color: true,
-              margins: {
-                marginType: 'none'
-              },
-              landscape: false,
-              scaleFactor: 100,
-              pagesPerSheet: 1,
-              collate: false,
-              copies: 1
-            }, (success, failureReason) => {
-              console.log('[ELECTRON] 📊 Resultado de impresión:', { success, failureReason });
-
-              // Cerrar la ventana
-              printWindow.close();
-
-              // Limpiar archivo temporal
-              setTimeout(() => {
-                try {
-                  if (fs.existsSync(tempFilePath)) {
-                    fs.unlinkSync(tempFilePath);
-                    console.log('[ELECTRON] 🗑️ Archivo temporal eliminado');
-                  }
-                } catch (err) {
-                  console.error('[ELECTRON] ⚠️ Error eliminando archivo temporal:', err);
-                }
-              }, 1000);
-
-              if (success) {
-                resolve({ success: true });
-              } else {
-                resolve({ success: false, error: failureReason });
-              }
-            });
-          }
-        }, 1000);
-      });
-
-      // Manejar errores de carga
-      printWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-        console.error('[ELECTRON] ❌ Error cargando PDF:', errorCode, errorDescription);
-        printWindow.close();
-        resolve({ success: false, error: errorDescription });
-      });
-
-      // Cargar el PDF
-      console.log('[ELECTRON] 📂 Cargando PDF desde:', tempFilePath);
-      printWindow.loadFile(tempFilePath).catch(err => {
-        console.error('[ELECTRON] ❌ Error en loadFile:', err);
-        printWindow.close();
-        resolve({ success: false, error: err.message });
-      });
-    });
+    return {
+      success: true,
+      downloaded: true,
+      path: filePath,
+      opened: true
+    };
   } catch (error) {
     console.error('[ELECTRON] ❌ Error en print-pdf:', error);
     return { success: false, error: error.message };

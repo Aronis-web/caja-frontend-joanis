@@ -233,27 +233,44 @@ export default function NewSaleScreen() {
   };
 
   const handlePrintPDF = async () => {
+    console.log('🔍 handlePrintPDF iniciado');
+    console.log('📄 saleResponse:', saleResponse);
+
     if (!saleResponse?.pdf) {
+      console.error('❌ No hay PDF disponible');
       Alert.alert('Error', 'No hay PDF disponible para imprimir');
       return;
     }
 
     try {
       const { base64, filename } = saleResponse.pdf;
+      console.log('📦 PDF info:', { filename, base64Length: base64?.length });
 
       // Detectar si estamos en Electron
       const isElectron = typeof window !== 'undefined' && (window as any).electronAPI?.isElectron;
+      console.log('🔍 Detección Electron:', {
+        hasWindow: typeof window !== 'undefined',
+        hasElectronAPI: !!(window as any).electronAPI,
+        isElectron
+      });
 
       if (isElectron) {
-        // En Electron, usar la API nativa de impresión
-        console.log('🖨️ Imprimiendo PDF en Electron...');
+        // En Electron, descargar y abrir el PDF
+        console.log('🖨️ Descargando PDF en Electron...');
+        console.log('📞 Llamando a electronAPI.printPDF...');
         const result = await (window as any).electronAPI.printPDF(base64, filename);
+        console.log('📊 Resultado de printPDF:', result);
 
-        if (result.success) {
-          console.log('✅ PDF enviado a impresión');
+        if (result.success && result.downloaded) {
+          console.log('✅ PDF descargado y abierto');
+          Alert.alert(
+            'PDF Descargado',
+            `El PDF se guardó en:\n${result.path}\n\nSe abrió automáticamente para que puedas imprimirlo.`,
+            [{ text: 'OK' }]
+          );
         } else {
-          console.error('❌ Error al imprimir:', result.error);
-          Alert.alert('Error', 'No se pudo imprimir el PDF');
+          console.error('❌ Error al descargar PDF:', result.error);
+          Alert.alert('Error', 'No se pudo descargar el PDF');
         }
       } else if (Platform.OS === 'web') {
         // En web (navegador), abrir el PDF en una nueva ventana para imprimir
