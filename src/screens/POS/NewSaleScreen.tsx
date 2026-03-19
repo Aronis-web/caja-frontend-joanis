@@ -28,6 +28,7 @@ import { ROUTES } from '@/constants/routes';
 export default function NewSaleScreen() {
   const navigation = useNavigation();
   const {
+    selectedCashRegister,
     currentSession,
     cartItems,
     cartPayments,
@@ -49,6 +50,7 @@ export default function NewSaleScreen() {
     isLoading,
     initializeFromStorage,
     loadPaymentMethods,
+    loadActiveSession,
   } = usePOSStore();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -75,6 +77,17 @@ export default function NewSaleScreen() {
     const initialize = async () => {
       console.log('🔄 Inicializando store desde AsyncStorage...');
       await initializeFromStorage();
+
+      // Si hay una caja registradora seleccionada pero no hay sesión, intentar cargar la sesión activa
+      if (selectedCashRegister && !currentSession) {
+        console.log('🔄 Intentando cargar sesión activa para caja:', selectedCashRegister.code);
+        try {
+          await loadActiveSession(selectedCashRegister.id);
+        } catch (error) {
+          console.log('ℹ️ No hay sesión activa para esta caja');
+        }
+      }
+
       // Load payment methods
       console.log('💳 Cargando métodos de pago...');
       await loadPaymentMethods();
