@@ -216,11 +216,12 @@ export default function NewSaleScreen() {
     console.log('💳 Métodos de pago:', cartPayments.length);
 
     try {
-      setShowPaymentModal(false);
-
       console.log('📞 Llamando a createSale...');
       const result = await createSale(selectedCustomer?.id, documentType, 'Venta desde POS');
       console.log('✅ Venta creada exitosamente:', result);
+
+      // Cerrar modal de pago solo después de que la venta se complete exitosamente
+      setShowPaymentModal(false);
 
       // Guardar la respuesta y mostrar el modal de éxito
       setSaleResponse(result);
