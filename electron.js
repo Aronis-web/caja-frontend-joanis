@@ -302,69 +302,32 @@ ipcMain.handle('print-pdf', async (event, { base64Data, filename }) => {
 
     console.log('[ELECTRON] 📄 PDF guardado temporalmente en:', tempFilePath);
 
-    // Crear ventana oculta para imprimir
-    const printWindow = new BrowserWindow({
-      show: false,
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        plugins: true,
+    // Abrir el PDF con el visor predeterminado del sistema
+    const { shell } = require('electron');
+
+    console.log('[ELECTRON] 🖨️ Abriendo PDF con el visor del sistema...');
+    const result = await shell.openPath(tempFilePath);
+
+    if (result) {
+      console.error('[ELECTRON] ❌ Error al abrir PDF:', result);
+      return { success: false, error: result };
+    }
+
+    console.log('[ELECTRON] ✅ PDF abierto con el visor del sistema');
+
+    // Limpiar el archivo temporal después de 30 segundos (dar tiempo para que se abra)
+    setTimeout(() => {
+      try {
+        if (fs.existsSync(tempFilePath)) {
+          fs.unlinkSync(tempFilePath);
+          console.log('[ELECTRON] 🗑️ Archivo temporal eliminado');
+        }
+      } catch (err) {
+        console.error('[ELECTRON] ⚠️ No se pudo eliminar archivo temporal:', err);
       }
-    });
+    }, 30000);
 
-    // Retornar una promesa que se resuelve cuando termina la impresión
-    return new Promise((resolve) => {
-      // Esperar a que el PDF se cargue completamente
-      printWindow.webContents.on('did-finish-load', () => {
-        console.log('[ELECTRON] ✅ PDF cargado, abriendo diálogo de impresión...');
-
-        // Pequeño delay para asegurar que el PDF esté renderizado
-        setTimeout(() => {
-          // Abrir diálogo de impresión
-          printWindow.webContents.print({
-            silent: false,
-            printBackground: true,
-            deviceName: '',
-            margins: {
-              marginType: 'none'
-            }
-          }, (success, errorType) => {
-            if (!success) {
-              console.error('[ELECTRON] ❌ Error al imprimir:', errorType);
-            } else {
-              console.log('[ELECTRON] ✅ Impresión completada o cancelada');
-            }
-
-            // Cerrar ventana
-            printWindow.close();
-
-            // Eliminar archivo temporal después de un pequeño delay
-            setTimeout(() => {
-              try {
-                if (fs.existsSync(tempFilePath)) {
-                  fs.unlinkSync(tempFilePath);
-                  console.log('[ELECTRON] 🗑️ Archivo temporal eliminado');
-                }
-              } catch (err) {
-                console.error('[ELECTRON] ⚠️ No se pudo eliminar archivo temporal:', err);
-              }
-            }, 1000);
-
-            resolve({ success: true });
-          });
-        }, 500);
-      });
-
-      // Manejar errores de carga
-      printWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-        console.error('[ELECTRON] ❌ Error cargando PDF:', errorCode, errorDescription);
-        printWindow.close();
-        resolve({ success: false, error: errorDescription });
-      });
-
-      // Cargar el PDF
-      printWindow.loadFile(tempFilePath);
-    });
+    return { success: true };
   } catch (error) {
     console.error('[ELECTRON] ❌ Error en print-pdf:', error);
     return { success: false, error: error.message };
