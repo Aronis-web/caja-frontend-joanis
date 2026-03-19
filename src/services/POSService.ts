@@ -60,6 +60,13 @@ class POSService {
     });
 
     if (!response.ok) {
+      // Si es 401, el token expiró - cerrar sesión automáticamente
+      if (response.status === 401) {
+        console.warn('⚠️ Token expirado (401), cerrando sesión...');
+        await authService.logout();
+        throw new Error('Tu sesión ha expirado. Por favor, inicia sesión nuevamente.');
+      }
+
       const errorData = await response.json().catch(() => ({}));
       throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
     }

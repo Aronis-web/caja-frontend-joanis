@@ -228,7 +228,7 @@ export default function NewSaleScreen() {
       const { base64, filename } = saleResponse.pdf;
 
       if (Platform.OS === 'web') {
-        // En web, crear un blob y descargarlo
+        // En web, abrir el PDF en una nueva ventana para imprimir
         const byteCharacters = atob(base64);
         const byteNumbers = new Array(byteCharacters.length);
         for (let i = 0; i < byteCharacters.length; i++) {
@@ -238,16 +238,23 @@ export default function NewSaleScreen() {
         const blob = new Blob([byteArray], { type: 'application/pdf' });
         const url = URL.createObjectURL(blob);
 
-        // Crear un link temporal y hacer click
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
+        // Abrir en nueva ventana para imprimir
+        const printWindow = window.open(url, '_blank');
+        if (printWindow) {
+          printWindow.onload = () => {
+            printWindow.print();
+          };
+        } else {
+          Alert.alert(
+            'Error',
+            'No se pudo abrir la ventana de impresión. Verifica los permisos de pop-ups.'
+          );
+        }
 
-        Alert.alert('Éxito', 'PDF descargado correctamente');
+        // Limpiar el URL después de un tiempo
+        setTimeout(() => {
+          URL.revokeObjectURL(url);
+        }, 1000);
       } else {
         // En móvil/desktop, usar el sistema de archivos
         // eslint-disable-next-line @typescript-eslint/no-require-imports
