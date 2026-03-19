@@ -80,7 +80,10 @@ class AuthService {
       return data;
     } catch (error) {
       console.error('❌ Error en login:', error);
-      console.error('❌ Error type:', error instanceof Error ? error.constructor.name : typeof error);
+      console.error(
+        '❌ Error type:',
+        error instanceof Error ? error.constructor.name : typeof error
+      );
       console.error('❌ Error message:', error instanceof Error ? error.message : String(error));
       if (error instanceof Error) {
         console.error('❌ Error stack:', error.stack);

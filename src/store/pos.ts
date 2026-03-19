@@ -13,6 +13,7 @@ import type {
   Product,
   SaleItem,
   SalePayment,
+  CreateSaleResponse,
 } from '@/types/pos';
 
 interface POSState {
@@ -70,7 +71,7 @@ interface POSState {
     customerId?: string,
     documentType?: '01' | '03',
     notes?: string
-  ) => Promise<{ saleId: string; message: string }>;
+  ) => Promise<CreateSaleResponse>;
 
   // Utility
   setLoading: (isLoading: boolean) => void;
@@ -221,11 +222,20 @@ export const usePOSStore = create<POSState>((set, get) => ({
   loadPaymentMethods: async () => {
     try {
       set({ isLoading: true, error: null });
-      const paymentMethods = await posService.getPaymentMethods();
+      const { currentSession, selectedCashRegister } = get();
+
+      // Try to get warehouseId from session's cashRegister or from selectedCashRegister
+      const warehouseId =
+        currentSession?.cashRegister?.site?.warehouseId || selectedCashRegister?.site?.warehouseId;
+
+      console.log('💳 Loading payment methods with warehouseId:', warehouseId);
+      const paymentMethods = await posService.getPaymentMethods(warehouseId);
+      console.log('💳 Payment methods loaded:', paymentMethods.length);
       set({ paymentMethods, isLoading: false });
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Failed to load payment methods';
+      console.error('❌ Error loading payment methods:', errorMessage);
       set({ error: errorMessage, isLoading: false });
       throw error;
     }
@@ -327,9 +337,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
 
       // Si hay IGV, calcular el precio base: precioTotal / (1 + tasaIGV)
       // Ejemplo: Si precio = 118 y IGV = 18%, entonces base = 118 / 1.18 = 100
-      const itemSubtotal = taxRate > 0
-        ? itemTotalWithTax / (1 + taxRate / 100)
-        : itemTotalWithTax;
+      const itemSubtotal = taxRate > 0 ? itemTotalWithTax / (1 + taxRate / 100) : itemTotalWithTax;
 
       return total + itemSubtotal;
     }, 0);
@@ -344,9 +352,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
 
       // Si hay IGV, calcular: IGV = precioTotal - precioBase
       // Ejemplo: Si precio = 118 y IGV = 18%, entonces IGV = 118 - (118/1.18) = 18
-      const itemTax = taxRate > 0
-        ? itemTotalWithTax - (itemTotalWithTax / (1 + taxRate / 100))
-        : 0;
+      const itemTax = taxRate > 0 ? itemTotalWithTax - itemTotalWithTax / (1 + taxRate / 100) : 0;
 
       return total + itemTax;
     }, 0);
@@ -373,33 +379,72 @@ export const usePOSStore = create<POSState>((set, get) => ({
 
   // Sales actions
   createSale: async (customerId, documentType = '03', notes) => {
+    console.log('🏪 [STORE] createSale iniciado');
     const { currentSession, cartItems, cartPayments } = get();
 
+    console.log('📋 [STORE] Sesión actual:', currentSession?.id);
+    console.log('🛒 [STORE] Items en carrito:', cartItems.length);
+    console.log('💳 [STORE] Métodos de pago:', cartPayments.length);
+
     if (!currentSession) {
+      console.error('❌ [STORE] No hay sesión activa');
       throw new Error('No active session');
     }
 
     if (cartItems.length === 0) {
+      console.error('❌ [STORE] Carrito vacío');
       throw new Error('Cart is empty');
     }
 
     const total = get().getCartTotal();
     const paymentsTotal = get().getPaymentsTotal();
 
+    console.log('💰 [STORE] Total venta:', total);
+    console.log('💳 [STORE] Total pagos:', paymentsTotal);
+
     if (Math.abs(total - paymentsTotal) > 0.01) {
+      console.error('❌ [STORE] Totales no coinciden');
       throw new Error('Payment total does not match sale total');
     }
 
     try {
       set({ isLoading: true, error: null });
 
-      const response = await posService.createSale(currentSession.id, {
+      // Determinar el tipo de venta según el tipo de documento
+      const saleType = documentType === '01' ? 'B2B' : 'B2C';
+      console.log('📄 [STORE] Tipo de venta:', saleType);
+
+      // Convertir items al formato del nuevo endpoint
+      const items = cartItems.map((item) => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPriceCents: Math.round((item.unitPrice || 0) * 100),
+        discountCents: Math.round((item.discount || 0) * 100),
+      }));
+
+      console.log('📦 [STORE] Items convertidos:', JSON.stringify(items, null, 2));
+
+      // Usar el primer método de pago (el nuevo endpoint solo acepta uno)
+      if (cartPayments.length === 0) {
+        console.error('❌ [STORE] No hay métodos de pago');
+        throw new Error('Debe agregar al menos un método de pago');
+      }
+      const paymentMethodId = cartPayments[0].paymentMethodId;
+      console.log('💳 [STORE] Método de pago:', paymentMethodId);
+
+      const requestData = {
+        saleType,
         customerId,
-        documentType,
-        items: cartItems,
-        payments: cartPayments,
+        items,
+        paymentMethodId,
         notes,
-      });
+      };
+
+      console.log('📤 [STORE] Enviando request:', JSON.stringify(requestData, null, 2));
+
+      const response = await posService.createSale(currentSession.id, requestData);
+
+      console.log('✅ [STORE] Respuesta recibida:', JSON.stringify(response, null, 2));
 
       // Clear cart after successful sale
       get().clearCart();
@@ -410,10 +455,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
 
       set({ isLoading: false });
 
-      return {
-        saleId: response.sale.id,
-        message: response.message,
-      };
+      return response;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to create sale';
       set({ error: errorMessage, isLoading: false });

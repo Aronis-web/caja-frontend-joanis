@@ -37,8 +37,13 @@ export interface PaymentMethod {
   id: string;
   name: string;
   code: string;
+  description?: string;
+  requiresReference?: boolean;
   isActive: boolean;
-  createdAt: string;
+  displayOrder?: number;
+  parentId?: string | null;
+  submethods?: PaymentMethod[];
+  createdAt?: string;
 }
 
 export interface Session {
@@ -153,6 +158,35 @@ export interface SaleInfo {
   message: string;
 }
 
+export interface CreateSaleResponse {
+  sale: {
+    id: string;
+    code: string;
+    status: string;
+    processingStatus: string;
+    totalCents: number;
+    cashRegisterId: string;
+    sellerId: string;
+    origin: string;
+    createdAt: string;
+  };
+  document: {
+    type: string;
+    status: string;
+    message: string;
+  };
+  session: {
+    id: string;
+    cashRegisterId: string;
+    cashRegisterCode: string;
+  };
+  pdf: {
+    base64: string;
+    filename: string;
+    mimeType: string;
+  };
+}
+
 export interface ProductPresentation {
   id: string;
   code: string;
@@ -235,11 +269,19 @@ export interface CloseSessionRequest {
 }
 
 export interface CreateSaleRequest {
+  saleType: 'B2C' | 'B2B';
   customerId?: string;
-  documentType: '01' | '03';
-  items: SaleItem[];
-  payments: SalePayment[];
+  warehouseId?: string;
+  items: {
+    productId: string;
+    quantity: number;
+    unitPriceCents: number;
+    discountCents: number;
+  }[];
+  paymentMethodId: string;
+  referenceNumber?: string;
   notes?: string;
+  customerNotes?: string;
 }
 
 export interface CashTransactionRequest {

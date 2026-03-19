@@ -13,7 +13,9 @@ const isSecureStoreAvailable = Platform.OS === 'ios' || Platform.OS === 'android
 
 export async function setSecureItem(key: string, value: string): Promise<void> {
   try {
-    console.log(`🔐 [SecureStorage] Guardando item: ${key} (usando ${isSecureStoreAvailable ? 'SecureStore' : 'AsyncStorage'})`);
+    console.log(
+      `🔐 [SecureStorage] Guardando item: ${key} (usando ${isSecureStoreAvailable ? 'SecureStore' : 'AsyncStorage'})`
+    );
     if (isSecureStoreAvailable) {
       await SecureStore.setItemAsync(key, value);
     } else {
@@ -35,7 +37,9 @@ export async function getSecureItem(key: string): Promise<string | null> {
     } else {
       value = await AsyncStorage.getItem(`secure:${key}`);
     }
-    console.log(`${value ? '✅' : 'ℹ️'} [SecureStorage] Item ${key}: ${value ? 'encontrado' : 'no encontrado'}`);
+    console.log(
+      `${value ? '✅' : 'ℹ️'} [SecureStorage] Item ${key}: ${value ? 'encontrado' : 'no encontrado'}`
+    );
     return value;
   } catch (error) {
     console.error(`❌ [SecureStorage] Error retrieving secure item ${key}:`, error);

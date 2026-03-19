@@ -16,11 +16,13 @@ import {
   ActivityIndicator,
   Modal,
   Image,
+  Platform,
+  Linking,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { usePOSStore } from '@/store/pos';
 import { posService } from '@/services/POSService';
-import type { Product, Customer } from '@/types/pos';
+import type { Product, Customer, CreateSaleResponse } from '@/types/pos';
 import { ROUTES } from '@/constants/routes';
 
 export default function NewSaleScreen() {
@@ -46,6 +48,7 @@ export default function NewSaleScreen() {
     createSale,
     isLoading,
     initializeFromStorage,
+    loadPaymentMethods,
   } = usePOSStore();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -59,12 +62,22 @@ export default function NewSaleScreen() {
   const [showRecentSales, setShowRecentSales] = useState(false);
   const [recentSales, setRecentSales] = useState<any[]>([]);
   const [loadingSales, setLoadingSales] = useState(false);
+  const [showSaleSuccessModal, setShowSaleSuccessModal] = useState(false);
+  const [saleResponse, setSaleResponse] = useState<CreateSaleResponse | null>(null);
+
+  // Payment method selection states
+  const [selectedParentMethod, setSelectedParentMethod] = useState<string | null>(null);
+  const [selectedSubmethod, setSelectedSubmethod] = useState<string | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState('');
 
   // Initialize store from AsyncStorage on mount
   useEffect(() => {
     const initialize = async () => {
       console.log('🔄 Inicializando store desde AsyncStorage...');
       await initializeFromStorage();
+      // Load payment methods
+      console.log('💳 Cargando métodos de pago...');
+      await loadPaymentMethods();
     };
     initialize();
   }, []);
@@ -169,45 +182,104 @@ export default function NewSaleScreen() {
   };
 
   const handleCompleteSale = async () => {
+    console.log('🚀 handleCompleteSale iniciado');
     const total = getCartTotal();
     const paymentsTotal = getPaymentsTotal();
 
+    console.log('💰 Total de la venta:', total);
+    console.log('💳 Total de pagos:', paymentsTotal);
+    console.log('📊 Diferencia:', Math.abs(total - paymentsTotal));
+
     if (Math.abs(total - paymentsTotal) > 0.01) {
+      console.log('❌ Error: Los totales no coinciden');
       Alert.alert('Error', 'El total de pagos no coincide con el total de la venta');
       return;
     }
 
+    console.log('✅ Totales coinciden, procesando venta...');
+    console.log('👤 Cliente:', selectedCustomer?.id || 'Sin cliente');
+    console.log('📄 Tipo de documento:', documentType);
+    console.log('🛒 Items en carrito:', cartItems.length);
+    console.log('💳 Métodos de pago:', cartPayments.length);
+
     try {
       setShowPaymentModal(false);
 
+      console.log('📞 Llamando a createSale...');
       const result = await createSale(selectedCustomer?.id, documentType, 'Venta desde POS');
+      console.log('✅ Venta creada exitosamente:', result);
 
-      Alert.alert(
-        'Venta Procesada',
-        `${result.message}\n\nEl documento se está generando en segundo plano.`,
-        [
-          {
-            text: 'Nueva Venta',
-            onPress: () => {
-              clearCart();
-              clearPayments();
-              setSelectedCustomer(null);
-              setDocumentType('03');
-            },
-          },
-        ]
-      );
-
-      // Limpiar automáticamente después de 2 segundos
-      setTimeout(() => {
-        clearCart();
-        clearPayments();
-        setSelectedCustomer(null);
-        setDocumentType('03');
-      }, 2000);
+      // Guardar la respuesta y mostrar el modal de éxito
+      setSaleResponse(result);
+      setShowSaleSuccessModal(true);
     } catch (error) {
+      console.error('❌ Error al procesar venta:', error);
       Alert.alert('Error', error instanceof Error ? error.message : 'No se pudo procesar la venta');
     }
+  };
+
+  const handlePrintPDF = async () => {
+    if (!saleResponse?.pdf) {
+      Alert.alert('Error', 'No hay PDF disponible para imprimir');
+      return;
+    }
+
+    try {
+      const { base64, filename } = saleResponse.pdf;
+
+      if (Platform.OS === 'web') {
+        // En web, crear un blob y descargarlo
+        const byteCharacters = atob(base64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+
+        // Crear un link temporal y hacer click
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        Alert.alert('Éxito', 'PDF descargado correctamente');
+      } else {
+        // En móvil/desktop, usar el sistema de archivos
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const FileSystem = require('expo-file-system').default;
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const Sharing = require('expo-sharing').default;
+
+        const fileUri = `${FileSystem.documentDirectory}${filename}`;
+        await FileSystem.writeAsStringAsync(fileUri, base64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        // Compartir o abrir el archivo
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(fileUri);
+        } else {
+          Alert.alert('Éxito', `PDF guardado en: ${fileUri}`);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error al imprimir PDF:', error);
+      Alert.alert('Error', 'No se pudo imprimir el PDF');
+    }
+  };
+
+  const handleNewSale = () => {
+    setShowSaleSuccessModal(false);
+    setSaleResponse(null);
+    clearCart();
+    clearPayments();
+    setSelectedCustomer(null);
+    setDocumentType('03');
   };
 
   const formatCurrency = (amount: number) => `S/ ${amount.toFixed(2)}`;
@@ -260,7 +332,9 @@ export default function NewSaleScreen() {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.cartItemPrice}>Precio: {formatCurrency(unitPrice)} c/u (inc. IGV)</Text>
+            <Text style={styles.cartItemPrice}>
+              Precio: {formatCurrency(unitPrice)} c/u (inc. IGV)
+            </Text>
 
             <View style={styles.cartItemDetails}>
               <View style={styles.quantityControl}>
@@ -471,24 +545,142 @@ export default function NewSaleScreen() {
               <Text style={styles.modalTotalValue}>{formatCurrency(getCartTotal())}</Text>
             </View>
 
-            <ScrollView style={styles.paymentMethodsList}>
-              {paymentMethods
-                .filter((pm) => pm.isActive)
-                .map((method) => (
-                  <TouchableOpacity
-                    key={method.id}
-                    style={styles.paymentMethodButton}
-                    onPress={() => {
-                      const remaining = getCartTotal() - getPaymentsTotal();
-                      if (remaining > 0) {
-                        addPaymentToCart(method.id, remaining);
-                      }
-                    }}
-                  >
-                    <Text style={styles.paymentMethodText}>{method.name}</Text>
-                  </TouchableOpacity>
-                ))}
-            </ScrollView>
+            {/* Payment Method Selection */}
+            <View style={styles.paymentSelection}>
+              <Text style={styles.sectionLabel}>Método de Pago:</Text>
+              <ScrollView style={styles.methodsList}>
+                {paymentMethods
+                  .filter((pm) => pm.isActive && !pm.parentId)
+                  .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0))
+                  .map((method) => (
+                    <TouchableOpacity
+                      key={method.id}
+                      style={[
+                        styles.methodButton,
+                        selectedParentMethod === method.id && styles.methodButtonSelected,
+                      ]}
+                      onPress={() => {
+                        setSelectedParentMethod(method.id);
+                        setSelectedSubmethod(null); // Reset submethod when parent changes
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.methodButtonText,
+                          selectedParentMethod === method.id && styles.methodButtonTextSelected,
+                        ]}
+                      >
+                        {method.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+              </ScrollView>
+
+              {/* Show submethods if parent method has them */}
+              {selectedParentMethod &&
+                paymentMethods.find((pm) => pm.id === selectedParentMethod)?.submethods &&
+                paymentMethods.find((pm) => pm.id === selectedParentMethod)!.submethods!.length >
+                  0 && (
+                  <View style={styles.submethodContainer}>
+                    <Text style={styles.sectionLabel}>Submétodo:</Text>
+                    <ScrollView style={styles.methodsList}>
+                      {paymentMethods
+                        .find((pm) => pm.id === selectedParentMethod)
+                        ?.submethods?.map((submethod) => (
+                          <TouchableOpacity
+                            key={submethod.id}
+                            style={[
+                              styles.methodButton,
+                              selectedSubmethod === submethod.id && styles.methodButtonSelected,
+                            ]}
+                            onPress={() => setSelectedSubmethod(submethod.id)}
+                          >
+                            <Text
+                              style={[
+                                styles.methodButtonText,
+                                selectedSubmethod === submethod.id &&
+                                  styles.methodButtonTextSelected,
+                              ]}
+                            >
+                              {submethod.name}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+              {/* Payment Amount Input */}
+              <View style={styles.amountContainer}>
+                <Text style={styles.sectionLabel}>Monto:</Text>
+                <TextInput
+                  style={styles.amountInput}
+                  placeholder="0.00"
+                  keyboardType="decimal-pad"
+                  value={paymentAmount}
+                  onChangeText={setPaymentAmount}
+                />
+                <TouchableOpacity
+                  style={styles.fillRemainingButton}
+                  onPress={() => {
+                    const remaining = getCartTotal() - getPaymentsTotal();
+                    setPaymentAmount(remaining.toFixed(2));
+                  }}
+                >
+                  <Text style={styles.fillRemainingButtonText}>Restante</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Add Payment Button */}
+              <TouchableOpacity
+                style={[
+                  styles.addPaymentButton,
+                  (!selectedParentMethod ||
+                    !paymentAmount ||
+                    parseFloat(paymentAmount) <= 0 ||
+                    (paymentMethods.find((pm) => pm.id === selectedParentMethod)?.submethods &&
+                      paymentMethods.find((pm) => pm.id === selectedParentMethod)!.submethods!
+                        .length > 0 &&
+                      !selectedSubmethod)) &&
+                    styles.buttonDisabled,
+                ]}
+                onPress={() => {
+                  const amount = parseFloat(paymentAmount);
+                  if (isNaN(amount) || amount <= 0) {
+                    Alert.alert('Error', 'Ingrese un monto válido');
+                    return;
+                  }
+
+                  const parentMethod = paymentMethods.find((pm) => pm.id === selectedParentMethod);
+                  if (!parentMethod) return;
+
+                  // If has submethods, use the selected submethod, otherwise use parent
+                  const methodToUse =
+                    parentMethod.submethods && parentMethod.submethods.length > 0
+                      ? selectedSubmethod
+                      : selectedParentMethod;
+
+                  if (!methodToUse) {
+                    Alert.alert('Error', 'Seleccione un método de pago');
+                    return;
+                  }
+
+                  const methodName =
+                    parentMethod.submethods && parentMethod.submethods.length > 0
+                      ? `${parentMethod.name} - ${
+                          parentMethod.submethods.find((sm) => sm.id === selectedSubmethod)?.name
+                        }`
+                      : parentMethod.name;
+
+                  addPaymentToCart(methodToUse, amount);
+                  setPaymentAmount('');
+                  setSelectedParentMethod(null);
+                  setSelectedSubmethod(null);
+                }}
+              >
+                <Text style={styles.addPaymentButtonText}>+ Agregar Pago</Text>
+              </TouchableOpacity>
+            </View>
 
             {cartPayments.length > 0 && (
               <View style={styles.selectedPayments}>
@@ -522,9 +714,30 @@ export default function NewSaleScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.button, styles.modalConfirmButton]}
-                onPress={handleCompleteSale}
-                disabled={Math.abs(getCartTotal() - getPaymentsTotal()) > 0.01 || isLoading}
+                style={[
+                  styles.button,
+                  styles.modalConfirmButton,
+                  (Math.abs(getCartTotal() - getPaymentsTotal()) > 0.01 || isLoading) &&
+                    styles.buttonDisabled,
+                ]}
+                onPress={() => {
+                  const total = getCartTotal();
+                  const paymentsTotal = getPaymentsTotal();
+                  const diff = Math.abs(total - paymentsTotal);
+                  console.log('🔘 Botón presionado');
+                  console.log('💰 Total carrito:', total);
+                  console.log('💳 Total pagos:', paymentsTotal);
+                  console.log('📊 Diferencia:', diff);
+                  console.log('🔒 Está deshabilitado:', diff > 0.01 || isLoading);
+                  console.log('⏳ isLoading:', isLoading);
+
+                  if (diff > 0.01 || isLoading) {
+                    console.log('❌ Botón deshabilitado, no se ejecuta handleCompleteSale');
+                    return;
+                  }
+
+                  handleCompleteSale();
+                }}
               >
                 {isLoading ? (
                   <ActivityIndicator color="#FFFFFF" />
@@ -565,7 +778,8 @@ export default function NewSaleScreen() {
                     style={styles.saleItem}
                     onPress={() => {
                       setShowRecentSales(false);
-                      navigation.navigate(ROUTES.SALE_DETAIL as never, { saleId: sale.id } as never);
+                      // @ts-expect-error - Navigation types
+                      navigation.navigate(ROUTES.SALE_DETAIL, { saleId: sale.id });
                     }}
                   >
                     <View style={styles.saleItemHeader}>
@@ -612,6 +826,82 @@ export default function NewSaleScreen() {
             >
               <Text style={styles.closeModalButtonText}>Cerrar</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Sale Success Modal */}
+      <Modal
+        visible={showSaleSuccessModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={handleNewSale}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.successModalContent}>
+            <View style={styles.successHeader}>
+              <Text style={styles.successIcon}>✓</Text>
+              <Text style={styles.successTitle}>¡Venta Procesada!</Text>
+            </View>
+
+            {saleResponse && (
+              <View style={styles.successDetails}>
+                <View style={styles.successRow}>
+                  <Text style={styles.successLabel}>Código de Venta:</Text>
+                  <Text style={styles.successValue}>{saleResponse.sale.code}</Text>
+                </View>
+
+                <View style={styles.successRow}>
+                  <Text style={styles.successLabel}>Tipo de Documento:</Text>
+                  <Text style={styles.successValue}>{saleResponse.document.type}</Text>
+                </View>
+
+                <View style={styles.successRow}>
+                  <Text style={styles.successLabel}>Estado:</Text>
+                  <Text style={styles.successValue}>{saleResponse.document.status}</Text>
+                </View>
+
+                <View style={styles.successRow}>
+                  <Text style={styles.successLabel}>Total:</Text>
+                  <Text style={styles.successValueBold}>
+                    {formatCurrency(saleResponse.sale.totalCents / 100)}
+                  </Text>
+                </View>
+
+                <View style={styles.divider} />
+
+                <Text style={styles.successMessage}>{saleResponse.document.message}</Text>
+
+                <View style={styles.successRow}>
+                  <Text style={styles.successLabel}>Fecha:</Text>
+                  <Text style={styles.successValue}>
+                    {new Date(saleResponse.sale.createdAt).toLocaleString('es-PE', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            <View style={styles.successButtons}>
+              <TouchableOpacity
+                style={[styles.button, styles.printButton]}
+                onPress={handlePrintPDF}
+              >
+                <Text style={styles.printButtonText}>🖨️ Imprimir PDF</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.button, styles.newSaleButton]}
+                onPress={handleNewSale}
+              >
+                <Text style={styles.newSaleButtonText}>Nueva Venta</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1004,21 +1294,79 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#4CAF50',
   },
-  paymentMethodsList: {
-    maxHeight: 200,
+  paymentSelection: {
     marginBottom: 16,
   },
-  paymentMethodButton: {
-    padding: 16,
-    backgroundColor: '#F0F0F0',
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  paymentMethodText: {
-    fontSize: 16,
+  sectionLabel: {
+    fontSize: 14,
     fontWeight: '600',
     color: '#333',
+    marginBottom: 8,
+  },
+  methodsList: {
+    maxHeight: 150,
+    marginBottom: 16,
+  },
+  methodButton: {
+    padding: 12,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 2,
+    borderColor: '#E0E0E0',
+  },
+  methodButtonSelected: {
+    backgroundColor: '#E3F2FD',
+    borderColor: '#2196F3',
+  },
+  methodButtonText: {
+    fontSize: 16,
+    color: '#333',
     textAlign: 'center',
+  },
+  methodButtonTextSelected: {
+    color: '#2196F3',
+    fontWeight: '600',
+  },
+  submethodContainer: {
+    marginTop: 8,
+  },
+  amountContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 16,
+  },
+  amountInput: {
+    flex: 1,
+    padding: 12,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+  },
+  fillRemainingButton: {
+    padding: 12,
+    backgroundColor: '#2196F3',
+    borderRadius: 8,
+  },
+  fillRemainingButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  addPaymentButton: {
+    padding: 16,
+    backgroundColor: '#4CAF50',
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  addPaymentButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   selectedPayments: {
     marginBottom: 16,
@@ -1077,6 +1425,10 @@ const styles = StyleSheet.create({
   },
   modalConfirmButton: {
     backgroundColor: '#4CAF50',
+  },
+  buttonDisabled: {
+    backgroundColor: '#CCCCCC',
+    opacity: 0.6,
   },
   modalConfirmButtonText: {
     fontSize: 16,
@@ -1186,6 +1538,100 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   closeModalButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  // Success Modal Styles
+  successModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 32,
+    width: '90%',
+    maxWidth: 500,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  successHeader: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  successIcon: {
+    fontSize: 64,
+    color: '#4CAF50',
+    marginBottom: 12,
+  },
+  successTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    textAlign: 'center',
+  },
+  successDetails: {
+    backgroundColor: '#F9F9F9',
+    borderRadius: 12,
+    padding: 20,
+    marginBottom: 24,
+  },
+  successRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  successLabel: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
+  },
+  successValue: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '600',
+    textAlign: 'right',
+    flex: 1,
+    marginLeft: 12,
+  },
+  successValueBold: {
+    fontSize: 20,
+    color: '#4CAF50',
+    fontWeight: 'bold',
+    textAlign: 'right',
+    flex: 1,
+    marginLeft: 12,
+  },
+  successMessage: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    marginVertical: 12,
+    fontStyle: 'italic',
+  },
+  successButtons: {
+    gap: 12,
+  },
+  printButton: {
+    backgroundColor: '#2196F3',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  printButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  newSaleButton: {
+    backgroundColor: '#4CAF50',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  newSaleButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',

@@ -18,6 +18,7 @@ import type {
   OpenSessionRequest,
   CloseSessionRequest,
   CreateSaleRequest,
+  CreateSaleResponse,
   CashTransactionRequest,
   CreatePaymentMethodRequest,
   CreateCashRegisterRequest,
@@ -83,8 +84,12 @@ class POSService {
   }
 
   // Payment Methods
-  async getPaymentMethods(): Promise<PaymentMethod[]> {
-    return this.request<PaymentMethod[]>('/pos/cash-registers/payment-methods');
+  async getPaymentMethods(warehouseId?: string): Promise<PaymentMethod[]> {
+    const params = new URLSearchParams({ isActive: 'true' });
+    if (warehouseId) {
+      params.append('warehouseId', warehouseId);
+    }
+    return this.request<PaymentMethod[]>(`/payment-methods?${params.toString()}`);
   }
 
   async createPaymentMethod(data: CreatePaymentMethodRequest): Promise<PaymentMethod> {
@@ -143,17 +148,11 @@ class POSService {
   }
 
   // Sales
-  async createSale(
-    sessionId: string,
-    data: CreateSaleRequest
-  ): Promise<{ sale: Sale; message: string; documentStatus: string }> {
-    return this.request<{ sale: Sale; message: string; documentStatus: string }>(
-      `/pos/sales/${sessionId}`,
-      {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }
-    );
+  async createSale(sessionId: string, data: CreateSaleRequest): Promise<CreateSaleResponse> {
+    return this.request<CreateSaleResponse>(`/pos/sales/${sessionId}`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   }
 
   async getSaleInfo(saleId: string): Promise<SaleInfo> {
@@ -268,7 +267,9 @@ class POSService {
         isActive: true, // Si está en los resultados, está activo
       };
 
-      console.log(`📦 Producto mapeado: ${product.name} - Precio: S/ ${price} - Stock: ${product.availableStock}`);
+      console.log(
+        `📦 Producto mapeado: ${product.name} - Precio: S/ ${price} - Stock: ${product.availableStock}`
+      );
 
       return mappedProduct;
     });
