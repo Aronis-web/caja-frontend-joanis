@@ -241,8 +241,22 @@ export default function NewSaleScreen() {
     try {
       const { base64, filename } = saleResponse.pdf;
 
-      if (Platform.OS === 'web') {
-        // En web, abrir el PDF en una nueva ventana para imprimir
+      // Detectar si estamos en Electron
+      const isElectron = typeof window !== 'undefined' && (window as any).electronAPI?.isElectron;
+
+      if (isElectron) {
+        // En Electron, usar la API nativa de impresión
+        console.log('🖨️ Imprimiendo PDF en Electron...');
+        const result = await (window as any).electronAPI.printPDF(base64, filename);
+
+        if (result.success) {
+          console.log('✅ PDF enviado a impresión');
+        } else {
+          console.error('❌ Error al imprimir:', result.error);
+          Alert.alert('Error', 'No se pudo imprimir el PDF');
+        }
+      } else if (Platform.OS === 'web') {
+        // En web (navegador), abrir el PDF en una nueva ventana para imprimir
         const byteCharacters = atob(base64);
         const byteNumbers = new Array(byteCharacters.length);
         for (let i = 0; i < byteCharacters.length; i++) {
