@@ -6,6 +6,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { config } from '@/utils/config';
 import { authService } from './AuthService';
+import { useAuthStore } from '@/store/auth';
 import type {
   CashRegister,
   PaymentMethod,
@@ -65,7 +66,7 @@ class POSService {
       // Si es 401, el token expiró - cerrar sesión automáticamente
       if (response.status === 401) {
         console.warn('⚠️ Token expirado (401), cerrando sesión...');
-        await authService.logout();
+        await useAuthStore.getState().logout();
         throw new Error('Tu sesión ha expirado. Por favor, inicia sesión nuevamente.');
       }
 
