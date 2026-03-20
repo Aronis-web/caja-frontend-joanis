@@ -440,20 +440,22 @@ class POSService {
     }
   }
 
-  async downloadCreditNote(saleId: string): Promise<{ pdfBase64: string; filename: string }> {
+  async downloadCreditNote(
+    saleId: string
+  ): Promise<{ pdf: { pdfBase64: string; filename: string } }> {
     console.log('🌐 [API] downloadCreditNote - Iniciando request');
     console.log('🌐 [API] Sale ID:', saleId);
     console.log('🌐 [API] Endpoint:', `/pos/sales/${saleId}/credit-note/pdf`);
     console.log('🌐 [API] Method: GET');
 
     try {
-      const response = await this.request<{ pdfBase64: string; filename: string }>(
+      const response = await this.request<{ pdf: { pdfBase64: string; filename: string } }>(
         `/pos/sales/${saleId}/credit-note/pdf`
       );
 
       console.log('✅ [API] downloadCreditNote - Response recibido');
-      console.log('✅ [API] Filename:', response.filename);
-      console.log('✅ [API] PDF base64 length:', response.pdfBase64?.length);
+      console.log('✅ [API] Filename:', response.pdf.filename);
+      console.log('✅ [API] PDF base64 length:', response.pdf.pdfBase64?.length);
 
       return response;
     } catch (error) {

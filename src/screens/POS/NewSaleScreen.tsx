@@ -641,12 +641,16 @@ export default function NewSaleScreen() {
 
       console.log('✅ [CREDIT_NOTE] Respuesta recibida del backend:');
       console.log('✅ [CREDIT_NOTE] Response completo:', JSON.stringify(response, null, 2));
-      console.log('✅ [CREDIT_NOTE] Credit Note Code:', response.creditNote?.code);
+      console.log('✅ [CREDIT_NOTE] Success:', response.success);
+      console.log('✅ [CREDIT_NOTE] Message:', response.message);
+      console.log('✅ [CREDIT_NOTE] Credit Note Number:', response.creditNote?.documentNumber);
       console.log('✅ [CREDIT_NOTE] Credit Note ID:', response.creditNote?.id);
       console.log('✅ [CREDIT_NOTE] Credit Note Status:', response.creditNote?.status);
+      console.log('✅ [CREDIT_NOTE] Credit Note Type:', response.creditNote?.creditNoteType);
+      console.log('✅ [CREDIT_NOTE] Total:', response.creditNote?.total);
       console.log('✅ [CREDIT_NOTE] PDF disponible:', !!response.pdf);
       console.log('✅ [CREDIT_NOTE] PDF filename:', response.pdf?.filename);
-      console.log('✅ [CREDIT_NOTE] PDF base64 length:', response.pdf?.base64?.length);
+      console.log('✅ [CREDIT_NOTE] PDF base64 length:', response.pdf?.pdfBase64?.length);
 
       // Cerrar modal
       setShowCreditNoteModal(false);
@@ -655,23 +659,28 @@ export default function NewSaleScreen() {
       setSelectedSaleForCreditNote(null);
 
       // Imprimir automáticamente la nota de crédito
-      if (response.pdf?.base64 && response.pdf?.filename) {
-        console.log('🖨️ [CREDIT_NOTE] Imprimiendo PDF de nota de crédito...');
-        await handlePrintPDF(response.pdf.base64, response.pdf.filename);
+      if (response.pdf?.pdfBase64 && response.pdf?.filename) {
+        console.log('🖨️ [CREDIT_NOTE] Imprimiendo PDF de nota de crédito automáticamente...');
+        await handlePrintPDF(response.pdf.pdfBase64, response.pdf.filename);
+        console.log('✅ [CREDIT_NOTE] PDF impreso exitosamente');
       } else {
         console.warn('⚠️ [CREDIT_NOTE] No hay PDF disponible para imprimir');
       }
 
-      Alert.alert('Éxito', `Nota de crédito ${response.creditNote.code} generada correctamente`, [
-        {
-          text: 'OK',
-          onPress: () => {
-            console.log('🔄 [CREDIT_NOTE] Recargando lista de ventas...');
-            // Recargar las ventas para mostrar la nota de crédito
-            handleLoadRecentSales();
+      // Recargar las ventas para mostrar la nota de crédito
+      console.log('🔄 [CREDIT_NOTE] Recargando lista de ventas...');
+      await handleLoadRecentSales();
+      console.log('✅ [CREDIT_NOTE] Lista de ventas actualizada');
+
+      Alert.alert(
+        'Éxito',
+        `Nota de crédito ${response.creditNote.documentNumber} generada correctamente`,
+        [
+          {
+            text: 'OK',
           },
-        },
-      ]);
+        ]
+      );
     } catch (error) {
       console.error('❌ [CREDIT_NOTE] Error al generar nota de crédito:', error);
       console.error('❌ [CREDIT_NOTE] Error type:', typeof error);
@@ -707,14 +716,16 @@ export default function NewSaleScreen() {
 
   const handleDownloadCreditNote = async (saleId: string) => {
     try {
-      console.log('📥 Descargando nota de crédito para venta:', saleId);
+      console.log('📥 [CREDIT_NOTE] Descargando nota de crédito para venta:', saleId);
       const response = await posService.downloadCreditNote(saleId);
-      console.log('✅ Nota de crédito descargada:', response.filename);
+      console.log('✅ [CREDIT_NOTE] Nota de crédito descargada:', response.pdf.filename);
+      console.log('✅ [CREDIT_NOTE] PDF base64 length:', response.pdf.pdfBase64?.length);
 
       // Imprimir/descargar el PDF de la nota de crédito
-      await handlePrintPDF(response.pdfBase64, response.filename);
+      await handlePrintPDF(response.pdf.pdfBase64, response.pdf.filename);
+      console.log('✅ [CREDIT_NOTE] PDF impreso/descargado exitosamente');
     } catch (error) {
-      console.error('❌ Error al descargar nota de crédito:', error);
+      console.error('❌ [CREDIT_NOTE] Error al descargar nota de crédito:', error);
       Alert.alert('Error', 'No se pudo descargar la nota de crédito');
     }
   };

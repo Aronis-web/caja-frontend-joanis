@@ -401,15 +401,26 @@ export interface ActiveSaleData {
 }
 
 export interface CreditNoteResponse {
+  success: boolean;
+  message: string;
   creditNote: {
     id: string;
-    code: string;
+    documentNumber: string;
+    issueDate: string;
+    totalCents: number;
+    total: number;
     status: string;
-    createdAt: string;
+    creditNoteType: string;
   };
   pdf: {
-    base64: string;
+    pdfBase64: string;
     filename: string;
-    mimeType: string;
+  };
+  sale: {
+    id: string;
+    hasCreditNote: boolean;
+    creditNoteType: string;
+    creditedAmount: number;
+    creditNotesCount: number;
   };
 }
