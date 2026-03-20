@@ -415,18 +415,17 @@ class POSService {
   }
 
   // Credit Notes
-  async generateCreditNote(saleId: string, reason?: string): Promise<CreditNoteResponse> {
+  async generateCreditNote(saleId: string, requestBody: any): Promise<CreditNoteResponse> {
     console.log('🌐 [API] generateCreditNote - Iniciando request');
     console.log('🌐 [API] Sale ID:', saleId);
-    console.log('🌐 [API] Reason:', reason || 'Anulación de venta');
     console.log('🌐 [API] Endpoint:', `/pos/sales/${saleId}/credit-note`);
     console.log('🌐 [API] Method: POST');
-    console.log('🌐 [API] Body:', JSON.stringify({ reason: reason || 'Anulación de venta' }));
+    console.log('🌐 [API] Body:', JSON.stringify(requestBody, null, 2));
 
     try {
       const response = await this.request<CreditNoteResponse>(`/pos/sales/${saleId}/credit-note`, {
         method: 'POST',
-        body: JSON.stringify({ reason: reason || 'Anulación de venta' }),
+        body: JSON.stringify(requestBody),
       });
 
       console.log('✅ [API] generateCreditNote - Response recibido');

@@ -83,6 +83,8 @@ export default function NewSaleScreen() {
   const [creditNoteType, setCreditNoteType] = useState<'total' | 'partial' | null>(null);
   const [selectedSaleForCreditNote, setSelectedSaleForCreditNote] = useState<any>(null);
   const [selectedProductsForCreditNote, setSelectedProductsForCreditNote] = useState<string[]>([]);
+  const [creditNoteMotivo, setCreditNoteMotivo] = useState<string>('06');
+  const [creditNoteSustento, setCreditNoteSustento] = useState<string>('');
 
   // Payment method selection states
   const [selectedParentMethod, setSelectedParentMethod] = useState<string | null>(null);
@@ -597,6 +599,8 @@ export default function NewSaleScreen() {
       setSelectedSaleForCreditNote(saleData);
       setCreditNoteType(null);
       setSelectedProductsForCreditNote([]);
+      setCreditNoteMotivo('06'); // Devolución total por defecto
+      setCreditNoteSustento('');
       setShowCreditNoteModal(true);
     } catch (error) {
       console.error('❌ [CREDIT_NOTE] Error en handleGenerateCreditNote:', error);
@@ -607,10 +611,17 @@ export default function NewSaleScreen() {
   const handleConfirmCreditNote = async () => {
     console.log('🔵 [CREDIT_NOTE] handleConfirmCreditNote llamado');
     console.log('🔵 [CREDIT_NOTE] Type:', creditNoteType);
+    console.log('🔵 [CREDIT_NOTE] Motivo:', creditNoteMotivo);
+    console.log('🔵 [CREDIT_NOTE] Sustento:', creditNoteSustento);
     console.log('🔵 [CREDIT_NOTE] Selected products:', selectedProductsForCreditNote);
 
     if (!creditNoteType) {
       Alert.alert('Error', 'Debe seleccionar el tipo de devolución');
+      return;
+    }
+
+    if (!creditNoteSustento || creditNoteSustento.trim().length === 0) {
+      Alert.alert('Error', 'Debe ingresar el sustento de la nota de crédito');
       return;
     }
 
@@ -624,19 +635,29 @@ export default function NewSaleScreen() {
       console.log('📝 [CREDIT_NOTE] Sale ID:', selectedSaleForCreditNote.saleId);
 
       const requestBody: any = {
-        reason: creditNoteType === 'total' ? 'Devolución total' : 'Devolución parcial',
-        type: creditNoteType,
+        motivoNota: creditNoteMotivo,
+        sustentoNota: creditNoteSustento.trim(),
       };
 
       if (creditNoteType === 'partial') {
-        requestBody.productIds = selectedProductsForCreditNote;
+        // Construir array de items para devolución parcial
+        const items = selectedSaleForCreditNote.sale.items
+          .filter((item: any) => selectedProductsForCreditNote.includes(item.productId))
+          .map((item: any) => ({
+            sku: item.productCode || item.sku,
+            descripcion: item.productName || item.name,
+            cantidad: item.quantity,
+            valorUnitario: item.unitPrice / 100, // Convertir de centavos a soles
+            precioVentaUnitario: item.unitPrice / 100,
+          }));
+        requestBody.items = items;
       }
 
       console.log('📝 [CREDIT_NOTE] Request body:', JSON.stringify(requestBody, null, 2));
 
       const response = await posService.generateCreditNote(
         selectedSaleForCreditNote.saleId,
-        requestBody.reason
+        requestBody
       );
 
       console.log('✅ [CREDIT_NOTE] Respuesta recibida del backend:');
@@ -657,6 +678,8 @@ export default function NewSaleScreen() {
       setCreditNoteType(null);
       setSelectedProductsForCreditNote([]);
       setSelectedSaleForCreditNote(null);
+      setCreditNoteMotivo('06');
+      setCreditNoteSustento('');
 
       // Imprimir automáticamente la nota de crédito
       if (response.pdf?.pdfBase64 && response.pdf?.filename) {
@@ -1692,13 +1715,27 @@ export default function NewSaleScreen() {
         visible={showCreditNoteModal}
         animationType="slide"
         transparent={true}
-        onRequestClose={() => setShowCreditNoteModal(false)}
+        onRequestClose={() => {
+          setShowCreditNoteModal(false);
+          setCreditNoteType(null);
+          setSelectedProductsForCreditNote([]);
+          setCreditNoteMotivo('06');
+          setCreditNoteSustento('');
+        }}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.creditNoteModalContent}>
             <View style={styles.creditNoteModalHeader}>
               <Text style={styles.modalTitle}>Generar Nota de Crédito</Text>
-              <TouchableOpacity onPress={() => setShowCreditNoteModal(false)}>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowCreditNoteModal(false);
+                  setCreditNoteType(null);
+                  setSelectedProductsForCreditNote([]);
+                  setCreditNoteMotivo('06');
+                  setCreditNoteSustento('');
+                }}
+              >
                 <Text style={styles.closeButton}>✕</Text>
               </TouchableOpacity>
             </View>
@@ -1727,6 +1764,7 @@ export default function NewSaleScreen() {
                       onPress={() => {
                         setCreditNoteType('total');
                         setSelectedProductsForCreditNote([]);
+                        setCreditNoteMotivo('06'); // Devolución total
                       }}
                     >
                       <Text
@@ -1744,7 +1782,10 @@ export default function NewSaleScreen() {
                         styles.creditNoteTypeButton,
                         creditNoteType === 'partial' && styles.creditNoteTypeButtonActive,
                       ]}
-                      onPress={() => setCreditNoteType('partial')}
+                      onPress={() => {
+                        setCreditNoteType('partial');
+                        setCreditNoteMotivo('07'); // Devolución por ítem
+                      }}
                     >
                       <Text
                         style={[
@@ -1756,6 +1797,96 @@ export default function NewSaleScreen() {
                       </Text>
                     </TouchableOpacity>
                   </View>
+                </View>
+
+                {/* Motivo de la Nota de Crédito */}
+                <View style={styles.creditNoteFieldContainer}>
+                  <Text style={styles.creditNoteFieldLabel}>Motivo (Catálogo 09 SUNAT):</Text>
+                  <View style={styles.creditNoteSelectContainer}>
+                    <TouchableOpacity
+                      style={styles.creditNoteSelect}
+                      onPress={() => {
+                        // Aquí podrías abrir un picker o modal con todos los motivos
+                        // Por ahora, mostraremos los más comunes
+                      }}
+                    >
+                      <Text style={styles.creditNoteSelectText}>
+                        {creditNoteMotivo === '01' && '01 - Anulación de la operación'}
+                        {creditNoteMotivo === '06' && '06 - Devolución total'}
+                        {creditNoteMotivo === '07' && '07 - Devolución por ítem'}
+                        {creditNoteMotivo === '04' && '04 - Descuento global'}
+                        {creditNoteMotivo === '05' && '05 - Descuento por ítem'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.creditNoteMotivoButtons}>
+                    <TouchableOpacity
+                      style={[
+                        styles.creditNoteMotivoButton,
+                        creditNoteMotivo === '01' && styles.creditNoteMotivoButtonActive,
+                      ]}
+                      onPress={() => setCreditNoteMotivo('01')}
+                    >
+                      <Text
+                        style={[
+                          styles.creditNoteMotivoButtonText,
+                          creditNoteMotivo === '01' && styles.creditNoteMotivoButtonTextActive,
+                        ]}
+                      >
+                        01 - Anulación
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.creditNoteMotivoButton,
+                        creditNoteMotivo === '06' && styles.creditNoteMotivoButtonActive,
+                      ]}
+                      onPress={() => setCreditNoteMotivo('06')}
+                    >
+                      <Text
+                        style={[
+                          styles.creditNoteMotivoButtonText,
+                          creditNoteMotivo === '06' && styles.creditNoteMotivoButtonTextActive,
+                        ]}
+                      >
+                        06 - Dev. Total
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.creditNoteMotivoButton,
+                        creditNoteMotivo === '07' && styles.creditNoteMotivoButtonActive,
+                      ]}
+                      onPress={() => setCreditNoteMotivo('07')}
+                    >
+                      <Text
+                        style={[
+                          styles.creditNoteMotivoButtonText,
+                          creditNoteMotivo === '07' && styles.creditNoteMotivoButtonTextActive,
+                        ]}
+                      >
+                        07 - Dev. Ítem
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Sustento de la Nota de Crédito */}
+                <View style={styles.creditNoteFieldContainer}>
+                  <Text style={styles.creditNoteFieldLabel}>Sustento *:</Text>
+                  <TextInput
+                    style={styles.creditNoteSustentoInput}
+                    value={creditNoteSustento}
+                    onChangeText={setCreditNoteSustento}
+                    placeholder="Ingrese el motivo de la devolución..."
+                    placeholderTextColor="#999"
+                    multiline
+                    numberOfLines={3}
+                    maxLength={250}
+                  />
+                  <Text style={styles.creditNoteCharCount}>
+                    {creditNoteSustento.length}/250 caracteres
+                  </Text>
                 </View>
 
                 {/* Lista de Productos (solo si es devolución parcial) */}
@@ -1804,7 +1935,13 @@ export default function NewSaleScreen() {
                 <View style={styles.creditNoteActions}>
                   <TouchableOpacity
                     style={styles.creditNoteCancelButton}
-                    onPress={() => setShowCreditNoteModal(false)}
+                    onPress={() => {
+                      setShowCreditNoteModal(false);
+                      setCreditNoteType(null);
+                      setSelectedProductsForCreditNote([]);
+                      setCreditNoteMotivo('06');
+                      setCreditNoteSustento('');
+                    }}
                   >
                     <Text style={styles.creditNoteCancelButtonText}>Cancelar</Text>
                   </TouchableOpacity>
@@ -1812,10 +1949,11 @@ export default function NewSaleScreen() {
                   <TouchableOpacity
                     style={[
                       styles.creditNoteConfirmButton,
-                      !creditNoteType && styles.creditNoteConfirmButtonDisabled,
+                      (!creditNoteType || !creditNoteSustento.trim()) &&
+                        styles.creditNoteConfirmButtonDisabled,
                     ]}
                     onPress={handleConfirmCreditNote}
-                    disabled={!creditNoteType}
+                    disabled={!creditNoteType || !creditNoteSustento.trim()}
                   >
                     <Text style={styles.creditNoteConfirmButtonText}>Generar NC</Text>
                   </TouchableOpacity>
@@ -3234,6 +3372,71 @@ const styles = StyleSheet.create({
   },
   creditNoteTypeButtonTextActive: {
     color: '#2196F3',
+  },
+  creditNoteFieldContainer: {
+    marginBottom: 20,
+  },
+  creditNoteFieldLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  creditNoteSelectContainer: {
+    marginBottom: 8,
+  },
+  creditNoteSelect: {
+    backgroundColor: '#F5F5F5',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  creditNoteSelectText: {
+    fontSize: 14,
+    color: '#333',
+  },
+  creditNoteMotivoButtons: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  creditNoteMotivoButton: {
+    backgroundColor: '#F5F5F5',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  creditNoteMotivoButtonActive: {
+    backgroundColor: '#E3F2FD',
+    borderColor: '#2196F3',
+  },
+  creditNoteMotivoButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
+  },
+  creditNoteMotivoButtonTextActive: {
+    color: '#2196F3',
+  },
+  creditNoteSustentoInput: {
+    backgroundColor: '#F9F9F9',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 14,
+    color: '#333',
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  creditNoteCharCount: {
+    fontSize: 12,
+    color: '#999',
+    textAlign: 'right',
+    marginTop: 4,
   },
   creditNoteProductsContainer: {
     marginBottom: 20,
