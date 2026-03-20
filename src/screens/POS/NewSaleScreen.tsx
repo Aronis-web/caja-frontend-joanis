@@ -742,19 +742,31 @@ export default function NewSaleScreen() {
     });
   };
 
-  const handleDownloadCreditNote = async (saleId: string) => {
+  const handlePrintCreditNote = async (saleId: string, creditNotes: any[]) => {
     try {
-      console.log('📥 [CREDIT_NOTE] Descargando nota de crédito para venta:', saleId);
-      const response = await posService.downloadCreditNote(saleId);
-      console.log('✅ [CREDIT_NOTE] Nota de crédito descargada:', response.pdf.filename);
-      console.log('✅ [CREDIT_NOTE] PDF base64 length:', response.pdf.pdfBase64?.length);
+      console.log('🖨️ [CREDIT_NOTE] Imprimiendo ticket de nota de crédito para venta:', saleId);
+      console.log('🖨️ [CREDIT_NOTE] Credit Notes disponibles:', creditNotes);
 
-      // Imprimir/descargar el PDF de la nota de crédito
-      await handlePrintPDF(response.pdf.pdfBase64, response.pdf.filename);
-      console.log('✅ [CREDIT_NOTE] PDF impreso/descargado exitosamente');
+      // Obtener el primer creditNote (o el más reciente)
+      if (!creditNotes || creditNotes.length === 0) {
+        Alert.alert('Error', 'No se encontró la nota de crédito');
+        return;
+      }
+
+      const creditNote = creditNotes[0]; // Tomar la primera nota de crédito
+      const creditNoteDocumentId = creditNote.id;
+
+      console.log('🖨️ [CREDIT_NOTE] Credit Note Document ID:', creditNoteDocumentId);
+
+      const response = await posService.regenerateCreditNoteTicket(saleId, creditNoteDocumentId);
+      console.log('✅ [CREDIT_NOTE] Ticket de nota de crédito generado:', response.filename);
+
+      // Imprimir el ticket
+      await handlePrintPDF(response.pdfBase64, response.filename);
+      console.log('✅ [CREDIT_NOTE] Ticket impreso exitosamente');
     } catch (error) {
-      console.error('❌ [CREDIT_NOTE] Error al descargar nota de crédito:', error);
-      Alert.alert('Error', 'No se pudo descargar la nota de crédito');
+      console.error('❌ [CREDIT_NOTE] Error al imprimir nota de crédito:', error);
+      Alert.alert('Error', 'No se pudo imprimir el ticket de la nota de crédito');
     }
   };
 
@@ -1641,15 +1653,16 @@ export default function NewSaleScreen() {
                             <TouchableOpacity
                               style={styles.creditNoteButton}
                               onPress={(e) => {
-                                console.log('🟢 [BUTTON] Botón Descargar NC presionado');
+                                console.log('🟢 [BUTTON] Botón Imprimir NC presionado');
                                 console.log('🟢 [BUTTON] Sale ID:', saleId);
                                 console.log('🟢 [BUTTON] Has Credit Note:', hasCreditNote);
+                                console.log('🟢 [BUTTON] Credit Notes:', sale.creditNotes);
                                 e.stopPropagation();
-                                handleDownloadCreditNote(saleId);
+                                handlePrintCreditNote(saleId, sale.creditNotes);
                               }}
                             >
-                              <Text style={styles.creditNoteButtonIcon}>📥</Text>
-                              <Text style={styles.creditNoteButtonText}>Descargar NC</Text>
+                              <Text style={styles.creditNoteButtonIcon}>🖨️</Text>
+                              <Text style={styles.creditNoteButtonText}>Imprimir NC</Text>
                             </TouchableOpacity>
                           ) : (
                             <TouchableOpacity
@@ -1658,9 +1671,7 @@ export default function NewSaleScreen() {
                                 console.log('🟠 [BUTTON] Botón Generar NC presionado');
                                 console.log('🟠 [BUTTON] Sale ID:', saleId);
                                 console.log('🟠 [BUTTON] Has Credit Note:', hasCreditNote);
-                                console.log('🟠 [BUTTON] Event:', e);
                                 e.stopPropagation();
-                                console.log('🟠 [BUTTON] Llamando a handleGenerateCreditNote...');
                                 handleGenerateCreditNote(saleId);
                               }}
                             >

@@ -463,6 +463,35 @@ class POSService {
       throw error;
     }
   }
+
+  async regenerateCreditNoteTicket(
+    saleId: string,
+    creditNoteDocumentId: string
+  ): Promise<{ pdfBase64: string; filename: string }> {
+    console.log('🌐 [API] regenerateCreditNoteTicket - Iniciando request');
+    console.log('🌐 [API] Sale ID:', saleId);
+    console.log('🌐 [API] Credit Note Document ID:', creditNoteDocumentId);
+    console.log(
+      '🌐 [API] Endpoint:',
+      `/pos/sales/${saleId}/credit-note/${creditNoteDocumentId}/ticket`
+    );
+
+    try {
+      const response = await this.request<{ pdfBase64: string; filename: string }>(
+        `/pos/sales/${saleId}/credit-note/${creditNoteDocumentId}/ticket`
+      );
+
+      console.log('✅ [API] regenerateCreditNoteTicket - Response recibido');
+      console.log('✅ [API] Filename:', response.filename);
+      console.log('✅ [API] PDF base64 length:', response.pdfBase64?.length);
+
+      return response;
+    } catch (error) {
+      console.error('❌ [API] regenerateCreditNoteTicket - Error en request');
+      console.error('❌ [API] Error:', error);
+      throw error;
+    }
+  }
 }
 
 export const posService = new POSService();
