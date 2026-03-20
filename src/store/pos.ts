@@ -423,9 +423,10 @@ export const usePOSStore = create<POSState>((set, get) => ({
     try {
       set({ isLoading: true, error: null });
 
-      // Determinar el tipo de venta según el tipo de documento
-      const saleType = documentType === '01' ? 'B2B' : 'B2C';
+      // Siempre usar B2C como tipo de venta
+      const saleType = 'B2C';
       console.log('📄 [STORE] Tipo de venta:', saleType);
+      console.log('👤 [STORE] Cliente ID:', customerId || 'Sin cliente');
 
       // Convertir items al formato del nuevo endpoint
       const items = cartItems.map((item) => ({
@@ -491,13 +492,17 @@ export const usePOSStore = create<POSState>((set, get) => ({
 
       console.log('💳 [STORE] Pagos procesados:', JSON.stringify(payments, null, 2));
 
-      const requestData = {
+      const requestData: any = {
         saleType,
-        ...(customerId && { customerId }),
         items,
         payments,
         notes,
       };
+
+      // Agregar customerId solo si existe
+      if (customerId) {
+        requestData.customerId = customerId;
+      }
 
       console.log('📤 [STORE] Enviando request:', JSON.stringify(requestData, null, 2));
 
