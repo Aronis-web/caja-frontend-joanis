@@ -980,10 +980,6 @@ export default function NewSaleScreen() {
                   <Text style={styles.successValue}>{saleResponse.document.status}</Text>
                 </View>
 
-                <View style={styles.divider} />
-
-                <Text style={styles.successMessage}>{saleResponse.document.message}</Text>
-
                 <View style={styles.successRow}>
                   <Text style={styles.successLabel}>Fecha:</Text>
                   <Text style={styles.successValue}>
@@ -1841,13 +1837,6 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 16,
   },
-  successMessage: {
-    fontSize: 18,
-    color: '#666',
-    textAlign: 'center',
-    marginVertical: 16,
-    fontStyle: 'italic',
-  },
   successButtons: {
     flexDirection: 'row',
     gap: 20,
@@ -1855,7 +1844,7 @@ const styles = StyleSheet.create({
   printButton: {
     flex: 1,
     backgroundColor: '#2196F3',
-    paddingVertical: 36,
+    paddingVertical: 52,
     paddingHorizontal: 24,
     borderRadius: 12,
     alignItems: 'center',
@@ -1869,7 +1858,7 @@ const styles = StyleSheet.create({
   newSaleButton: {
     flex: 1,
     backgroundColor: '#4CAF50',
-    paddingVertical: 36,
+    paddingVertical: 52,
     paddingHorizontal: 24,
     borderRadius: 12,
     alignItems: 'center',
