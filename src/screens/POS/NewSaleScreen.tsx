@@ -1113,10 +1113,35 @@ export default function NewSaleScreen() {
                           ` - ${saleTransaction.sale.customerSnapshot.documentNumber}`}
                       </Text>
                     )}
+
+                    {/* Métodos de Pago */}
+                    {saleTransaction.sale.payments && saleTransaction.sale.payments.length > 0 && (
+                      <View style={styles.salePaymentsContainer}>
+                        <Text style={styles.salePaymentsTitle}>💳 Métodos de Pago:</Text>
+                        {saleTransaction.sale.payments.map((payment, index) => (
+                          <View key={index} style={styles.salePaymentRow}>
+                            <Text style={styles.salePaymentMethod}>
+                              • {payment.paymentMethod.name}
+                            </Text>
+                            <Text style={styles.salePaymentAmount}>
+                              {formatCurrency(payment.amountCents / 100)}
+                            </Text>
+                          </View>
+                        ))}
+                        {saleTransaction.sale.paymentSummary && (
+                          <View style={styles.salePaymentTotal}>
+                            <Text style={styles.salePaymentTotalLabel}>Total Pagado:</Text>
+                            <Text style={styles.salePaymentTotalValue}>
+                              {formatCurrency(
+                                saleTransaction.sale.paymentSummary.totalAmountCents / 100
+                              )}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    )}
+
                     <View style={styles.saleItemDetails}>
-                      <Text style={styles.salePaymentMethod}>
-                        💳 {saleTransaction.paymentMethod.name}
-                      </Text>
                       <Text style={styles.saleItemCount}>
                         📦 {saleTransaction.sale.itemCount} items (
                         {saleTransaction.sale.totalQuantity} unidades)
@@ -2130,9 +2155,57 @@ const styles = StyleSheet.create({
     color: '#666',
     marginBottom: 4,
   },
+  salePaymentsContainer: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  salePaymentsTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  salePaymentRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
   salePaymentMethod: {
     fontSize: 12,
-    color: '#666',
+    color: '#555',
+    flex: 1,
+  },
+  salePaymentAmount: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#007AFF',
+  },
+  salePaymentTotal: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#D0D0D0',
+    paddingHorizontal: 8,
+  },
+  salePaymentTotalLabel: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  salePaymentTotalValue: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#4CAF50',
   },
   saleItemCount: {
     fontSize: 12,
