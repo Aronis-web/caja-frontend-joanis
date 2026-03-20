@@ -253,6 +253,12 @@ export interface Customer {
   email?: string;
   phone?: string;
   address?: string;
+  customerType?: 'PERSONA' | 'EMPRESA';
+  fullName?: string;
+  status?: string;
+  isActive?: boolean;
+  matchType?: 'name' | 'document';
+  label?: string;
 }
 
 // Request types

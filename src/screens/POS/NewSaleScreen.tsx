@@ -62,6 +62,12 @@ export default function NewSaleScreen() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showCustomerSearch, setShowCustomerSearch] = useState(false);
   const [showRecentSales, setShowRecentSales] = useState(false);
+
+  // Customer autocomplete states
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
+  const [customerSearchResults, setCustomerSearchResults] = useState<Customer[]>([]);
+  const [searchingCustomers, setSearchingCustomers] = useState(false);
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [activeSalesData, setActiveSalesData] = useState<ActiveSalesResponse | null>(null);
   const [loadingSales, setLoadingSales] = useState(false);
   const [showSaleSuccessModal, setShowSaleSuccessModal] = useState(false);
@@ -163,6 +169,52 @@ export default function NewSaleScreen() {
       console.error('❌ Error al agregar producto:', error);
       Alert.alert('Error', 'No se pudo agregar el producto. Intenta nuevamente.');
     }
+  };
+
+  const handleSearchCustomers = async (query: string) => {
+    setCustomerSearchQuery(query);
+
+    if (query.length < 2) {
+      setCustomerSearchResults([]);
+      setShowCustomerDropdown(false);
+      return;
+    }
+
+    try {
+      setSearchingCustomers(true);
+      const response = await posService.autocompleteCustomers(query, 10);
+      setCustomerSearchResults(response.data);
+      setShowCustomerDropdown(response.data.length > 0);
+    } catch (error) {
+      console.error('❌ Error searching customers:', error);
+      setCustomerSearchResults([]);
+      setShowCustomerDropdown(false);
+    } finally {
+      setSearchingCustomers(false);
+    }
+  };
+
+  const handleSelectCustomer = (customer: Customer) => {
+    setSelectedCustomer(customer);
+    setCustomerSearchQuery(
+      customer.label || `${customer.fullName || customer.name} - ${customer.documentNumber}`
+    );
+    setShowCustomerDropdown(false);
+
+    // Determinar automáticamente el tipo de documento según el tipo de cliente
+    if (customer.customerType === 'EMPRESA') {
+      setDocumentType('01'); // Factura para empresas
+    } else {
+      setDocumentType('03'); // Boleta para personas naturales
+    }
+  };
+
+  const handleClearCustomer = () => {
+    setSelectedCustomer(null);
+    setCustomerSearchQuery('');
+    setCustomerSearchResults([]);
+    setShowCustomerDropdown(false);
+    setDocumentType('03'); // Volver a boleta por defecto
   };
 
   const handleProcessSale = () => {
@@ -338,6 +390,9 @@ export default function NewSaleScreen() {
     clearCart();
     clearPayments();
     setSelectedCustomer(null);
+    setCustomerSearchQuery('');
+    setCustomerSearchResults([]);
+    setShowCustomerDropdown(false);
     setDocumentType('03');
   };
 
@@ -472,55 +527,86 @@ export default function NewSaleScreen() {
 
         {/* Right Panel - Cart */}
         <View style={styles.rightPanel}>
-          {/* Document Type Selection */}
-          <View style={styles.documentTypeContainer}>
-            <TouchableOpacity
-              style={[
-                styles.documentTypeButton,
-                documentType === '03' && styles.documentTypeActive,
-              ]}
-              onPress={() => setDocumentType('03')}
-            >
-              <Text
-                style={[
-                  styles.documentTypeText,
-                  documentType === '03' && styles.documentTypeTextActive,
-                ]}
-              >
-                Boleta
+          {/* Customer Search with Autocomplete */}
+          <View style={styles.customerSearchContainer}>
+            <View style={styles.customerSearchHeader}>
+              <Text style={styles.customerSearchLabel}>
+                {documentType === '01' ? '📄 Factura' : '🧾 Boleta'}
+                {selectedCustomer &&
+                  ` - ${selectedCustomer.customerType === 'EMPRESA' ? 'Empresa' : 'Persona'}`}
               </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.documentTypeButton,
-                documentType === '01' && styles.documentTypeActive,
-              ]}
-              onPress={() => setDocumentType('01')}
-            >
-              <Text
-                style={[
-                  styles.documentTypeText,
-                  documentType === '01' && styles.documentTypeTextActive,
-                ]}
-              >
-                Factura
-              </Text>
-            </TouchableOpacity>
-          </View>
+            </View>
+            <View style={styles.customerInputContainer}>
+              <TextInput
+                style={styles.customerSearchInput}
+                value={customerSearchQuery}
+                onChangeText={handleSearchCustomers}
+                placeholder="Buscar cliente por DNI, RUC o nombre..."
+                placeholderTextColor="#999"
+                onFocus={() => {
+                  if (customerSearchResults.length > 0) {
+                    setShowCustomerDropdown(true);
+                  }
+                }}
+              />
+              {searchingCustomers && (
+                <ActivityIndicator
+                  style={styles.customerSearchLoader}
+                  size="small"
+                  color="#007AFF"
+                />
+              )}
+              {selectedCustomer && (
+                <TouchableOpacity onPress={handleClearCustomer} style={styles.clearCustomerButton}>
+                  <Text style={styles.clearCustomerIcon}>✕</Text>
+                </TouchableOpacity>
+              )}
+            </View>
 
-          {/* Customer Selection (for Factura) */}
-          {documentType === '01' && (
-            <TouchableOpacity
-              style={styles.customerButton}
-              onPress={() => setShowCustomerSearch(true)}
-            >
-              <Text style={styles.customerButtonText}>
-                {selectedCustomer
-                  ? `${selectedCustomer.name} - ${selectedCustomer.documentNumber}`
-                  : '+ Seleccionar Cliente'}
-              </Text>
-            </TouchableOpacity>
-          )}
+            {/* Autocomplete Dropdown */}
+            {showCustomerDropdown && customerSearchResults.length > 0 && (
+              <View style={styles.customerDropdown}>
+                <ScrollView style={styles.customerDropdownScroll} nestedScrollEnabled>
+                  {customerSearchResults.map((customer) => (
+                    <TouchableOpacity
+                      key={customer.id}
+                      style={styles.customerDropdownItem}
+                      onPress={() => handleSelectCustomer(customer)}
+                    >
+                      <View style={styles.customerDropdownItemContent}>
+                        <View style={styles.customerDropdownItemHeader}>
+                          <Text style={styles.customerDropdownItemName}>
+                            {customer.fullName || customer.name}
+                          </Text>
+                          <View
+                            style={[
+                              styles.customerTypeBadge,
+                              customer.customerType === 'EMPRESA'
+                                ? styles.customerTypeBadgeEmpresa
+                                : styles.customerTypeBadgePersona,
+                            ]}
+                          >
+                            <Text style={styles.customerTypeBadgeText}>
+                              {customer.customerType === 'EMPRESA' ? 'Empresa' : 'Persona'}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.customerDropdownItemDoc}>
+                          {customer.documentType}: {customer.documentNumber}
+                        </Text>
+                        {customer.email && (
+                          <Text style={styles.customerDropdownItemEmail}>📧 {customer.email}</Text>
+                        )}
+                        {customer.phone && (
+                          <Text style={styles.customerDropdownItemPhone}>📱 {customer.phone}</Text>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+          </View>
 
           {/* Cart Items */}
           <ScrollView style={styles.cartList}>
@@ -570,7 +656,7 @@ export default function NewSaleScreen() {
               onPress={() => {
                 clearCart();
                 clearPayments();
-                setSelectedCustomer(null);
+                handleClearCustomer();
               }}
               disabled={cartItems.length === 0}
             >
@@ -1193,42 +1279,118 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#007AFF',
   },
-  documentTypeContainer: {
-    flexDirection: 'row',
-    marginBottom: 12,
-    gap: 8,
+  // Customer Search Styles
+  customerSearchContainer: {
+    marginBottom: 16,
+    position: 'relative',
+    zIndex: 1000,
   },
-  documentTypeButton: {
+  customerSearchHeader: {
+    marginBottom: 8,
+  },
+  customerSearchLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  customerInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  customerSearchInput: {
     flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
     padding: 12,
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    paddingRight: 70,
+  },
+  customerSearchLoader: {
+    position: 'absolute',
+    right: 40,
+  },
+  clearCustomerButton: {
+    position: 'absolute',
+    right: 8,
+    padding: 8,
+  },
+  clearCustomerIcon: {
+    fontSize: 18,
+    color: '#999',
+    fontWeight: 'bold',
+  },
+  customerDropdown: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    backgroundColor: '#FFFFFF',
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#E0E0E0',
+    marginTop: 4,
+    maxHeight: 300,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 5,
+    zIndex: 1001,
+  },
+  customerDropdownScroll: {
+    maxHeight: 300,
+  },
+  customerDropdownItem: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  customerDropdownItemContent: {
+    gap: 4,
+  },
+  customerDropdownItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 4,
   },
-  documentTypeActive: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
-  },
-  documentTypeText: {
+  customerDropdownItemName: {
     fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    flex: 1,
+  },
+  customerTypeBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    marginLeft: 8,
+  },
+  customerTypeBadgeEmpresa: {
+    backgroundColor: '#E3F2FD',
+  },
+  customerTypeBadgePersona: {
+    backgroundColor: '#F3E5F5',
+  },
+  customerTypeBadgeText: {
+    fontSize: 10,
     fontWeight: '600',
     color: '#666',
   },
-  documentTypeTextActive: {
-    color: '#FFFFFF',
+  customerDropdownItemDoc: {
+    fontSize: 12,
+    color: '#666',
   },
-  customerButton: {
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    marginBottom: 12,
+  customerDropdownItemEmail: {
+    fontSize: 11,
+    color: '#999',
   },
-  customerButtonText: {
-    fontSize: 14,
-    color: '#007AFF',
-    textAlign: 'center',
+  customerDropdownItemPhone: {
+    fontSize: 11,
+    color: '#999',
   },
   cartList: {
     flex: 1,

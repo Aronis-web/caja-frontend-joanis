@@ -381,6 +381,27 @@ class POSService {
     return this.request<Customer[]>(`/customers/search?q=${encodeURIComponent(query)}`);
   }
 
+  async autocompleteCustomers(
+    query: string,
+    limit: number = 10,
+    includeInactive: boolean = false,
+    customerType?: 'PERSONA' | 'EMPRESA'
+  ): Promise<{ data: Customer[]; meta: { total: number; query: string } }> {
+    const params = new URLSearchParams({
+      query,
+      limit: limit.toString(),
+      includeInactive: includeInactive.toString(),
+    });
+
+    if (customerType) {
+      params.append('customerType', customerType);
+    }
+
+    return this.request<{ data: Customer[]; meta: { total: number; query: string } }>(
+      `/customers/autocomplete?${params.toString()}`
+    );
+  }
+
   async getCustomer(id: string): Promise<Customer> {
     return this.request<Customer>(`/customers/${id}`);
   }
