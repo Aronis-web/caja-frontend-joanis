@@ -964,7 +964,7 @@ export default function NewSaleScreen() {
             </ScrollView>
 
             <TouchableOpacity
-              style={[styles.button, styles.closeModalButton]}
+              style={styles.closeModalButton}
               onPress={() => setShowRecentSales(false)}
             >
               <Text style={styles.closeModalButtonText}>Cerrar</Text>
