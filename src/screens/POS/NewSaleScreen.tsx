@@ -85,6 +85,7 @@ export default function NewSaleScreen() {
   const [selectedProductsForCreditNote, setSelectedProductsForCreditNote] = useState<string[]>([]);
   const [creditNoteMotivo, setCreditNoteMotivo] = useState<string>('06');
   const [creditNoteSustento, setCreditNoteSustento] = useState<string>('');
+  const [generatingCreditNote, setGeneratingCreditNote] = useState(false);
 
   // Payment method selection states
   const [selectedParentMethod, setSelectedParentMethod] = useState<string | null>(null);
@@ -630,6 +631,8 @@ export default function NewSaleScreen() {
       return;
     }
 
+    setGeneratingCreditNote(true);
+
     try {
       console.log('📝 [CREDIT_NOTE] Iniciando generación de nota de crédito...');
       console.log('📝 [CREDIT_NOTE] Sale ID:', selectedSaleForCreditNote.saleId);
@@ -724,6 +727,8 @@ export default function NewSaleScreen() {
         'Error',
         error instanceof Error ? error.message : 'No se pudo generar la nota de crédito'
       );
+    } finally {
+      setGeneratingCreditNote(false);
     }
   };
 
@@ -1931,10 +1936,24 @@ export default function NewSaleScreen() {
                   </View>
                 )}
 
+                {/* Indicador de Carga */}
+                {generatingCreditNote && (
+                  <View style={styles.creditNoteLoadingContainer}>
+                    <ActivityIndicator size="large" color="#FF9800" />
+                    <Text style={styles.creditNoteLoadingText}>Generando nota de crédito...</Text>
+                    <Text style={styles.creditNoteLoadingSubtext}>
+                      Este proceso puede tardar unos segundos
+                    </Text>
+                  </View>
+                )}
+
                 {/* Botones de Acción */}
                 <View style={styles.creditNoteActions}>
                   <TouchableOpacity
-                    style={styles.creditNoteCancelButton}
+                    style={[
+                      styles.creditNoteCancelButton,
+                      generatingCreditNote && styles.creditNoteButtonDisabled,
+                    ]}
                     onPress={() => {
                       setShowCreditNoteModal(false);
                       setCreditNoteType(null);
@@ -1942,6 +1961,7 @@ export default function NewSaleScreen() {
                       setCreditNoteMotivo('06');
                       setCreditNoteSustento('');
                     }}
+                    disabled={generatingCreditNote}
                   >
                     <Text style={styles.creditNoteCancelButtonText}>Cancelar</Text>
                   </TouchableOpacity>
@@ -1949,13 +1969,17 @@ export default function NewSaleScreen() {
                   <TouchableOpacity
                     style={[
                       styles.creditNoteConfirmButton,
-                      (!creditNoteType || !creditNoteSustento.trim()) &&
+                      (!creditNoteType || !creditNoteSustento.trim() || generatingCreditNote) &&
                         styles.creditNoteConfirmButtonDisabled,
                     ]}
                     onPress={handleConfirmCreditNote}
-                    disabled={!creditNoteType || !creditNoteSustento.trim()}
+                    disabled={!creditNoteType || !creditNoteSustento.trim() || generatingCreditNote}
                   >
-                    <Text style={styles.creditNoteConfirmButtonText}>Generar NC</Text>
+                    {generatingCreditNote ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.creditNoteConfirmButtonText}>Generar NC</Text>
+                    )}
                   </TouchableOpacity>
                 </View>
               </>
@@ -3493,6 +3517,26 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#4CAF50',
   },
+  creditNoteLoadingContainer: {
+    backgroundColor: '#FFF3E0',
+    padding: 20,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#FFB74D',
+  },
+  creditNoteLoadingText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#F57C00',
+    marginTop: 12,
+  },
+  creditNoteLoadingSubtext: {
+    fontSize: 12,
+    color: '#FF9800',
+    marginTop: 4,
+  },
   creditNoteActions: {
     flexDirection: 'row',
     gap: 12,
@@ -3519,6 +3563,9 @@ const styles = StyleSheet.create({
   },
   creditNoteConfirmButtonDisabled: {
     backgroundColor: '#E0E0E0',
+  },
+  creditNoteButtonDisabled: {
+    opacity: 0.5,
   },
   creditNoteConfirmButtonText: {
     fontSize: 16,
