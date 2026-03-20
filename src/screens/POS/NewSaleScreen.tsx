@@ -536,75 +536,100 @@ export default function NewSaleScreen() {
                   ` - ${selectedCustomer.customerType === 'EMPRESA' ? 'Empresa' : 'Persona'}`}
               </Text>
             </View>
-            <View style={styles.customerInputContainer}>
-              <TextInput
-                style={styles.customerSearchInput}
-                value={customerSearchQuery}
-                onChangeText={handleSearchCustomers}
-                placeholder="Buscar cliente por DNI, RUC o nombre..."
-                placeholderTextColor="#999"
-                onFocus={() => {
-                  if (customerSearchResults.length > 0) {
-                    setShowCustomerDropdown(true);
-                  }
-                }}
-              />
-              {searchingCustomers && (
-                <ActivityIndicator
-                  style={styles.customerSearchLoader}
-                  size="small"
-                  color="#007AFF"
-                />
-              )}
-              {selectedCustomer && (
-                <TouchableOpacity onPress={handleClearCustomer} style={styles.clearCustomerButton}>
-                  <Text style={styles.clearCustomerIcon}>✕</Text>
-                </TouchableOpacity>
-              )}
-            </View>
 
-            {/* Autocomplete Dropdown */}
-            {showCustomerDropdown && customerSearchResults.length > 0 && (
-              <View style={styles.customerDropdown}>
-                <ScrollView style={styles.customerDropdownScroll} nestedScrollEnabled>
-                  {customerSearchResults.map((customer) => (
-                    <TouchableOpacity
-                      key={customer.id}
-                      style={styles.customerDropdownItem}
-                      onPress={() => handleSelectCustomer(customer)}
-                    >
-                      <View style={styles.customerDropdownItemContent}>
-                        <View style={styles.customerDropdownItemHeader}>
-                          <Text style={styles.customerDropdownItemName}>
-                            {customer.fullName || customer.name}
-                          </Text>
-                          <View
-                            style={[
-                              styles.customerTypeBadge,
-                              customer.customerType === 'EMPRESA'
-                                ? styles.customerTypeBadgeEmpresa
-                                : styles.customerTypeBadgePersona,
-                            ]}
-                          >
-                            <Text style={styles.customerTypeBadgeText}>
-                              {customer.customerType === 'EMPRESA' ? 'Empresa' : 'Persona'}
-                            </Text>
-                          </View>
-                        </View>
-                        <Text style={styles.customerDropdownItemDoc}>
-                          {customer.documentType}: {customer.documentNumber}
-                        </Text>
-                        {customer.email && (
-                          <Text style={styles.customerDropdownItemEmail}>📧 {customer.email}</Text>
-                        )}
-                        {customer.phone && (
-                          <Text style={styles.customerDropdownItemPhone}>📱 {customer.phone}</Text>
-                        )}
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
+            {/* Selected Customer Card */}
+            {selectedCustomer ? (
+              <View style={styles.selectedCustomerCard}>
+                <View style={styles.selectedCustomerInfo}>
+                  <Text style={styles.selectedCustomerName}>
+                    {selectedCustomer.fullName || selectedCustomer.name}
+                  </Text>
+                  <Text style={styles.selectedCustomerDoc}>
+                    {selectedCustomer.documentType}: {selectedCustomer.documentNumber}
+                  </Text>
+                  {selectedCustomer.email && (
+                    <Text style={styles.selectedCustomerEmail}>📧 {selectedCustomer.email}</Text>
+                  )}
+                  {selectedCustomer.phone && (
+                    <Text style={styles.selectedCustomerPhone}>📱 {selectedCustomer.phone}</Text>
+                  )}
+                </View>
+                <TouchableOpacity onPress={handleClearCustomer} style={styles.removeCustomerButton}>
+                  <Text style={styles.removeCustomerButtonText}>🗑️ Borrar</Text>
+                </TouchableOpacity>
               </View>
+            ) : (
+              <>
+                <View style={styles.customerInputContainer}>
+                  <TextInput
+                    style={styles.customerSearchInput}
+                    value={customerSearchQuery}
+                    onChangeText={handleSearchCustomers}
+                    placeholder="Buscar cliente por DNI, RUC o nombre..."
+                    placeholderTextColor="#999"
+                    onFocus={() => {
+                      if (customerSearchResults.length > 0) {
+                        setShowCustomerDropdown(true);
+                      }
+                    }}
+                  />
+                  {searchingCustomers && (
+                    <ActivityIndicator
+                      style={styles.customerSearchLoader}
+                      size="small"
+                      color="#007AFF"
+                    />
+                  )}
+                </View>
+
+                {/* Autocomplete Dropdown */}
+                {showCustomerDropdown && customerSearchResults.length > 0 && (
+                  <View style={styles.customerDropdown}>
+                    <ScrollView style={styles.customerDropdownScroll} nestedScrollEnabled>
+                      {customerSearchResults.map((customer) => (
+                        <TouchableOpacity
+                          key={customer.id}
+                          style={styles.customerDropdownItem}
+                          onPress={() => handleSelectCustomer(customer)}
+                        >
+                          <View style={styles.customerDropdownItemContent}>
+                            <View style={styles.customerDropdownItemHeader}>
+                              <Text style={styles.customerDropdownItemName}>
+                                {customer.fullName || customer.name}
+                              </Text>
+                              <View
+                                style={[
+                                  styles.customerTypeBadge,
+                                  customer.customerType === 'EMPRESA'
+                                    ? styles.customerTypeBadgeEmpresa
+                                    : styles.customerTypeBadgePersona,
+                                ]}
+                              >
+                                <Text style={styles.customerTypeBadgeText}>
+                                  {customer.customerType === 'EMPRESA' ? 'Empresa' : 'Persona'}
+                                </Text>
+                              </View>
+                            </View>
+                            <Text style={styles.customerDropdownItemDoc}>
+                              {customer.documentType}: {customer.documentNumber}
+                            </Text>
+                            {customer.email && (
+                              <Text style={styles.customerDropdownItemEmail}>
+                                📧 {customer.email}
+                              </Text>
+                            )}
+                            {customer.phone && (
+                              <Text style={styles.customerDropdownItemPhone}>
+                                📱 {customer.phone}
+                              </Text>
+                            )}
+                          </View>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+              </>
             )}
           </View>
 
@@ -755,6 +780,33 @@ export default function NewSaleScreen() {
                       </View>
                     </View>
                   )}
+
+                {/* Mensaje de advertencia para Izipay */}
+                {selectedParentMethod &&
+                  (() => {
+                    const parentMethod = paymentMethods.find(
+                      (pm) => pm.id === selectedParentMethod
+                    );
+                    const selectedMethod =
+                      parentMethod?.submethods && parentMethod.submethods.length > 0
+                        ? parentMethod.submethods.find((sm) => sm.id === selectedSubmethod)
+                        : parentMethod;
+                    const isIzipay =
+                      selectedMethod?.code?.includes('IZIPAY') || selectedMethod?.isIzipay;
+
+                    return isIzipay ? (
+                      <View style={styles.izipayWarningBox}>
+                        <Text style={styles.izipayWarningIcon}>⚠️</Text>
+                        <View style={styles.izipayWarningContent}>
+                          <Text style={styles.izipayWarningTitle}>Pago con Tarjeta (Izipay)</Text>
+                          <Text style={styles.izipayWarningText}>
+                            El monto máximo permitido es el total de la venta:{' '}
+                            {formatCurrency(getCartTotal())}
+                          </Text>
+                        </View>
+                      </View>
+                    ) : null;
+                  })()}
 
                 {/* Payment Amount Input */}
                 <View style={styles.amountContainer}>
@@ -1240,7 +1292,7 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   rightPanel: {
-    width: 400,
+    width: 500,
     backgroundColor: '#FFFFFF',
     borderLeftWidth: 1,
     borderLeftColor: '#E0E0E0',
@@ -1254,11 +1306,16 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderRadius: 12,
+    padding: 20,
+    fontSize: 20,
+    borderWidth: 2,
+    borderColor: '#2196F3',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   searchLoader: {
     marginLeft: 8,
@@ -1336,12 +1393,17 @@ const styles = StyleSheet.create({
   customerSearchInput: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 14,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderRadius: 12,
+    padding: 18,
+    fontSize: 18,
+    borderWidth: 2,
+    borderColor: '#4CAF50',
     paddingRight: 70,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   customerSearchLoader: {
     position: 'absolute',
@@ -1426,6 +1488,58 @@ const styles = StyleSheet.create({
   customerDropdownItemPhone: {
     fontSize: 11,
     color: '#999',
+  },
+  selectedCustomerCard: {
+    backgroundColor: '#E8F5E9',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 2,
+    borderColor: '#4CAF50',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  selectedCustomerInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  selectedCustomerName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#2E7D32',
+    marginBottom: 4,
+  },
+  selectedCustomerDoc: {
+    fontSize: 14,
+    color: '#388E3C',
+    marginBottom: 2,
+  },
+  selectedCustomerEmail: {
+    fontSize: 12,
+    color: '#66BB6A',
+    marginBottom: 2,
+  },
+  selectedCustomerPhone: {
+    fontSize: 12,
+    color: '#66BB6A',
+  },
+  removeCustomerButton: {
+    backgroundColor: '#FFEBEE',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#F44336',
+  },
+  removeCustomerButtonText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#F44336',
   },
   cartList: {
     flex: 1,
@@ -1685,6 +1799,39 @@ const styles = StyleSheet.create({
   },
   submethodContainer: {
     marginTop: 16,
+  },
+  izipayWarningBox: {
+    backgroundColor: '#FFF3E0',
+    borderRadius: 12,
+    padding: 20,
+    marginBottom: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#FF9800',
+    shadowColor: '#FF9800',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  izipayWarningIcon: {
+    fontSize: 40,
+    marginRight: 16,
+  },
+  izipayWarningContent: {
+    flex: 1,
+  },
+  izipayWarningTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#E65100',
+    marginBottom: 8,
+  },
+  izipayWarningText: {
+    fontSize: 18,
+    color: '#F57C00',
+    lineHeight: 24,
   },
   amountContainer: {
     flexDirection: 'row',

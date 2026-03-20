@@ -369,6 +369,23 @@ export interface ActiveSaleTransaction {
     itemCount: number;
     totalQuantity: number;
     items: any[];
+    payments: {
+      paymentMethod: {
+        id: string;
+        name: string;
+        code: string;
+      };
+      amountCents: number;
+      referenceNumber?: string;
+    }[];
+    paymentSummary: {
+      totalPayments: number;
+      totalAmountCents: number;
+      methods: {
+        methodName: string;
+        amountCents: number;
+      }[];
+    };
   };
   amountCents: number;
   paymentMethod: {
