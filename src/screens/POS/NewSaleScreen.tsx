@@ -597,192 +597,196 @@ export default function NewSaleScreen() {
               <Text style={styles.modalTotalValue}>{formatCurrency(getCartTotal())}</Text>
             </View>
 
-            {/* Payment Method Selection */}
-            <View style={styles.paymentSelection}>
-              <Text style={styles.sectionLabel}>Método de Pago:</Text>
-              <View style={styles.methodsGrid}>
-                {paymentMethods
-                  .filter((pm) => pm.isActive && !pm.parentId)
-                  .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0))
-                  .map((method) => (
-                    <TouchableOpacity
-                      key={method.id}
-                      style={[
-                        styles.methodButton,
-                        selectedParentMethod === method.id && styles.methodButtonSelected,
-                      ]}
-                      onPress={() => {
-                        setSelectedParentMethod(method.id);
-                        setSelectedSubmethod(null); // Reset submethod when parent changes
-                      }}
-                    >
-                      <Text
+            <ScrollView style={styles.modalScrollContent} showsVerticalScrollIndicator={true}>
+              {/* Payment Method Selection */}
+              <View style={styles.paymentSelection}>
+                <Text style={styles.sectionLabel}>Método de Pago:</Text>
+                <View style={styles.methodsGrid}>
+                  {paymentMethods
+                    .filter((pm) => pm.isActive && !pm.parentId)
+                    .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0))
+                    .map((method) => (
+                      <TouchableOpacity
+                        key={method.id}
                         style={[
-                          styles.methodButtonText,
-                          selectedParentMethod === method.id && styles.methodButtonTextSelected,
+                          styles.methodButton,
+                          selectedParentMethod === method.id && styles.methodButtonSelected,
                         ]}
+                        onPress={() => {
+                          setSelectedParentMethod(method.id);
+                          setSelectedSubmethod(null); // Reset submethod when parent changes
+                        }}
                       >
-                        {method.name}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-              </View>
+                        <Text
+                          style={[
+                            styles.methodButtonText,
+                            selectedParentMethod === method.id && styles.methodButtonTextSelected,
+                          ]}
+                        >
+                          {method.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                </View>
 
-              {/* Show submethods if parent method has them */}
-              {selectedParentMethod &&
-                paymentMethods.find((pm) => pm.id === selectedParentMethod)?.submethods &&
-                paymentMethods.find((pm) => pm.id === selectedParentMethod)!.submethods!.length >
-                  0 && (
-                  <View style={styles.submethodContainer}>
-                    <Text style={styles.sectionLabel}>Submétodo:</Text>
-                    <View style={styles.methodsGrid}>
-                      {paymentMethods
-                        .find((pm) => pm.id === selectedParentMethod)
-                        ?.submethods?.map((submethod) => (
-                          <TouchableOpacity
-                            key={submethod.id}
-                            style={[
-                              styles.methodButton,
-                              selectedSubmethod === submethod.id && styles.methodButtonSelected,
-                            ]}
-                            onPress={() => setSelectedSubmethod(submethod.id)}
-                          >
-                            <Text
+                {/* Show submethods if parent method has them */}
+                {selectedParentMethod &&
+                  paymentMethods.find((pm) => pm.id === selectedParentMethod)?.submethods &&
+                  paymentMethods.find((pm) => pm.id === selectedParentMethod)!.submethods!.length >
+                    0 && (
+                    <View style={styles.submethodContainer}>
+                      <Text style={styles.sectionLabel}>Submétodo:</Text>
+                      <View style={styles.methodsGrid}>
+                        {paymentMethods
+                          .find((pm) => pm.id === selectedParentMethod)
+                          ?.submethods?.map((submethod) => (
+                            <TouchableOpacity
+                              key={submethod.id}
                               style={[
-                                styles.methodButtonText,
-                                selectedSubmethod === submethod.id &&
-                                  styles.methodButtonTextSelected,
+                                styles.methodButton,
+                                selectedSubmethod === submethod.id && styles.methodButtonSelected,
                               ]}
+                              onPress={() => setSelectedSubmethod(submethod.id)}
                             >
-                              {submethod.name}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
+                              <Text
+                                style={[
+                                  styles.methodButtonText,
+                                  selectedSubmethod === submethod.id &&
+                                    styles.methodButtonTextSelected,
+                                ]}
+                              >
+                                {submethod.name}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                      </View>
                     </View>
-                  </View>
-                )}
+                  )}
 
-              {/* Payment Amount Input */}
-              <View style={styles.amountContainer}>
-                <Text style={styles.sectionLabel}>Monto:</Text>
-                <TextInput
-                  style={styles.amountInput}
-                  placeholder="0.00"
-                  keyboardType="decimal-pad"
-                  value={paymentAmount}
-                  onChangeText={setPaymentAmount}
-                />
+                {/* Payment Amount Input */}
+                <View style={styles.amountContainer}>
+                  <Text style={styles.sectionLabel}>Monto:</Text>
+                  <TextInput
+                    style={styles.amountInput}
+                    placeholder="0.00"
+                    keyboardType="decimal-pad"
+                    value={paymentAmount}
+                    onChangeText={setPaymentAmount}
+                  />
+                  <TouchableOpacity
+                    style={styles.fillRemainingButton}
+                    onPress={() => {
+                      const remaining = getCartTotal() - getPaymentsTotal();
+                      setPaymentAmount(remaining.toFixed(2));
+                    }}
+                  >
+                    <Text style={styles.fillRemainingButtonText}>Restante</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Add Payment Button */}
                 <TouchableOpacity
-                  style={styles.fillRemainingButton}
+                  style={[
+                    styles.addPaymentButton,
+                    (!selectedParentMethod ||
+                      !paymentAmount ||
+                      parseFloat(paymentAmount) <= 0 ||
+                      (paymentMethods.find((pm) => pm.id === selectedParentMethod)?.submethods &&
+                        paymentMethods.find((pm) => pm.id === selectedParentMethod)!.submethods!
+                          .length > 0 &&
+                        !selectedSubmethod)) &&
+                      styles.buttonDisabled,
+                  ]}
                   onPress={() => {
-                    const remaining = getCartTotal() - getPaymentsTotal();
-                    setPaymentAmount(remaining.toFixed(2));
+                    const amount = parseFloat(paymentAmount);
+                    if (isNaN(amount) || amount <= 0) {
+                      Alert.alert('Error', 'Ingrese un monto válido');
+                      return;
+                    }
+
+                    const parentMethod = paymentMethods.find(
+                      (pm) => pm.id === selectedParentMethod
+                    );
+                    if (!parentMethod) return;
+
+                    // If has submethods, use the selected submethod, otherwise use parent
+                    const methodToUse =
+                      parentMethod.submethods && parentMethod.submethods.length > 0
+                        ? selectedSubmethod
+                        : selectedParentMethod;
+
+                    if (!methodToUse) {
+                      Alert.alert('Error', 'Seleccione un método de pago');
+                      return;
+                    }
+
+                    const methodName =
+                      parentMethod.submethods && parentMethod.submethods.length > 0
+                        ? `${parentMethod.name} - ${
+                            parentMethod.submethods.find((sm) => sm.id === selectedSubmethod)?.name
+                          }`
+                        : parentMethod.name;
+
+                    addPaymentToCart(methodToUse, amount);
+                    setPaymentAmount('');
+                    setSelectedParentMethod(null);
+                    setSelectedSubmethod(null);
                   }}
                 >
-                  <Text style={styles.fillRemainingButtonText}>Restante</Text>
+                  <Text style={styles.addPaymentButtonText}>+ Agregar Pago</Text>
                 </TouchableOpacity>
               </View>
 
-              {/* Add Payment Button */}
-              <TouchableOpacity
-                style={[
-                  styles.addPaymentButton,
-                  (!selectedParentMethod ||
-                    !paymentAmount ||
-                    parseFloat(paymentAmount) <= 0 ||
-                    (paymentMethods.find((pm) => pm.id === selectedParentMethod)?.submethods &&
-                      paymentMethods.find((pm) => pm.id === selectedParentMethod)!.submethods!
-                        .length > 0 &&
-                      !selectedSubmethod)) &&
-                    styles.buttonDisabled,
-                ]}
-                onPress={() => {
-                  const amount = parseFloat(paymentAmount);
-                  if (isNaN(amount) || amount <= 0) {
-                    Alert.alert('Error', 'Ingrese un monto válido');
-                    return;
-                  }
-
-                  const parentMethod = paymentMethods.find((pm) => pm.id === selectedParentMethod);
-                  if (!parentMethod) return;
-
-                  // If has submethods, use the selected submethod, otherwise use parent
-                  const methodToUse =
-                    parentMethod.submethods && parentMethod.submethods.length > 0
-                      ? selectedSubmethod
-                      : selectedParentMethod;
-
-                  if (!methodToUse) {
-                    Alert.alert('Error', 'Seleccione un método de pago');
-                    return;
-                  }
-
-                  const methodName =
-                    parentMethod.submethods && parentMethod.submethods.length > 0
-                      ? `${parentMethod.name} - ${
-                          parentMethod.submethods.find((sm) => sm.id === selectedSubmethod)?.name
-                        }`
-                      : parentMethod.name;
-
-                  addPaymentToCart(methodToUse, amount);
-                  setPaymentAmount('');
-                  setSelectedParentMethod(null);
-                  setSelectedSubmethod(null);
-                }}
-              >
-                <Text style={styles.addPaymentButtonText}>+ Agregar Pago</Text>
-              </TouchableOpacity>
-            </View>
-
-            {cartPayments.length > 0 && (
-              <View style={styles.selectedPayments}>
-                <Text style={styles.selectedPaymentsTitle}>Pagos Agregados:</Text>
-                {cartPayments.map((payment, index) => (
-                  <View key={index} style={styles.paymentRow}>
-                    <View style={styles.paymentInfo}>
-                      <Text style={styles.paymentName}>{payment.paymentMethodName}</Text>
-                      <Text style={styles.paymentAmount}>{formatCurrency(payment.amount)}</Text>
+              {cartPayments.length > 0 && (
+                <View style={styles.selectedPayments}>
+                  <Text style={styles.selectedPaymentsTitle}>Pagos Agregados:</Text>
+                  {cartPayments.map((payment, index) => (
+                    <View key={index} style={styles.paymentRow}>
+                      <View style={styles.paymentInfo}>
+                        <Text style={styles.paymentName}>{payment.paymentMethodName}</Text>
+                        <Text style={styles.paymentAmount}>{formatCurrency(payment.amount)}</Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.removePaymentButton}
+                        onPress={() => removeCartPayment(index)}
+                      >
+                        <Text style={styles.removePaymentIcon}>🗑️</Text>
+                      </TouchableOpacity>
                     </View>
-                    <TouchableOpacity
-                      style={styles.removePaymentButton}
-                      onPress={() => removeCartPayment(index)}
-                    >
-                      <Text style={styles.removePaymentIcon}>🗑️</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))}
-                <View style={styles.divider} />
+                  ))}
+                  <View style={styles.divider} />
 
-                {/* Payment Summary */}
-                <View style={styles.paymentSummary}>
-                  <View style={styles.summaryRow}>
-                    <Text style={styles.summaryLabel}>Total a Pagar:</Text>
-                    <Text style={styles.summaryValue}>{formatCurrency(getCartTotal())}</Text>
-                  </View>
-                  <View style={styles.summaryRow}>
-                    <Text style={styles.summaryLabel}>Total Pagado:</Text>
-                    <Text style={styles.summaryValuePaid}>
-                      {formatCurrency(getPaymentsTotal())}
-                    </Text>
-                  </View>
-                  <View style={styles.summaryRow}>
-                    <Text style={styles.summaryLabel}>
-                      {getPaymentsTotal() < getCartTotal() ? 'Faltante:' : 'Vuelto:'}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.summaryValueHighlight,
-                        getPaymentsTotal() < getCartTotal()
-                          ? styles.summaryValueMissing
-                          : styles.summaryValueChange,
-                      ]}
-                    >
-                      {formatCurrency(Math.abs(getPaymentsTotal() - getCartTotal()))}
-                    </Text>
+                  {/* Payment Summary */}
+                  <View style={styles.paymentSummary}>
+                    <View style={styles.summaryRow}>
+                      <Text style={styles.summaryLabel}>Total a Pagar:</Text>
+                      <Text style={styles.summaryValue}>{formatCurrency(getCartTotal())}</Text>
+                    </View>
+                    <View style={styles.summaryRow}>
+                      <Text style={styles.summaryLabel}>Total Pagado:</Text>
+                      <Text style={styles.summaryValuePaid}>
+                        {formatCurrency(getPaymentsTotal())}
+                      </Text>
+                    </View>
+                    <View style={styles.summaryRow}>
+                      <Text style={styles.summaryLabel}>
+                        {getPaymentsTotal() < getCartTotal() ? 'Faltante:' : 'Vuelto:'}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.summaryValueHighlight,
+                          getPaymentsTotal() < getCartTotal()
+                            ? styles.summaryValueMissing
+                            : styles.summaryValueChange,
+                        ]}
+                      >
+                        {formatCurrency(Math.abs(getPaymentsTotal() - getCartTotal()))}
+                      </Text>
+                    </View>
                   </View>
                 </View>
-              </View>
-            )}
+              )}
+            </ScrollView>
 
             <View style={styles.modalButtons}>
               <TouchableOpacity
@@ -1356,6 +1360,10 @@ const styles = StyleSheet.create({
     color: '#333',
     marginBottom: 32,
     textAlign: 'center',
+  },
+  modalScrollContent: {
+    flex: 1,
+    marginBottom: 24,
   },
   modalTotal: {
     backgroundColor: '#F9F9F9',
