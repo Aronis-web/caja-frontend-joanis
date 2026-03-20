@@ -402,9 +402,15 @@ export const usePOSStore = create<POSState>((set, get) => ({
     console.log('💰 [STORE] Total venta:', total);
     console.log('💳 [STORE] Total pagos:', paymentsTotal);
 
-    if (Math.abs(total - paymentsTotal) > 0.01) {
-      console.error('❌ [STORE] Totales no coinciden');
-      throw new Error('Payment total does not match sale total');
+    // Permitir venta si el pago es mayor o igual al total
+    if (paymentsTotal < total - 0.01) {
+      console.error('❌ [STORE] Pago insuficiente');
+      throw new Error('Payment amount is insufficient');
+    }
+
+    const change = paymentsTotal - total;
+    if (change > 0) {
+      console.log('💵 [STORE] Vuelto:', change);
     }
 
     try {
