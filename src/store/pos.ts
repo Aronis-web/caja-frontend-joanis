@@ -493,7 +493,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
 
       const requestData = {
         saleType,
-        customerId,
+        ...(customerId && { customerId }),
         items,
         payments,
         notes,
