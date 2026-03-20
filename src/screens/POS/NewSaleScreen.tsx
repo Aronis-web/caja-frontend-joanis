@@ -79,6 +79,10 @@ export default function NewSaleScreen() {
   const [showImageModal, setShowImageModal] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [showCreditNoteModal, setShowCreditNoteModal] = useState(false);
+  const [creditNoteType, setCreditNoteType] = useState<'total' | 'partial' | null>(null);
+  const [selectedSaleForCreditNote, setSelectedSaleForCreditNote] = useState<any>(null);
+  const [selectedProductsForCreditNote, setSelectedProductsForCreditNote] = useState<string[]>([]);
 
   // Payment method selection states
   const [selectedParentMethod, setSelectedParentMethod] = useState<string | null>(null);
@@ -579,92 +583,126 @@ export default function NewSaleScreen() {
     console.log('🔵 [CREDIT_NOTE] saleId:', saleId);
 
     try {
-      // Confirmar antes de generar la nota de crédito
-      Alert.alert(
-        'Generar Nota de Crédito',
-        '¿Está seguro que desea generar una nota de crédito para esta venta? Esta acción anulará la venta.',
-        [
-          {
-            text: 'Cancelar',
-            style: 'cancel',
-            onPress: () => {
-              console.log('🔵 [CREDIT_NOTE] Usuario canceló la operación');
-            },
-          },
-          {
-            text: 'Generar',
-            style: 'destructive',
-            onPress: async () => {
-              console.log('🔵 [CREDIT_NOTE] Usuario confirmó generar NC');
-              try {
-                console.log('📝 [CREDIT_NOTE] Iniciando generación de nota de crédito...');
-                console.log('📝 [CREDIT_NOTE] Sale ID:', saleId);
+      // Buscar la venta en activeSalesData
+      const saleData = activeSalesData?.sales.find((s) => s.saleId === saleId);
+      if (!saleData) {
+        Alert.alert('Error', 'No se encontró la información de la venta');
+        return;
+      }
 
-                const response = await posService.generateCreditNote(saleId);
+      console.log('🔵 [CREDIT_NOTE] Sale data:', saleData);
+      console.log('🔵 [CREDIT_NOTE] Items:', saleData.sale.items);
 
-                console.log('✅ [CREDIT_NOTE] Respuesta recibida del backend:');
-                console.log(
-                  '✅ [CREDIT_NOTE] Response completo:',
-                  JSON.stringify(response, null, 2)
-                );
-                console.log('✅ [CREDIT_NOTE] Credit Note Code:', response.creditNote?.code);
-                console.log('✅ [CREDIT_NOTE] Credit Note ID:', response.creditNote?.id);
-                console.log('✅ [CREDIT_NOTE] Credit Note Status:', response.creditNote?.status);
-                console.log('✅ [CREDIT_NOTE] PDF disponible:', !!response.pdf);
-                console.log('✅ [CREDIT_NOTE] PDF filename:', response.pdf?.filename);
-                console.log('✅ [CREDIT_NOTE] PDF base64 length:', response.pdf?.base64?.length);
-
-                // Imprimir automáticamente la nota de crédito
-                if (response.pdf?.base64 && response.pdf?.filename) {
-                  console.log('🖨️ [CREDIT_NOTE] Imprimiendo PDF de nota de crédito...');
-                  await handlePrintPDF(response.pdf.base64, response.pdf.filename);
-                } else {
-                  console.warn('⚠️ [CREDIT_NOTE] No hay PDF disponible para imprimir');
-                }
-
-                Alert.alert(
-                  'Éxito',
-                  `Nota de crédito ${response.creditNote.code} generada correctamente`,
-                  [
-                    {
-                      text: 'OK',
-                      onPress: () => {
-                        console.log('🔄 [CREDIT_NOTE] Recargando lista de ventas...');
-                        // Recargar las ventas para mostrar la nota de crédito
-                        handleLoadRecentSales();
-                      },
-                    },
-                  ]
-                );
-              } catch (error) {
-                console.error('❌ [CREDIT_NOTE] Error al generar nota de crédito:', error);
-                console.error('❌ [CREDIT_NOTE] Error type:', typeof error);
-                console.error(
-                  '❌ [CREDIT_NOTE] Error name:',
-                  error instanceof Error ? error.name : 'Unknown'
-                );
-                console.error(
-                  '❌ [CREDIT_NOTE] Error message:',
-                  error instanceof Error ? error.message : String(error)
-                );
-                console.error(
-                  '❌ [CREDIT_NOTE] Error stack:',
-                  error instanceof Error ? error.stack : 'No stack'
-                );
-
-                Alert.alert(
-                  'Error',
-                  error instanceof Error ? error.message : 'No se pudo generar la nota de crédito'
-                );
-              }
-            },
-          },
-        ]
-      );
+      // Abrir modal de selección de tipo de devolución
+      setSelectedSaleForCreditNote(saleData);
+      setCreditNoteType(null);
+      setSelectedProductsForCreditNote([]);
+      setShowCreditNoteModal(true);
     } catch (error) {
       console.error('❌ [CREDIT_NOTE] Error en handleGenerateCreditNote:', error);
       Alert.alert('Error', 'No se pudo generar la nota de crédito');
     }
+  };
+
+  const handleConfirmCreditNote = async () => {
+    console.log('🔵 [CREDIT_NOTE] handleConfirmCreditNote llamado');
+    console.log('🔵 [CREDIT_NOTE] Type:', creditNoteType);
+    console.log('🔵 [CREDIT_NOTE] Selected products:', selectedProductsForCreditNote);
+
+    if (!creditNoteType) {
+      Alert.alert('Error', 'Debe seleccionar el tipo de devolución');
+      return;
+    }
+
+    if (creditNoteType === 'partial' && selectedProductsForCreditNote.length === 0) {
+      Alert.alert('Error', 'Debe seleccionar al menos un producto para la devolución parcial');
+      return;
+    }
+
+    try {
+      console.log('📝 [CREDIT_NOTE] Iniciando generación de nota de crédito...');
+      console.log('📝 [CREDIT_NOTE] Sale ID:', selectedSaleForCreditNote.saleId);
+
+      const requestBody: any = {
+        reason: creditNoteType === 'total' ? 'Devolución total' : 'Devolución parcial',
+        type: creditNoteType,
+      };
+
+      if (creditNoteType === 'partial') {
+        requestBody.productIds = selectedProductsForCreditNote;
+      }
+
+      console.log('📝 [CREDIT_NOTE] Request body:', JSON.stringify(requestBody, null, 2));
+
+      const response = await posService.generateCreditNote(
+        selectedSaleForCreditNote.saleId,
+        requestBody.reason
+      );
+
+      console.log('✅ [CREDIT_NOTE] Respuesta recibida del backend:');
+      console.log('✅ [CREDIT_NOTE] Response completo:', JSON.stringify(response, null, 2));
+      console.log('✅ [CREDIT_NOTE] Credit Note Code:', response.creditNote?.code);
+      console.log('✅ [CREDIT_NOTE] Credit Note ID:', response.creditNote?.id);
+      console.log('✅ [CREDIT_NOTE] Credit Note Status:', response.creditNote?.status);
+      console.log('✅ [CREDIT_NOTE] PDF disponible:', !!response.pdf);
+      console.log('✅ [CREDIT_NOTE] PDF filename:', response.pdf?.filename);
+      console.log('✅ [CREDIT_NOTE] PDF base64 length:', response.pdf?.base64?.length);
+
+      // Cerrar modal
+      setShowCreditNoteModal(false);
+      setCreditNoteType(null);
+      setSelectedProductsForCreditNote([]);
+      setSelectedSaleForCreditNote(null);
+
+      // Imprimir automáticamente la nota de crédito
+      if (response.pdf?.base64 && response.pdf?.filename) {
+        console.log('🖨️ [CREDIT_NOTE] Imprimiendo PDF de nota de crédito...');
+        await handlePrintPDF(response.pdf.base64, response.pdf.filename);
+      } else {
+        console.warn('⚠️ [CREDIT_NOTE] No hay PDF disponible para imprimir');
+      }
+
+      Alert.alert('Éxito', `Nota de crédito ${response.creditNote.code} generada correctamente`, [
+        {
+          text: 'OK',
+          onPress: () => {
+            console.log('🔄 [CREDIT_NOTE] Recargando lista de ventas...');
+            // Recargar las ventas para mostrar la nota de crédito
+            handleLoadRecentSales();
+          },
+        },
+      ]);
+    } catch (error) {
+      console.error('❌ [CREDIT_NOTE] Error al generar nota de crédito:', error);
+      console.error('❌ [CREDIT_NOTE] Error type:', typeof error);
+      console.error(
+        '❌ [CREDIT_NOTE] Error name:',
+        error instanceof Error ? error.name : 'Unknown'
+      );
+      console.error(
+        '❌ [CREDIT_NOTE] Error message:',
+        error instanceof Error ? error.message : String(error)
+      );
+      console.error(
+        '❌ [CREDIT_NOTE] Error stack:',
+        error instanceof Error ? error.stack : 'No stack'
+      );
+
+      Alert.alert(
+        'Error',
+        error instanceof Error ? error.message : 'No se pudo generar la nota de crédito'
+      );
+    }
+  };
+
+  const toggleProductSelection = (productId: string) => {
+    setSelectedProductsForCreditNote((prev) => {
+      if (prev.includes(productId)) {
+        return prev.filter((id) => id !== productId);
+      } else {
+        return [...prev, productId];
+      }
+    });
   };
 
   const handleDownloadCreditNote = async (saleId: string) => {
@@ -1636,6 +1674,145 @@ export default function NewSaleScreen() {
             )}
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* Credit Note Modal */}
+      <Modal
+        visible={showCreditNoteModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowCreditNoteModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.creditNoteModalContent}>
+            <View style={styles.creditNoteModalHeader}>
+              <Text style={styles.modalTitle}>Generar Nota de Crédito</Text>
+              <TouchableOpacity onPress={() => setShowCreditNoteModal(false)}>
+                <Text style={styles.closeButton}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {selectedSaleForCreditNote && (
+              <>
+                <View style={styles.creditNoteSaleInfo}>
+                  <Text style={styles.creditNoteSaleNumber}>
+                    Venta: {selectedSaleForCreditNote.sale.code} - #
+                    {selectedSaleForCreditNote.sale.saleNumber}
+                  </Text>
+                  <Text style={styles.creditNoteSaleTotal}>
+                    Total: {formatCurrency(selectedSaleForCreditNote.sale.total)}
+                  </Text>
+                </View>
+
+                {/* Tipo de Devolución */}
+                <View style={styles.creditNoteTypeContainer}>
+                  <Text style={styles.creditNoteTypeLabel}>Tipo de Devolución:</Text>
+                  <View style={styles.creditNoteTypeButtons}>
+                    <TouchableOpacity
+                      style={[
+                        styles.creditNoteTypeButton,
+                        creditNoteType === 'total' && styles.creditNoteTypeButtonActive,
+                      ]}
+                      onPress={() => {
+                        setCreditNoteType('total');
+                        setSelectedProductsForCreditNote([]);
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.creditNoteTypeButtonText,
+                          creditNoteType === 'total' && styles.creditNoteTypeButtonTextActive,
+                        ]}
+                      >
+                        📦 Devolución Total
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.creditNoteTypeButton,
+                        creditNoteType === 'partial' && styles.creditNoteTypeButtonActive,
+                      ]}
+                      onPress={() => setCreditNoteType('partial')}
+                    >
+                      <Text
+                        style={[
+                          styles.creditNoteTypeButtonText,
+                          creditNoteType === 'partial' && styles.creditNoteTypeButtonTextActive,
+                        ]}
+                      >
+                        📋 Devolución Parcial
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Lista de Productos (solo si es devolución parcial) */}
+                {creditNoteType === 'partial' && (
+                  <View style={styles.creditNoteProductsContainer}>
+                    <Text style={styles.creditNoteProductsLabel}>
+                      Seleccione los productos a devolver:
+                    </Text>
+                    <ScrollView style={styles.creditNoteProductsList}>
+                      {selectedSaleForCreditNote.sale.items.map((item: any, index: number) => {
+                        const isSelected = selectedProductsForCreditNote.includes(item.productId);
+                        return (
+                          <TouchableOpacity
+                            key={index}
+                            style={[
+                              styles.creditNoteProductItem,
+                              isSelected && styles.creditNoteProductItemSelected,
+                            ]}
+                            onPress={() => toggleProductSelection(item.productId)}
+                          >
+                            <View style={styles.creditNoteProductCheckbox}>
+                              <Text style={styles.creditNoteProductCheckboxIcon}>
+                                {isSelected ? '☑' : '☐'}
+                              </Text>
+                            </View>
+                            <View style={styles.creditNoteProductInfo}>
+                              <Text style={styles.creditNoteProductName}>
+                                {item.productName || item.name}
+                              </Text>
+                              <Text style={styles.creditNoteProductDetails}>
+                                Cantidad: {item.quantity} | Precio:{' '}
+                                {formatCurrency(item.unitPrice / 100)}
+                              </Text>
+                            </View>
+                            <Text style={styles.creditNoteProductTotal}>
+                              {formatCurrency((item.quantity * item.unitPrice) / 100)}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* Botones de Acción */}
+                <View style={styles.creditNoteActions}>
+                  <TouchableOpacity
+                    style={styles.creditNoteCancelButton}
+                    onPress={() => setShowCreditNoteModal(false)}
+                  >
+                    <Text style={styles.creditNoteCancelButtonText}>Cancelar</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.creditNoteConfirmButton,
+                      !creditNoteType && styles.creditNoteConfirmButtonDisabled,
+                    ]}
+                    onPress={handleConfirmCreditNote}
+                    disabled={!creditNoteType}
+                  >
+                    <Text style={styles.creditNoteConfirmButtonText}>Generar NC</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
       </Modal>
 
       {/* Sale Success Modal */}
@@ -2979,5 +3156,159 @@ const styles = StyleSheet.create({
   imageModalImage: {
     width: '100%',
     height: '100%',
+  },
+  // Credit Note Modal Styles
+  creditNoteModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    width: '90%',
+    maxWidth: 600,
+    maxHeight: '80%',
+  },
+  creditNoteModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  creditNoteSaleInfo: {
+    backgroundColor: '#F5F5F5',
+    padding: 16,
+    borderRadius: 8,
+    marginBottom: 20,
+  },
+  creditNoteSaleNumber: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
+  },
+  creditNoteSaleTotal: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+  },
+  creditNoteTypeContainer: {
+    marginBottom: 20,
+  },
+  creditNoteTypeLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 12,
+  },
+  creditNoteTypeButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  creditNoteTypeButton: {
+    flex: 1,
+    backgroundColor: '#F5F5F5',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#E0E0E0',
+  },
+  creditNoteTypeButtonActive: {
+    backgroundColor: '#E3F2FD',
+    borderColor: '#2196F3',
+  },
+  creditNoteTypeButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  creditNoteTypeButtonTextActive: {
+    color: '#2196F3',
+  },
+  creditNoteProductsContainer: {
+    marginBottom: 20,
+  },
+  creditNoteProductsLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 12,
+  },
+  creditNoteProductsList: {
+    maxHeight: 300,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 8,
+    padding: 8,
+  },
+  creditNoteProductItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#F9F9F9',
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  creditNoteProductItemSelected: {
+    backgroundColor: '#E3F2FD',
+    borderColor: '#2196F3',
+  },
+  creditNoteProductCheckbox: {
+    marginRight: 12,
+  },
+  creditNoteProductCheckboxIcon: {
+    fontSize: 24,
+    color: '#2196F3',
+  },
+  creditNoteProductInfo: {
+    flex: 1,
+  },
+  creditNoteProductName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  creditNoteProductDetails: {
+    fontSize: 12,
+    color: '#666',
+  },
+  creditNoteProductTotal: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+  },
+  creditNoteActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 20,
+  },
+  creditNoteCancelButton: {
+    flex: 1,
+    backgroundColor: '#F5F5F5',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  creditNoteCancelButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#666',
+  },
+  creditNoteConfirmButton: {
+    flex: 1,
+    backgroundColor: '#FF9800',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  creditNoteConfirmButtonDisabled: {
+    backgroundColor: '#E0E0E0',
+  },
+  creditNoteConfirmButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });
