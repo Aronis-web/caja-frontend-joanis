@@ -44,6 +44,9 @@ export interface PaymentMethod {
   parentId?: string | null;
   submethods?: PaymentMethod[];
   createdAt?: string;
+  // Campos para identificar tipos de pago
+  isIzipay?: boolean;
+  isCash?: boolean;
 }
 
 export interface Session {
@@ -284,8 +287,12 @@ export interface CreateSaleRequest {
     unitPriceCents: number;
     discountCents: number;
   }[];
-  paymentMethodId: string;
-  referenceNumber?: string;
+  payments: {
+    paymentMethodId: string;
+    amountCents: number;
+    referenceNumber?: string;
+    notes?: string;
+  }[];
   notes?: string;
   customerNotes?: string;
 }

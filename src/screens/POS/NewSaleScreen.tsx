@@ -813,6 +813,41 @@ export default function NewSaleScreen() {
                       return;
                     }
 
+                    // Obtener el método de pago seleccionado (puede ser submethod o parent)
+                    const selectedMethod =
+                      parentMethod.submethods && parentMethod.submethods.length > 0
+                        ? parentMethod.submethods.find((sm) => sm.id === selectedSubmethod)
+                        : parentMethod;
+
+                    // Validar monto según tipo de método de pago
+                    const isIzipay =
+                      selectedMethod?.code?.includes('IZIPAY') || selectedMethod?.isIzipay;
+                    const isCash = selectedMethod?.code === 'CASH' || selectedMethod?.isCash;
+                    const total = getCartTotal();
+
+                    console.log('💳 Validando pago:', {
+                      method: selectedMethod?.name,
+                      code: selectedMethod?.code,
+                      isIzipay,
+                      isCash,
+                      amount,
+                      total,
+                    });
+
+                    // Si es IZIPAY, validar que no exceda el total de la venta
+                    if (isIzipay && amount > total) {
+                      Alert.alert(
+                        'Error',
+                        `El monto con tarjeta no puede exceder el total de la venta (S/ ${total.toFixed(
+                          2
+                        )})`
+                      );
+                      return;
+                    }
+
+                    // Si es EFECTIVO, permitir cualquier monto (puede ser mayor para dar vuelto)
+                    // No hay validación adicional para efectivo
+
                     const methodName =
                       parentMethod.submethods && parentMethod.submethods.length > 0
                         ? `${parentMethod.name} - ${

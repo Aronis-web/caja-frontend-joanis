@@ -380,7 +380,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
   // Sales actions
   createSale: async (customerId, documentType = '03', notes) => {
     console.log('🏪 [STORE] createSale iniciado');
-    const { currentSession, cartItems, cartPayments } = get();
+    const { currentSession, cartItems, cartPayments, paymentMethods } = get();
 
     console.log('📋 [STORE] Sesión actual:', currentSession?.id);
     console.log('🛒 [STORE] Items en carrito:', cartItems.length);
@@ -394,6 +394,11 @@ export const usePOSStore = create<POSState>((set, get) => ({
     if (cartItems.length === 0) {
       console.error('❌ [STORE] Carrito vacío');
       throw new Error('Cart is empty');
+    }
+
+    if (cartPayments.length === 0) {
+      console.error('❌ [STORE] No hay métodos de pago');
+      throw new Error('Debe agregar al menos un método de pago');
     }
 
     const total = get().getCartTotal();
@@ -430,19 +435,65 @@ export const usePOSStore = create<POSState>((set, get) => ({
 
       console.log('📦 [STORE] Items convertidos:', JSON.stringify(items, null, 2));
 
-      // Usar el primer método de pago (el nuevo endpoint solo acepta uno)
-      if (cartPayments.length === 0) {
-        console.error('❌ [STORE] No hay métodos de pago');
-        throw new Error('Debe agregar al menos un método de pago');
-      }
-      const paymentMethodId = cartPayments[0].paymentMethodId;
-      console.log('💳 [STORE] Método de pago:', paymentMethodId);
+      // Procesar pagos según el tipo de método
+      const totalCents = Math.round(total * 100);
+      let remainingCents = totalCents;
+      const payments = cartPayments.map((payment, index) => {
+        const paymentMethod = paymentMethods.find((pm) => pm.id === payment.paymentMethodId);
+        const isIzipay = paymentMethod?.code?.includes('IZIPAY') || paymentMethod?.isIzipay;
+        const isCash = paymentMethod?.code === 'CASH' || paymentMethod?.isCash;
+
+        let amountCents = Math.round(payment.amount * 100);
+
+        console.log(`💳 [STORE] Procesando pago ${index + 1}:`, {
+          method: paymentMethod?.name,
+          code: paymentMethod?.code,
+          isIzipay,
+          isCash,
+          originalAmount: payment.amount,
+          remaining: remainingCents / 100,
+        });
+
+        // Si es IZIPAY, el monto no puede exceder el total de la venta
+        if (isIzipay) {
+          if (amountCents > totalCents) {
+            console.warn(
+              `⚠️ [STORE] IZIPAY: Monto ${amountCents / 100} excede total ${totalCents / 100}, ajustando a total`
+            );
+            amountCents = totalCents;
+          }
+        }
+
+        // Si es EFECTIVO, enviar solo el monto necesario (restante sin tarjeta)
+        if (isCash) {
+          // Si hay otros pagos (tarjeta), enviar solo el restante
+          if (cartPayments.length > 1) {
+            amountCents = Math.min(amountCents, remainingCents);
+            console.log(`💵 [STORE] EFECTIVO: Ajustando a restante ${amountCents / 100}`);
+          } else {
+            // Si es el único pago, enviar el total de la venta
+            amountCents = totalCents;
+            console.log(`💵 [STORE] EFECTIVO único: Enviando total ${amountCents / 100}`);
+          }
+        }
+
+        remainingCents -= amountCents;
+
+        return {
+          paymentMethodId: payment.paymentMethodId,
+          amountCents,
+          referenceNumber: `PAY-${Date.now()}-${index}`,
+          notes: paymentMethod?.name || 'Pago',
+        };
+      });
+
+      console.log('💳 [STORE] Pagos procesados:', JSON.stringify(payments, null, 2));
 
       const requestData = {
         saleType,
         customerId,
         items,
-        paymentMethodId,
+        payments,
         notes,
       };
 
