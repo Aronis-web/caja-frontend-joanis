@@ -18,6 +18,7 @@ import {
   Image,
   Platform,
   Linking,
+  Keyboard,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { usePOSStore } from '@/store/pos';
@@ -236,11 +237,27 @@ export default function NewSaleScreen() {
 
     try {
       setLoadingSales(true);
+      console.log('📊 [VENTAS] Cargando ventas de la sesión...');
+      console.log('📊 [VENTAS] Cash Register ID:', selectedCashRegister.id);
+
       const salesData = await posService.getActiveSales(selectedCashRegister.id);
+
+      console.log('✅ [VENTAS] Respuesta del backend:', JSON.stringify(salesData, null, 2));
+      console.log('📈 [VENTAS] Total de ventas:', salesData.sales?.length || 0);
+      console.log('💰 [VENTAS] Total ventas (cents):', salesData.summary?.totalSalesCents || 0);
+      console.log('💳 [VENTAS] Total pagos (cents):', salesData.summary?.totalPaymentsCents || 0);
+
+      if (salesData.sales && salesData.sales.length > 0) {
+        console.log(
+          '🔍 [VENTAS] Primera venta (ejemplo):',
+          JSON.stringify(salesData.sales[0], null, 2)
+        );
+      }
+
       setActiveSalesData(salesData);
       setShowRecentSales(true);
     } catch (error) {
-      console.error('Error loading active sales:', error);
+      console.error('❌ [VENTAS] Error loading active sales:', error);
       Alert.alert('Error', 'No se pudieron cargar las ventas de la sesión activa');
     } finally {
       setLoadingSales(false);
@@ -421,6 +438,24 @@ export default function NewSaleScreen() {
     // El total del item es simplemente cantidad * precio (que ya incluye IGV) - descuento
     const itemTotal = item.quantity * unitPrice - (item.discount || 0);
 
+    const handleQuantityChange = (text: string) => {
+      const newQuantity = parseInt(text, 10);
+      if (!isNaN(newQuantity) && newQuantity > 0) {
+        updateCartItem(index, newQuantity);
+      } else if (text === '') {
+        // Permitir campo vacío temporalmente
+        return;
+      }
+    };
+
+    const handleQuantityBlur = (text: string) => {
+      const newQuantity = parseInt(text, 10);
+      if (isNaN(newQuantity) || newQuantity <= 0) {
+        // Si el valor no es válido, restaurar a 1
+        updateCartItem(index, 1);
+      }
+    };
+
     return (
       <View style={styles.cartItem}>
         <View style={styles.cartItemRow}>
@@ -441,8 +476,11 @@ export default function NewSaleScreen() {
           <View style={styles.cartItemInfo}>
             <View style={styles.cartItemHeader}>
               <Text style={styles.cartItemName}>{item.productName}</Text>
-              <TouchableOpacity onPress={() => removeCartItem(index)}>
-                <Text style={styles.removeButton}>✕</Text>
+              <TouchableOpacity
+                style={styles.removeButtonContainer}
+                onPress={() => removeCartItem(index)}
+              >
+                <Text style={styles.removeButton}>🗑️</Text>
               </TouchableOpacity>
             </View>
 
@@ -458,7 +496,15 @@ export default function NewSaleScreen() {
                 >
                   <Text style={styles.quantityButtonText}>-</Text>
                 </TouchableOpacity>
-                <Text style={styles.quantityText}>{item.quantity}</Text>
+                <TextInput
+                  style={styles.quantityInput}
+                  value={String(item.quantity)}
+                  onChangeText={handleQuantityChange}
+                  onBlur={(e) => handleQuantityBlur(e.nativeEvent.text)}
+                  keyboardType="numeric"
+                  selectTextOnFocus
+                  maxLength={4}
+                />
                 <TouchableOpacity
                   style={styles.quantityButton}
                   onPress={() => updateCartItem(index, item.quantity + 1)}
@@ -1628,10 +1674,17 @@ const styles = StyleSheet.create({
     color: '#333',
     flex: 1,
   },
+  removeButtonContainer: {
+    backgroundColor: '#FFEBEE',
+    borderRadius: 8,
+    padding: 8,
+    minWidth: 44,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   removeButton: {
-    fontSize: 20,
-    color: '#F44336',
-    padding: 4,
+    fontSize: 28,
   },
   cartItemDetails: {
     flexDirection: 'row',
@@ -1663,6 +1716,19 @@ const styles = StyleSheet.create({
     color: '#333',
     minWidth: 30,
     textAlign: 'center',
+  },
+  quantityInput: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    minWidth: 50,
+    height: 36,
+    textAlign: 'center',
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 6,
+    paddingHorizontal: 8,
   },
   cartItemPrice: {
     fontSize: 12,
