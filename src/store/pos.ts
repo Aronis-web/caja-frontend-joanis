@@ -248,6 +248,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
 
     console.log('🛒 Agregando al carrito:', {
       name: product.name,
+      code: product.code,
       price: product.price,
       imageUrl: product.imageUrl,
       taxRate: product.taxRate,
@@ -263,6 +264,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
       const newItem: SaleItem = {
         productId: product.id,
         productName: product.name,
+        productCode: product.code,
         quantity,
         unitPrice: product.price,
         discount: 0,

@@ -74,6 +74,8 @@ export default function NewSaleScreen() {
   const [showSaleSuccessModal, setShowSaleSuccessModal] = useState(false);
   const [saleResponse, setSaleResponse] = useState<CreateSaleResponse | null>(null);
   const [saleChange, setSaleChange] = useState(0); // Vuelto de la venta
+  const [showImageModal, setShowImageModal] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
   // Payment method selection states
   const [selectedParentMethod, setSelectedParentMethod] = useState<string | null>(null);
@@ -460,22 +462,37 @@ export default function NewSaleScreen() {
       <View style={styles.cartItem}>
         <View style={styles.cartItemRow}>
           {/* Imagen del producto */}
-          {item.imageUrl ? (
-            <Image
-              source={{ uri: item.imageUrl }}
-              style={styles.cartItemImage}
-              resizeMode="cover"
-            />
-          ) : (
-            <View style={styles.cartItemImagePlaceholder}>
-              <Text style={styles.cartItemImagePlaceholderText}>📦</Text>
-            </View>
-          )}
+          <TouchableOpacity
+            onPress={() => {
+              if (item.imageUrl) {
+                setSelectedImage(item.imageUrl);
+                setShowImageModal(true);
+              }
+            }}
+            activeOpacity={item.imageUrl ? 0.7 : 1}
+          >
+            {item.imageUrl ? (
+              <Image
+                source={{ uri: item.imageUrl }}
+                style={styles.cartItemImage}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={styles.cartItemImagePlaceholder}>
+                <Text style={styles.cartItemImagePlaceholderText}>📦</Text>
+              </View>
+            )}
+          </TouchableOpacity>
 
           {/* Información del producto */}
           <View style={styles.cartItemInfo}>
             <View style={styles.cartItemHeader}>
-              <Text style={styles.cartItemName}>{item.productName}</Text>
+              <View style={styles.cartItemNameContainer}>
+                <Text style={styles.cartItemName}>{item.productName}</Text>
+                {item.productCode && (
+                  <Text style={styles.cartItemSku}>SKU: {item.productCode}</Text>
+                )}
+              </View>
               <TouchableOpacity
                 style={styles.removeButtonContainer}
                 onPress={() => removeCartItem(index)}
@@ -879,14 +896,47 @@ export default function NewSaleScreen() {
                 <TouchableOpacity
                   style={[
                     styles.addPaymentButton,
-                    (!selectedParentMethod ||
-                      !paymentAmount ||
-                      parseFloat(paymentAmount) <= 0 ||
-                      (paymentMethods.find((pm) => pm.id === selectedParentMethod)?.submethods &&
-                        paymentMethods.find((pm) => pm.id === selectedParentMethod)!.submethods!
-                          .length > 0 &&
-                        !selectedSubmethod)) &&
-                      styles.buttonDisabled,
+                    (() => {
+                      // Validaciones básicas
+                      if (
+                        !selectedParentMethod ||
+                        !paymentAmount ||
+                        parseFloat(paymentAmount) <= 0
+                      ) {
+                        return styles.buttonDisabled;
+                      }
+
+                      const parentMethod = paymentMethods.find(
+                        (pm) => pm.id === selectedParentMethod
+                      );
+
+                      // Validar submétodo si es necesario
+                      if (
+                        parentMethod?.submethods &&
+                        parentMethod.submethods.length > 0 &&
+                        !selectedSubmethod
+                      ) {
+                        return styles.buttonDisabled;
+                      }
+
+                      // Obtener el método seleccionado (submethod o parent)
+                      const selectedMethod =
+                        parentMethod?.submethods && parentMethod.submethods.length > 0
+                          ? parentMethod.submethods.find((sm) => sm.id === selectedSubmethod)
+                          : parentMethod;
+
+                      // Validar Izipay: deshabilitar si el monto excede el total
+                      const isIzipay =
+                        selectedMethod?.code?.includes('IZIPAY') || selectedMethod?.isIzipay;
+                      const amount = parseFloat(paymentAmount);
+                      const total = getCartTotal();
+
+                      if (isIzipay && amount > total) {
+                        return styles.buttonDisabled;
+                      }
+
+                      return null;
+                    })(),
                   ]}
                   onPress={() => {
                     const amount = parseFloat(paymentAmount);
@@ -1116,94 +1166,97 @@ export default function NewSaleScreen() {
                   </Text>
                 </View>
               ) : (
-                activeSalesData.sales.map((saleData) => {
-                  const { saleId, sale, transactions } = saleData;
+                activeSalesData.sales
+                  .slice()
+                  .reverse()
+                  .map((saleData) => {
+                    const { saleId, sale, transactions } = saleData;
 
-                  // Calcular total pagado desde las transacciones
-                  const totalPaid = transactions.reduce((sum, t) => sum + t.amount, 0);
+                    // Calcular total pagado desde las transacciones
+                    const totalPaid = transactions.reduce((sum, t) => sum + t.amount, 0);
 
-                  return (
-                    <TouchableOpacity
-                      key={saleId}
-                      style={styles.saleItem}
-                      onPress={() => {
-                        setShowRecentSales(false);
-                        // @ts-expect-error - Navigation types
-                        navigation.navigate(ROUTES.SALE_DETAIL, { saleId });
-                      }}
-                    >
-                      <View style={styles.saleItemHeader}>
-                        <Text style={styles.saleNumber}>
-                          {sale.code} - #{sale.saleNumber}
-                        </Text>
-                        <Text style={styles.saleStatus}>
-                          {sale.status === 'CONFIRMED'
-                            ? '✓ Confirmada'
-                            : sale.status === 'PROCESSING'
-                              ? '⏳ Procesando'
-                              : sale.status === 'PENDING'
-                                ? '⏸ Pendiente'
-                                : sale.status === 'REJECTED'
-                                  ? '✗ Rechazada'
-                                  : '✗ Cancelada'}
-                        </Text>
-                      </View>
-                      <View style={styles.saleItemDetails}>
-                        <Text style={styles.saleDocType}>
-                          {sale.documentType === 'FACTURA' ? 'Factura' : 'Boleta'}
-                          {' - '}
-                          {sale.saleType}
-                        </Text>
-                        <Text style={styles.saleTotal}>{formatCurrency(sale.total)}</Text>
-                      </View>
-                      {sale.customerSnapshot && (
-                        <Text style={styles.saleCustomer}>
-                          Cliente: {sale.customerSnapshot.fullName || 'Sin nombre'}
-                          {sale.customerSnapshot.documentNumber &&
-                            ` - ${sale.customerSnapshot.documentNumber}`}
-                        </Text>
-                      )}
+                    return (
+                      <TouchableOpacity
+                        key={saleId}
+                        style={styles.saleItem}
+                        onPress={() => {
+                          setShowRecentSales(false);
+                          // @ts-expect-error - Navigation types
+                          navigation.navigate(ROUTES.SALE_DETAIL, { saleId });
+                        }}
+                      >
+                        <View style={styles.saleItemHeader}>
+                          <Text style={styles.saleNumber}>
+                            {sale.code} - #{sale.saleNumber}
+                          </Text>
+                          <Text style={styles.saleStatus}>
+                            {sale.status === 'CONFIRMED'
+                              ? '✓ Confirmada'
+                              : sale.status === 'PROCESSING'
+                                ? '⏳ Procesando'
+                                : sale.status === 'PENDING'
+                                  ? '⏸ Pendiente'
+                                  : sale.status === 'REJECTED'
+                                    ? '✗ Rechazada'
+                                    : '✗ Cancelada'}
+                          </Text>
+                        </View>
+                        <View style={styles.saleItemDetails}>
+                          <Text style={styles.saleDocType}>
+                            {sale.documentType === 'FACTURA' ? 'Factura' : 'Boleta'}
+                            {' - '}
+                            {sale.saleType}
+                          </Text>
+                          <Text style={styles.saleTotal}>{formatCurrency(sale.total)}</Text>
+                        </View>
+                        {sale.customerSnapshot && (
+                          <Text style={styles.saleCustomer}>
+                            Cliente: {sale.customerSnapshot.fullName || 'Sin nombre'}
+                            {sale.customerSnapshot.documentNumber &&
+                              ` - ${sale.customerSnapshot.documentNumber}`}
+                          </Text>
+                        )}
 
-                      {/* Métodos de Pago */}
-                      {transactions && transactions.length > 0 && (
-                        <View style={styles.salePaymentsContainer}>
-                          <Text style={styles.salePaymentsTitle}>💳 Métodos de Pago:</Text>
-                          {transactions.map((transaction, index) => (
-                            <View key={index} style={styles.salePaymentRow}>
-                              <Text style={styles.salePaymentMethod}>
-                                • {transaction.paymentMethod.name}
-                              </Text>
-                              <Text style={styles.salePaymentAmount}>
-                                {formatCurrency(transaction.amount)}
+                        {/* Métodos de Pago */}
+                        {transactions && transactions.length > 0 && (
+                          <View style={styles.salePaymentsContainer}>
+                            <Text style={styles.salePaymentsTitle}>💳 Métodos de Pago:</Text>
+                            {transactions.map((transaction, index) => (
+                              <View key={index} style={styles.salePaymentRow}>
+                                <Text style={styles.salePaymentMethod}>
+                                  • {transaction.paymentMethod.name}
+                                </Text>
+                                <Text style={styles.salePaymentAmount}>
+                                  {formatCurrency(transaction.amount)}
+                                </Text>
+                              </View>
+                            ))}
+                            <View style={styles.salePaymentTotal}>
+                              <Text style={styles.salePaymentTotalLabel}>Total Pagado:</Text>
+                              <Text style={styles.salePaymentTotalValue}>
+                                {formatCurrency(totalPaid)}
                               </Text>
                             </View>
-                          ))}
-                          <View style={styles.salePaymentTotal}>
-                            <Text style={styles.salePaymentTotalLabel}>Total Pagado:</Text>
-                            <Text style={styles.salePaymentTotalValue}>
-                              {formatCurrency(totalPaid)}
-                            </Text>
                           </View>
-                        </View>
-                      )}
+                        )}
 
-                      <View style={styles.saleItemDetails}>
-                        <Text style={styles.saleItemCount}>
-                          📦 {sale.itemCount} items ({sale.totalQuantity} unidades)
+                        <View style={styles.saleItemDetails}>
+                          <Text style={styles.saleItemCount}>
+                            📦 {sale.itemCount} items ({sale.totalQuantity} unidades)
+                          </Text>
+                        </View>
+                        <Text style={styles.saleDate}>
+                          {new Date(sale.saleDate).toLocaleString('es-PE', {
+                            day: '2-digit',
+                            month: '2-digit',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
                         </Text>
-                      </View>
-                      <Text style={styles.saleDate}>
-                        {new Date(sale.saleDate).toLocaleString('es-PE', {
-                          day: '2-digit',
-                          month: '2-digit',
-                          year: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })
+                      </TouchableOpacity>
+                    );
+                  })
               )}
             </ScrollView>
 
@@ -1215,6 +1268,36 @@ export default function NewSaleScreen() {
             </TouchableOpacity>
           </View>
         </View>
+      </Modal>
+
+      {/* Image Modal */}
+      <Modal
+        visible={showImageModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setShowImageModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.imageModalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowImageModal(false)}
+        >
+          <View style={styles.imageModalContent}>
+            <TouchableOpacity
+              style={styles.imageModalCloseButton}
+              onPress={() => setShowImageModal(false)}
+            >
+              <Text style={styles.imageModalCloseText}>✕</Text>
+            </TouchableOpacity>
+            {selectedImage && (
+              <Image
+                source={{ uri: selectedImage }}
+                style={styles.imageModalImage}
+                resizeMode="contain"
+              />
+            )}
+          </View>
+        </TouchableOpacity>
       </Modal>
 
       {/* Sale Success Modal */}
@@ -1633,32 +1716,32 @@ const styles = StyleSheet.create({
     color: '#BBB',
   },
   cartItem: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#F0F0F0',
   },
   cartItemRow: {
     flexDirection: 'row',
-    gap: 12,
-    alignItems: 'stretch',
+    gap: 8,
+    alignItems: 'center',
   },
   cartItemImage: {
-    width: 120,
-    height: 120,
-    borderRadius: 8,
+    width: 60,
+    height: 60,
+    borderRadius: 6,
     backgroundColor: '#F5F5F5',
   },
   cartItemImagePlaceholder: {
-    width: 120,
-    height: 120,
-    borderRadius: 8,
+    width: 60,
+    height: 60,
+    borderRadius: 6,
     backgroundColor: '#F5F5F5',
     justifyContent: 'center',
     alignItems: 'center',
   },
   cartItemImagePlaceholderText: {
-    fontSize: 48,
+    fontSize: 24,
   },
   cartItemInfo: {
     flex: 1,
@@ -1668,47 +1751,57 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 2,
+    marginBottom: 0,
+  },
+  cartItemNameContainer: {
+    flex: 1,
+    marginRight: 8,
   },
   cartItemName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: '#333',
-    flex: 1,
+    lineHeight: 18,
+  },
+  cartItemSku: {
+    fontSize: 11,
+    color: '#999',
+    marginTop: 1,
+    lineHeight: 13,
   },
   removeButtonContainer: {
     backgroundColor: '#FFEBEE',
-    borderRadius: 8,
-    padding: 10,
-    minWidth: 48,
-    minHeight: 48,
+    borderRadius: 6,
+    padding: 6,
+    minWidth: 36,
+    minHeight: 36,
     justifyContent: 'center',
     alignItems: 'center',
   },
   removeButton: {
-    fontSize: 32,
+    fontSize: 24,
   },
   cartItemDetails: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 4,
+    marginTop: 2,
   },
   quantityControl: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
   },
   quantityButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: '#F0F0F0',
     justifyContent: 'center',
     alignItems: 'center',
   },
   quantityButtonText: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '600',
     color: '#333',
   },
@@ -1720,11 +1813,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   quantityInput: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     color: '#333',
-    width: 60,
-    height: 40,
+    width: 55,
+    height: 32,
     textAlign: 'center',
     backgroundColor: '#FFF',
     borderWidth: 1,
@@ -1733,9 +1826,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   cartItemPrice: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#666',
-    marginBottom: 4,
+    marginBottom: 2,
+    lineHeight: 16,
   },
   cartItemTotal: {
     fontSize: 20,
@@ -2430,5 +2524,40 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: 'bold',
     color: '#FFFFFF',
+  },
+  // Image Modal Styles
+  imageModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  imageModalContent: {
+    width: '100%',
+    height: '80%',
+    maxWidth: 800,
+    position: 'relative',
+  },
+  imageModalCloseButton: {
+    position: 'absolute',
+    top: -60,
+    right: 10,
+    zIndex: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    borderRadius: 30,
+    width: 60,
+    height: 60,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageModalCloseText: {
+    fontSize: 36,
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+  },
+  imageModalImage: {
+    width: '100%',
+    height: '100%',
   },
 });

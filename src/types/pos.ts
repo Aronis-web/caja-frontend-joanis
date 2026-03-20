@@ -100,6 +100,7 @@ export interface Transaction {
 export interface SaleItem {
   productId: string;
   productName?: string;
+  productCode?: string;
   quantity: number;
   unitPrice?: number;
   discount?: number;
