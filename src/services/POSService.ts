@@ -259,7 +259,7 @@ class POSService {
       // Determinar la tasa de impuesto según el taxType
       let taxRate = 0;
       if (product.taxType === 'GRAVADO') {
-        taxRate = 0.18; // IGV 18%
+        taxRate = 18; // IGV 18%
       } else if (product.taxType === 'EXONERADO' || product.taxType === 'INAFECTO') {
         taxRate = 0; // Sin IGV
       }
@@ -363,7 +363,7 @@ class POSService {
       imageUrl,
       price,
       stock,
-      taxRate: 0.18,
+      taxRate: 18,
     };
   }
 
