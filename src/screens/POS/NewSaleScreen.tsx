@@ -600,7 +600,7 @@ export default function NewSaleScreen() {
             {/* Payment Method Selection */}
             <View style={styles.paymentSelection}>
               <Text style={styles.sectionLabel}>Método de Pago:</Text>
-              <ScrollView style={styles.methodsList}>
+              <View style={styles.methodsGrid}>
                 {paymentMethods
                   .filter((pm) => pm.isActive && !pm.parentId)
                   .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0))
@@ -626,7 +626,7 @@ export default function NewSaleScreen() {
                       </Text>
                     </TouchableOpacity>
                   ))}
-              </ScrollView>
+              </View>
 
               {/* Show submethods if parent method has them */}
               {selectedParentMethod &&
@@ -635,7 +635,7 @@ export default function NewSaleScreen() {
                   0 && (
                   <View style={styles.submethodContainer}>
                     <Text style={styles.sectionLabel}>Submétodo:</Text>
-                    <ScrollView style={styles.methodsList}>
+                    <View style={styles.methodsGrid}>
                       {paymentMethods
                         .find((pm) => pm.id === selectedParentMethod)
                         ?.submethods?.map((submethod) => (
@@ -658,7 +658,7 @@ export default function NewSaleScreen() {
                             </Text>
                           </TouchableOpacity>
                         ))}
-                    </ScrollView>
+                    </View>
                   </View>
                 )}
 
@@ -736,20 +736,50 @@ export default function NewSaleScreen() {
 
             {cartPayments.length > 0 && (
               <View style={styles.selectedPayments}>
-                <Text style={styles.selectedPaymentsTitle}>Pagos:</Text>
+                <Text style={styles.selectedPaymentsTitle}>Pagos Agregados:</Text>
                 {cartPayments.map((payment, index) => (
                   <View key={index} style={styles.paymentRow}>
-                    <Text style={styles.paymentName}>{payment.paymentMethodName}</Text>
-                    <Text style={styles.paymentAmount}>{formatCurrency(payment.amount)}</Text>
-                    <TouchableOpacity onPress={() => removeCartPayment(index)}>
-                      <Text style={styles.removePaymentButton}>✕</Text>
+                    <View style={styles.paymentInfo}>
+                      <Text style={styles.paymentName}>{payment.paymentMethodName}</Text>
+                      <Text style={styles.paymentAmount}>{formatCurrency(payment.amount)}</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.removePaymentButton}
+                      onPress={() => removeCartPayment(index)}
+                    >
+                      <Text style={styles.removePaymentIcon}>🗑️</Text>
                     </TouchableOpacity>
                   </View>
                 ))}
                 <View style={styles.divider} />
-                <View style={styles.paymentRow}>
-                  <Text style={styles.paymentTotalLabel}>Total Pagado:</Text>
-                  <Text style={styles.paymentTotalValue}>{formatCurrency(getPaymentsTotal())}</Text>
+
+                {/* Payment Summary */}
+                <View style={styles.paymentSummary}>
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>Total a Pagar:</Text>
+                    <Text style={styles.summaryValue}>{formatCurrency(getCartTotal())}</Text>
+                  </View>
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>Total Pagado:</Text>
+                    <Text style={styles.summaryValuePaid}>
+                      {formatCurrency(getPaymentsTotal())}
+                    </Text>
+                  </View>
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>
+                      {getPaymentsTotal() < getCartTotal() ? 'Faltante:' : 'Vuelto:'}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.summaryValueHighlight,
+                        getPaymentsTotal() < getCartTotal()
+                          ? styles.summaryValueMissing
+                          : styles.summaryValueChange,
+                      ]}
+                    >
+                      {formatCurrency(Math.abs(getPaymentsTotal() - getCartTotal()))}
+                    </Text>
+                  </View>
                 </View>
               </View>
             )}
@@ -1314,57 +1344,60 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 32,
-    width: '95%',
-    maxWidth: 700,
-    maxHeight: '90%',
+    borderRadius: 20,
+    padding: 48,
+    width: '98%',
+    maxWidth: 1400,
+    maxHeight: '95%',
   },
   modalTitle: {
-    fontSize: 32,
+    fontSize: 48,
     fontWeight: 'bold',
     color: '#333',
-    marginBottom: 24,
+    marginBottom: 32,
     textAlign: 'center',
   },
   modalTotal: {
     backgroundColor: '#F9F9F9',
-    padding: 24,
-    borderRadius: 12,
-    marginBottom: 24,
+    padding: 32,
+    borderRadius: 16,
+    marginBottom: 32,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
   modalTotalLabel: {
-    fontSize: 22,
+    fontSize: 32,
     fontWeight: '600',
     color: '#666',
   },
   modalTotalValue: {
-    fontSize: 36,
+    fontSize: 52,
     fontWeight: 'bold',
     color: '#4CAF50',
   },
   paymentSelection: {
-    marginBottom: 16,
+    marginBottom: 24,
   },
   sectionLabel: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 28,
+    fontWeight: 'bold',
     color: '#333',
-    marginBottom: 12,
+    marginBottom: 16,
   },
-  methodsList: {
-    maxHeight: 200,
-    marginBottom: 20,
+  methodsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+    marginBottom: 24,
   },
   methodButton: {
-    padding: 20,
+    flex: 1,
+    minWidth: 200,
+    padding: 28,
     backgroundColor: '#F5F5F5',
-    borderRadius: 12,
-    marginBottom: 12,
-    borderWidth: 3,
+    borderRadius: 16,
+    borderWidth: 4,
     borderColor: '#E0E0E0',
   },
   methodButtonSelected: {
@@ -1372,124 +1405,169 @@ const styles = StyleSheet.create({
     borderColor: '#2196F3',
   },
   methodButtonText: {
-    fontSize: 20,
+    fontSize: 26,
     color: '#333',
     textAlign: 'center',
-    fontWeight: '500',
+    fontWeight: '600',
   },
   methodButtonTextSelected: {
     color: '#2196F3',
     fontWeight: 'bold',
   },
   submethodContainer: {
-    marginTop: 8,
+    marginTop: 16,
   },
   amountContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginBottom: 20,
+    gap: 16,
+    marginBottom: 28,
   },
   amountInput: {
     flex: 1,
-    padding: 18,
-    fontSize: 22,
-    borderWidth: 2,
+    padding: 28,
+    fontSize: 32,
+    borderWidth: 3,
     borderColor: '#E0E0E0',
-    borderRadius: 12,
+    borderRadius: 16,
     backgroundColor: '#FFFFFF',
-    fontWeight: '600',
+    fontWeight: 'bold',
   },
   fillRemainingButton: {
-    padding: 18,
+    padding: 28,
     backgroundColor: '#2196F3',
-    borderRadius: 12,
-    minWidth: 120,
+    borderRadius: 16,
+    minWidth: 180,
   },
   fillRemainingButtonText: {
-    fontSize: 18,
+    fontSize: 26,
     fontWeight: 'bold',
     color: '#FFFFFF',
     textAlign: 'center',
   },
   addPaymentButton: {
-    padding: 22,
+    padding: 32,
     backgroundColor: '#4CAF50',
-    borderRadius: 12,
+    borderRadius: 16,
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 28,
   },
   addPaymentButtonText: {
-    fontSize: 20,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#FFFFFF',
   },
   selectedPayments: {
-    marginBottom: 20,
+    marginBottom: 28,
+    backgroundColor: '#F9F9F9',
+    padding: 24,
+    borderRadius: 16,
   },
   selectedPaymentsTitle: {
-    fontSize: 20,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#333',
-    marginBottom: 12,
+    marginBottom: 20,
   },
   paymentRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 16,
+    backgroundColor: '#FFFFFF',
+    padding: 20,
+    borderRadius: 12,
+  },
+  paymentInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginRight: 16,
   },
   paymentName: {
-    fontSize: 18,
-    color: '#666',
+    fontSize: 24,
+    color: '#333',
+    fontWeight: '600',
     flex: 1,
   },
   paymentAmount: {
-    fontSize: 18,
+    fontSize: 28,
     fontWeight: 'bold',
-    color: '#333',
-    marginRight: 12,
+    color: '#2196F3',
+    marginLeft: 16,
   },
   removePaymentButton: {
-    fontSize: 24,
-    color: '#F44336',
-    padding: 8,
+    backgroundColor: '#FFEBEE',
+    padding: 16,
+    borderRadius: 12,
+    minWidth: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  paymentTotalLabel: {
-    fontSize: 20,
+  removePaymentIcon: {
+    fontSize: 32,
+  },
+  paymentSummary: {
+    marginTop: 16,
+    paddingTop: 20,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  summaryLabel: {
+    fontSize: 26,
+    fontWeight: '600',
+    color: '#666',
+  },
+  summaryValue: {
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#333',
   },
-  paymentTotalValue: {
-    fontSize: 24,
+  summaryValuePaid: {
+    fontSize: 28,
     fontWeight: 'bold',
+    color: '#2196F3',
+  },
+  summaryValueHighlight: {
+    fontSize: 32,
+    fontWeight: 'bold',
+  },
+  summaryValueMissing: {
+    color: '#F44336',
+  },
+  summaryValueChange: {
     color: '#4CAF50',
   },
   modalButtons: {
     flexDirection: 'row',
-    gap: 16,
+    gap: 24,
   },
   modalCancelButton: {
     backgroundColor: '#FFFFFF',
-    borderWidth: 2,
+    borderWidth: 3,
     borderColor: '#E0E0E0',
-    padding: 20,
+    padding: 32,
   },
   modalCancelButtonText: {
-    fontSize: 20,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#666',
   },
   modalConfirmButton: {
     backgroundColor: '#4CAF50',
-    padding: 20,
+    padding: 32,
   },
   buttonDisabled: {
     backgroundColor: '#CCCCCC',
     opacity: 0.6,
   },
   modalConfirmButtonText: {
-    fontSize: 20,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#FFFFFF',
   },
@@ -1603,10 +1681,10 @@ const styles = StyleSheet.create({
   // Success Modal Styles
   successModalContent: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 40,
-    width: '95%',
-    maxWidth: 700,
+    borderRadius: 24,
+    padding: 64,
+    width: '98%',
+    maxWidth: 1400,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
@@ -1615,82 +1693,82 @@ const styles = StyleSheet.create({
   },
   successHeader: {
     alignItems: 'center',
-    marginBottom: 32,
+    marginBottom: 48,
   },
   successIcon: {
-    fontSize: 96,
+    fontSize: 140,
     color: '#4CAF50',
-    marginBottom: 16,
+    marginBottom: 24,
   },
   successTitle: {
-    fontSize: 36,
+    fontSize: 56,
     fontWeight: 'bold',
     color: '#333',
     textAlign: 'center',
   },
   successDetails: {
     backgroundColor: '#F9F9F9',
-    borderRadius: 16,
-    padding: 28,
-    marginBottom: 32,
+    borderRadius: 20,
+    padding: 40,
+    marginBottom: 48,
   },
   successRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 24,
   },
   successLabel: {
-    fontSize: 18,
+    fontSize: 28,
     color: '#666',
     fontWeight: '600',
   },
   successValue: {
-    fontSize: 18,
+    fontSize: 28,
     color: '#333',
     fontWeight: 'bold',
     textAlign: 'right',
     flex: 1,
-    marginLeft: 16,
+    marginLeft: 24,
   },
   successValueBold: {
-    fontSize: 28,
+    fontSize: 42,
     color: '#4CAF50',
     fontWeight: 'bold',
     textAlign: 'right',
     flex: 1,
-    marginLeft: 16,
+    marginLeft: 24,
   },
   successMessage: {
-    fontSize: 16,
+    fontSize: 24,
     color: '#666',
     textAlign: 'center',
-    marginVertical: 16,
+    marginVertical: 24,
     fontStyle: 'italic',
   },
   successButtons: {
-    gap: 16,
+    gap: 24,
   },
   printButton: {
     backgroundColor: '#2196F3',
-    padding: 24,
-    borderRadius: 12,
+    padding: 36,
+    borderRadius: 16,
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 16,
   },
   printButtonText: {
-    fontSize: 22,
+    fontSize: 32,
     fontWeight: 'bold',
     color: '#FFFFFF',
   },
   newSaleButton: {
     backgroundColor: '#4CAF50',
-    padding: 24,
-    borderRadius: 12,
+    padding: 36,
+    borderRadius: 16,
     alignItems: 'center',
   },
   newSaleButtonText: {
-    fontSize: 22,
+    fontSize: 32,
     fontWeight: 'bold',
     color: '#FFFFFF',
   },
