@@ -304,3 +304,64 @@ export interface CreateCashRegisterRequest {
   emissionPointId: string;
   isActive: boolean;
 }
+
+// Active Sales Response
+export interface ActiveSalesResponse {
+  cashRegister: {
+    id: string;
+    code: string;
+    name: string;
+  };
+  session: {
+    id: string;
+    openedAt: string;
+    userId: string;
+    userName: string;
+    status: string;
+  };
+  summary: {
+    totalSalesCount: number;
+    totalSalesCents: number;
+    totalPaymentsCents: number;
+    totalRefundsCents: number;
+    paymentMethodBreakdown: {
+      [key: string]: {
+        count: number;
+        totalCents: number;
+      };
+    };
+  };
+  sales: ActiveSaleTransaction[];
+}
+
+export interface ActiveSaleTransaction {
+  transactionId: string;
+  saleId: string;
+  sale: {
+    id: string;
+    code: string;
+    saleNumber: number;
+    saleDate: string;
+    status: string;
+    documentType: string;
+    saleType: string;
+    customerSnapshot?: {
+      fullName?: string;
+      documentNumber?: string;
+    };
+    subtotalCents: number;
+    taxCents: number;
+    discountCents: number;
+    totalCents: number;
+    itemCount: number;
+    totalQuantity: number;
+    items: any[];
+  };
+  amountCents: number;
+  paymentMethod: {
+    id: string;
+    name: string;
+    code: string;
+  };
+  createdAt: string;
+}

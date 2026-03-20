@@ -22,6 +22,7 @@ import type {
   CashTransactionRequest,
   CreatePaymentMethodRequest,
   CreateCashRegisterRequest,
+  ActiveSalesResponse,
 } from '@/types/pos';
 
 class POSService {
@@ -168,6 +169,10 @@ class POSService {
 
   async getRecentSales(sessionId: string, limit: number = 20): Promise<Sale[]> {
     return this.request<Sale[]>(`/pos/sales?sessionId=${sessionId}&limit=${limit}`);
+  }
+
+  async getActiveSales(cashRegisterId: string): Promise<ActiveSalesResponse> {
+    return this.request<ActiveSalesResponse>(`/pos/sessions/active-sales/${cashRegisterId}`);
   }
 
   async downloadSalePDF(saleId: string, documentId: string): Promise<Blob> {

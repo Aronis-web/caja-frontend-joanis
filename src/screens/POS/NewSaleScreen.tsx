@@ -22,7 +22,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { usePOSStore } from '@/store/pos';
 import { posService } from '@/services/POSService';
-import type { Product, Customer, CreateSaleResponse } from '@/types/pos';
+import type { Product, Customer, CreateSaleResponse, ActiveSalesResponse } from '@/types/pos';
 import { ROUTES } from '@/constants/routes';
 
 export default function NewSaleScreen() {
@@ -62,7 +62,7 @@ export default function NewSaleScreen() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showCustomerSearch, setShowCustomerSearch] = useState(false);
   const [showRecentSales, setShowRecentSales] = useState(false);
-  const [recentSales, setRecentSales] = useState<any[]>([]);
+  const [activeSalesData, setActiveSalesData] = useState<ActiveSalesResponse | null>(null);
   const [loadingSales, setLoadingSales] = useState(false);
   const [showSaleSuccessModal, setShowSaleSuccessModal] = useState(false);
   const [saleResponse, setSaleResponse] = useState<CreateSaleResponse | null>(null);
@@ -180,16 +180,16 @@ export default function NewSaleScreen() {
   };
 
   const handleLoadRecentSales = async () => {
-    if (!currentSession) return;
+    if (!selectedCashRegister) return;
 
     try {
       setLoadingSales(true);
-      const sales = await posService.getRecentSales(currentSession.id, 20);
-      setRecentSales(sales);
+      const salesData = await posService.getActiveSales(selectedCashRegister.id);
+      setActiveSalesData(salesData);
       setShowRecentSales(true);
     } catch (error) {
-      console.error('Error loading recent sales:', error);
-      Alert.alert('Error', 'No se pudieron cargar las ventas recientes');
+      console.error('Error loading active sales:', error);
+      Alert.alert('Error', 'No se pudieron cargar las ventas de la sesión activa');
     } finally {
       setLoadingSales(false);
     }
@@ -861,54 +861,96 @@ export default function NewSaleScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.salesModalContent}>
             <View style={styles.salesModalHeader}>
-              <Text style={styles.modalTitle}>Últimas Ventas</Text>
+              <Text style={styles.modalTitle}>Ventas de la Sesión Activa</Text>
               <TouchableOpacity onPress={() => setShowRecentSales(false)}>
                 <Text style={styles.closeButton}>✕</Text>
               </TouchableOpacity>
             </View>
 
+            {activeSalesData && (
+              <View style={styles.salesSummary}>
+                <Text style={styles.summaryTitle}>Resumen de Ventas</Text>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Total de ventas:</Text>
+                  <Text style={styles.summaryValue}>{activeSalesData.summary.totalSalesCount}</Text>
+                </View>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Monto total:</Text>
+                  <Text style={styles.summaryValue}>
+                    {formatCurrency(activeSalesData.summary.totalSalesCents / 100)}
+                  </Text>
+                </View>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Pagos recibidos:</Text>
+                  <Text style={styles.summaryValue}>
+                    {formatCurrency(activeSalesData.summary.totalPaymentsCents / 100)}
+                  </Text>
+                </View>
+              </View>
+            )}
+
             <ScrollView style={styles.salesList}>
-              {recentSales.length === 0 ? (
+              {!activeSalesData || activeSalesData.sales.length === 0 ? (
                 <View style={styles.emptySales}>
-                  <Text style={styles.emptySalesText}>No hay ventas registradas</Text>
+                  <Text style={styles.emptySalesText}>
+                    No hay ventas registradas en esta sesión
+                  </Text>
                 </View>
               ) : (
-                recentSales.map((sale) => (
+                activeSalesData.sales.map((saleTransaction) => (
                   <TouchableOpacity
-                    key={sale.id}
+                    key={saleTransaction.transactionId}
                     style={styles.saleItem}
                     onPress={() => {
                       setShowRecentSales(false);
                       // @ts-expect-error - Navigation types
-                      navigation.navigate(ROUTES.SALE_DETAIL, { saleId: sale.id });
+                      navigation.navigate(ROUTES.SALE_DETAIL, { saleId: saleTransaction.saleId });
                     }}
                   >
                     <View style={styles.saleItemHeader}>
-                      <Text style={styles.saleNumber}>{sale.saleNumber}</Text>
+                      <Text style={styles.saleNumber}>
+                        {saleTransaction.sale.code} - #{saleTransaction.sale.saleNumber}
+                      </Text>
                       <Text style={styles.saleStatus}>
-                        {sale.status === 'completed'
-                          ? '✓ Completada'
-                          : sale.status === 'processing'
+                        {saleTransaction.sale.status === 'CONFIRMED'
+                          ? '✓ Confirmada'
+                          : saleTransaction.sale.status === 'PROCESSING'
                             ? '⏳ Procesando'
-                            : sale.status === 'pending'
+                            : saleTransaction.sale.status === 'PENDING'
                               ? '⏸ Pendiente'
-                              : sale.status === 'rejected'
+                              : saleTransaction.sale.status === 'REJECTED'
                                 ? '✗ Rechazada'
                                 : '✗ Cancelada'}
                       </Text>
                     </View>
                     <View style={styles.saleItemDetails}>
                       <Text style={styles.saleDocType}>
-                        {sale.documentType === '01' ? 'Factura' : 'Boleta'}
-                        {sale.documentNumber ? ` - ${sale.documentNumber}` : ''}
+                        {saleTransaction.sale.documentType === 'FACTURA' ? 'Factura' : 'Boleta'}
+                        {' - '}
+                        {saleTransaction.sale.saleType}
                       </Text>
-                      <Text style={styles.saleTotal}>{formatCurrency(sale.total)}</Text>
+                      <Text style={styles.saleTotal}>
+                        {formatCurrency(saleTransaction.sale.totalCents / 100)}
+                      </Text>
                     </View>
-                    {sale.customer && (
-                      <Text style={styles.saleCustomer}>Cliente: {sale.customer.name}</Text>
+                    {saleTransaction.sale.customerSnapshot && (
+                      <Text style={styles.saleCustomer}>
+                        Cliente: {saleTransaction.sale.customerSnapshot.fullName || 'Sin nombre'}
+                        {saleTransaction.sale.customerSnapshot.documentNumber &&
+                          ` - ${saleTransaction.sale.customerSnapshot.documentNumber}`}
+                      </Text>
                     )}
+                    <View style={styles.saleItemDetails}>
+                      <Text style={styles.salePaymentMethod}>
+                        💳 {saleTransaction.paymentMethod.name}
+                      </Text>
+                      <Text style={styles.saleItemCount}>
+                        📦 {saleTransaction.sale.itemCount} items (
+                        {saleTransaction.sale.totalQuantity} unidades)
+                      </Text>
+                    </View>
                     <Text style={styles.saleDate}>
-                      {new Date(sale.createdAt).toLocaleString('es-PE', {
+                      {new Date(saleTransaction.sale.saleDate).toLocaleString('es-PE', {
                         day: '2-digit',
                         month: '2-digit',
                         year: 'numeric',
@@ -1640,6 +1682,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
+  salesSummary: {
+    backgroundColor: '#F5F5F5',
+    padding: 16,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  summaryTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 12,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  summaryLabel: {
+    fontSize: 16,
+    color: '#666',
+  },
+  summaryValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+  },
   salesList: {
     flex: 1,
     marginBottom: 16,
@@ -1717,6 +1785,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     marginBottom: 4,
+  },
+  salePaymentMethod: {
+    fontSize: 12,
+    color: '#666',
+  },
+  saleItemCount: {
+    fontSize: 12,
+    color: '#666',
   },
   saleDate: {
     fontSize: 12,
