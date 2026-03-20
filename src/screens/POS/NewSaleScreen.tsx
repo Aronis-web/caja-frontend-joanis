@@ -1567,17 +1567,63 @@ export default function NewSaleScreen() {
                                 </View>
                               )}
                             </View>
-                            <Text style={styles.saleStatus}>
-                              {sale.status === 'CONFIRMED'
-                                ? '✓ Confirmada'
-                                : sale.status === 'PROCESSING'
-                                  ? '⏳ Procesando'
-                                  : sale.status === 'PENDING'
-                                    ? '⏸ Pendiente'
-                                    : sale.status === 'REJECTED'
-                                      ? '✗ Rechazada'
-                                      : '✗ Cancelada'}
-                            </Text>
+                            {(() => {
+                              const getStatusStyle = (status: string) => {
+                                switch (status) {
+                                  case 'DRAFT':
+                                    return {
+                                      style: styles.statusDraft,
+                                      text: '📝 Borrador',
+                                    };
+                                  case 'CONFIRMED':
+                                    return {
+                                      style: styles.statusConfirmed,
+                                      text: '✓ Confirmada',
+                                    };
+                                  case 'CONFIRMED_DEV_PARCIAL':
+                                    return {
+                                      style: styles.statusDevParcial,
+                                      text: '↩️ Dev. Parcial',
+                                    };
+                                  case 'CONFIRMED_DEV_TOTAL':
+                                    return {
+                                      style: styles.statusDevTotal,
+                                      text: '↩️ Dev. Total',
+                                    };
+                                  case 'INVOICED':
+                                    return {
+                                      style: styles.statusInvoiced,
+                                      text: '📄 Facturada',
+                                    };
+                                  case 'PAID':
+                                    return {
+                                      style: styles.statusPaid,
+                                      text: '💰 Pagada',
+                                    };
+                                  case 'CANCELLED':
+                                    return {
+                                      style: styles.statusCancelled,
+                                      text: '✗ Cancelada',
+                                    };
+                                  case 'REFUNDED':
+                                    return {
+                                      style: styles.statusRefunded,
+                                      text: '💸 Reembolsada',
+                                    };
+                                  default:
+                                    return {
+                                      style: styles.statusDefault,
+                                      text: status,
+                                    };
+                                }
+                              };
+                              const statusInfo = getStatusStyle(sale.status);
+                              return (
+                                <View style={statusInfo.style}>
+                                  <Text style={styles.statusText}>{statusInfo.text}</Text>
+                                </View>
+                              );
+                            })()}
                           </View>
                           <View style={styles.saleItemDetails}>
                             <Text style={styles.saleDocType}>
@@ -2996,25 +3042,83 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 4,
   },
-  status_completed: {
-    backgroundColor: '#E8F5E9',
-    color: '#4CAF50',
-  },
-  status_processing: {
-    backgroundColor: '#FFF3E0',
-    color: '#FF9800',
-  },
-  status_pending: {
-    backgroundColor: '#E3F2FD',
-    color: '#2196F3',
-  },
-  status_rejected: {
-    backgroundColor: '#FFEBEE',
-    color: '#F44336',
-  },
-  status_cancelled: {
+  // Estilos para estados de venta
+  statusDraft: {
     backgroundColor: '#F5F5F5',
-    color: '#9E9E9E',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BDBDBD',
+  },
+  statusConfirmed: {
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#81C784',
+  },
+  statusDevParcial: {
+    backgroundColor: '#FFF9C4',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FFD54F',
+  },
+  statusDevTotal: {
+    backgroundColor: '#FFECB3',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FFB74D',
+  },
+  statusInvoiced: {
+    backgroundColor: '#E1F5FE',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#4FC3F7',
+  },
+  statusPaid: {
+    backgroundColor: '#C8E6C9',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#66BB6A',
+  },
+  statusCancelled: {
+    backgroundColor: '#FFEBEE',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#EF5350',
+  },
+  statusRefunded: {
+    backgroundColor: '#F3E5F5',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BA68C8',
+  },
+  statusDefault: {
+    backgroundColor: '#EEEEEE',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BDBDBD',
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#333',
   },
   saleItemDetails: {
     flexDirection: 'row',
