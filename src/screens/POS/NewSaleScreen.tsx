@@ -1532,6 +1532,13 @@ export default function NewSaleScreen() {
                     const totalPaid = transactions.reduce((sum, t) => sum + t.amount, 0);
 
                     // Verificar si tiene nota de crédito
+                    console.log('🔍 [CREDIT_NOTE_CHECK] Sale ID:', saleId);
+                    console.log(
+                      '🔍 [CREDIT_NOTE_CHECK] Sale Object:',
+                      JSON.stringify(sale, null, 2)
+                    );
+                    console.log('🔍 [CREDIT_NOTE_CHECK] sale.creditNote:', sale.creditNote);
+                    console.log('🔍 [CREDIT_NOTE_CHECK] !!sale.creditNote:', !!sale.creditNote);
                     const hasCreditNote = !!sale.creditNote;
 
                     return (
