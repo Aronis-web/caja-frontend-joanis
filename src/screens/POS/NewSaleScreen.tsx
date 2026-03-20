@@ -575,6 +575,9 @@ export default function NewSaleScreen() {
   };
 
   const handleGenerateCreditNote = async (saleId: string) => {
+    console.log('🔵 [CREDIT_NOTE] handleGenerateCreditNote llamado');
+    console.log('🔵 [CREDIT_NOTE] saleId:', saleId);
+
     try {
       // Confirmar antes de generar la nota de crédito
       Alert.alert(
@@ -584,19 +587,39 @@ export default function NewSaleScreen() {
           {
             text: 'Cancelar',
             style: 'cancel',
+            onPress: () => {
+              console.log('🔵 [CREDIT_NOTE] Usuario canceló la operación');
+            },
           },
           {
             text: 'Generar',
             style: 'destructive',
             onPress: async () => {
+              console.log('🔵 [CREDIT_NOTE] Usuario confirmó generar NC');
               try {
-                console.log('📝 Generando nota de crédito para venta:', saleId);
+                console.log('📝 [CREDIT_NOTE] Iniciando generación de nota de crédito...');
+                console.log('📝 [CREDIT_NOTE] Sale ID:', saleId);
+
                 const response = await posService.generateCreditNote(saleId);
-                console.log('✅ Nota de crédito generada:', response.creditNote.code);
+
+                console.log('✅ [CREDIT_NOTE] Respuesta recibida del backend:');
+                console.log(
+                  '✅ [CREDIT_NOTE] Response completo:',
+                  JSON.stringify(response, null, 2)
+                );
+                console.log('✅ [CREDIT_NOTE] Credit Note Code:', response.creditNote?.code);
+                console.log('✅ [CREDIT_NOTE] Credit Note ID:', response.creditNote?.id);
+                console.log('✅ [CREDIT_NOTE] Credit Note Status:', response.creditNote?.status);
+                console.log('✅ [CREDIT_NOTE] PDF disponible:', !!response.pdf);
+                console.log('✅ [CREDIT_NOTE] PDF filename:', response.pdf?.filename);
+                console.log('✅ [CREDIT_NOTE] PDF base64 length:', response.pdf?.base64?.length);
 
                 // Imprimir automáticamente la nota de crédito
                 if (response.pdf?.base64 && response.pdf?.filename) {
+                  console.log('🖨️ [CREDIT_NOTE] Imprimiendo PDF de nota de crédito...');
                   await handlePrintPDF(response.pdf.base64, response.pdf.filename);
+                } else {
+                  console.warn('⚠️ [CREDIT_NOTE] No hay PDF disponible para imprimir');
                 }
 
                 Alert.alert(
@@ -606,6 +629,7 @@ export default function NewSaleScreen() {
                     {
                       text: 'OK',
                       onPress: () => {
+                        console.log('🔄 [CREDIT_NOTE] Recargando lista de ventas...');
                         // Recargar las ventas para mostrar la nota de crédito
                         handleLoadRecentSales();
                       },
@@ -613,7 +637,21 @@ export default function NewSaleScreen() {
                   ]
                 );
               } catch (error) {
-                console.error('❌ Error al generar nota de crédito:', error);
+                console.error('❌ [CREDIT_NOTE] Error al generar nota de crédito:', error);
+                console.error('❌ [CREDIT_NOTE] Error type:', typeof error);
+                console.error(
+                  '❌ [CREDIT_NOTE] Error name:',
+                  error instanceof Error ? error.name : 'Unknown'
+                );
+                console.error(
+                  '❌ [CREDIT_NOTE] Error message:',
+                  error instanceof Error ? error.message : String(error)
+                );
+                console.error(
+                  '❌ [CREDIT_NOTE] Error stack:',
+                  error instanceof Error ? error.stack : 'No stack'
+                );
+
                 Alert.alert(
                   'Error',
                   error instanceof Error ? error.message : 'No se pudo generar la nota de crédito'
@@ -624,7 +662,7 @@ export default function NewSaleScreen() {
         ]
       );
     } catch (error) {
-      console.error('❌ Error al generar nota de crédito:', error);
+      console.error('❌ [CREDIT_NOTE] Error en handleGenerateCreditNote:', error);
       Alert.alert('Error', 'No se pudo generar la nota de crédito');
     }
   };
@@ -1526,6 +1564,9 @@ export default function NewSaleScreen() {
                             <TouchableOpacity
                               style={styles.creditNoteButton}
                               onPress={(e) => {
+                                console.log('🟢 [BUTTON] Botón Descargar NC presionado');
+                                console.log('🟢 [BUTTON] Sale ID:', saleId);
+                                console.log('🟢 [BUTTON] Has Credit Note:', hasCreditNote);
                                 e.stopPropagation();
                                 handleDownloadCreditNote(saleId);
                               }}
@@ -1537,7 +1578,12 @@ export default function NewSaleScreen() {
                             <TouchableOpacity
                               style={styles.generateCreditNoteButton}
                               onPress={(e) => {
+                                console.log('🟠 [BUTTON] Botón Generar NC presionado');
+                                console.log('🟠 [BUTTON] Sale ID:', saleId);
+                                console.log('🟠 [BUTTON] Has Credit Note:', hasCreditNote);
+                                console.log('🟠 [BUTTON] Event:', e);
                                 e.stopPropagation();
+                                console.log('🟠 [BUTTON] Llamando a handleGenerateCreditNote...');
                                 handleGenerateCreditNote(saleId);
                               }}
                             >

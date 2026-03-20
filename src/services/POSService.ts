@@ -416,16 +416,51 @@ class POSService {
 
   // Credit Notes
   async generateCreditNote(saleId: string, reason?: string): Promise<CreditNoteResponse> {
-    return this.request<CreditNoteResponse>(`/pos/sales/${saleId}/credit-note`, {
-      method: 'POST',
-      body: JSON.stringify({ reason: reason || 'Anulación de venta' }),
-    });
+    console.log('🌐 [API] generateCreditNote - Iniciando request');
+    console.log('🌐 [API] Sale ID:', saleId);
+    console.log('🌐 [API] Reason:', reason || 'Anulación de venta');
+    console.log('🌐 [API] Endpoint:', `/pos/sales/${saleId}/credit-note`);
+    console.log('🌐 [API] Method: POST');
+    console.log('🌐 [API] Body:', JSON.stringify({ reason: reason || 'Anulación de venta' }));
+
+    try {
+      const response = await this.request<CreditNoteResponse>(`/pos/sales/${saleId}/credit-note`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: reason || 'Anulación de venta' }),
+      });
+
+      console.log('✅ [API] generateCreditNote - Response recibido');
+      console.log('✅ [API] Response:', JSON.stringify(response, null, 2));
+
+      return response;
+    } catch (error) {
+      console.error('❌ [API] generateCreditNote - Error en request');
+      console.error('❌ [API] Error:', error);
+      throw error;
+    }
   }
 
   async downloadCreditNote(saleId: string): Promise<{ pdfBase64: string; filename: string }> {
-    return this.request<{ pdfBase64: string; filename: string }>(
-      `/pos/sales/${saleId}/credit-note/pdf`
-    );
+    console.log('🌐 [API] downloadCreditNote - Iniciando request');
+    console.log('🌐 [API] Sale ID:', saleId);
+    console.log('🌐 [API] Endpoint:', `/pos/sales/${saleId}/credit-note/pdf`);
+    console.log('🌐 [API] Method: GET');
+
+    try {
+      const response = await this.request<{ pdfBase64: string; filename: string }>(
+        `/pos/sales/${saleId}/credit-note/pdf`
+      );
+
+      console.log('✅ [API] downloadCreditNote - Response recibido');
+      console.log('✅ [API] Filename:', response.filename);
+      console.log('✅ [API] PDF base64 length:', response.pdfBase64?.length);
+
+      return response;
+    } catch (error) {
+      console.error('❌ [API] downloadCreditNote - Error en request');
+      console.error('❌ [API] Error:', error);
+      throw error;
+    }
   }
 }
 
