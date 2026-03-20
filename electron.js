@@ -8,6 +8,8 @@ const fs = require('fs');
 const http = require('http');
 const mime = require('mime-types');
 const os = require('os');
+const ptp = require('pdf-to-printer');
+const { PDFDocument } = require('pdf-lib');
 
 console.log('[ELECTRON] ✅ Módulos básicos cargados');
 
@@ -290,46 +292,125 @@ function createWindow(port) {
 
 ipcMain.handle('print-pdf', async (event, { base64Data, filename }) => {
   try {
-    console.log('[ELECTRON] 🖨️ Iniciando descarga de PDF:', filename);
+    console.log('[ELECTRON] 🖨️ Iniciando impresión automática de PDF:', filename);
 
-    // Obtener la carpeta de Descargas del usuario
+    // Obtener la carpeta de Descargas del usuario (guardar copia de respaldo)
     const downloadsPath = app.getPath('downloads');
     const filePath = path.join(downloadsPath, filename);
 
-    console.log('[ELECTRON] 📂 Ruta de descarga:', filePath);
+    console.log('[ELECTRON] 📂 Guardando PDF original en:', filePath);
 
     // Convertir base64 a buffer y guardar
     const buffer = Buffer.from(base64Data, 'base64');
     fs.writeFileSync(filePath, buffer);
 
-    console.log('[ELECTRON] ✅ PDF guardado en Descargas');
+    console.log('[ELECTRON] ✅ PDF original guardado correctamente');
 
-    // Abrir el PDF con el visor predeterminado del sistema
-    const { shell } = require('electron');
-    const openResult = await shell.openPath(filePath);
+    // Modificar el PDF para reducir ancho al 90% (reducir ~8mm total)
+    console.log('[ELECTRON] 🔧 Modificando PDF para reducir ancho al 90%...');
 
-    if (openResult) {
-      console.error('[ELECTRON] ❌ Error al abrir PDF:', openResult);
+    try {
+      // Cargar el PDF
+      const pdfDoc = await PDFDocument.load(buffer);
+      const pages = pdfDoc.getPages();
+
+      // Escalar solo el ancho al 90% (reducir ~8mm)
+      const scaleFactorX = 0.90; // Reducir ancho
+      const scaleFactorY = 1.0;  // Mantener altura completa
+
+      pages.forEach(page => {
+        const { width, height } = page.getSize();
+        const newWidth = width * scaleFactorX;
+
+        // Reducir solo el ancho de la página, mantener altura
+        page.setSize(newWidth, height);
+
+        // Escalar el contenido solo horizontalmente
+        page.scaleContent(scaleFactorX, scaleFactorY);
+
+        // No centrar verticalmente, solo ajustar horizontalmente
+        const xOffset = 0; // Sin offset horizontal
+        page.translateContent(xOffset, 0);
+      });
+
+      // Guardar el PDF modificado
+      const modifiedPdfBytes = await pdfDoc.save();
+      const modifiedFilePath = path.join(downloadsPath, `scaled_${filename}`);
+      fs.writeFileSync(modifiedFilePath, modifiedPdfBytes);
+
+      console.log('[ELECTRON] ✅ PDF modificado guardado en:', modifiedFilePath);
+
+      // Usar el PDF modificado para imprimir
+      const printFilePath = modifiedFilePath;
+
+      // Obtener lista de impresoras
+      const printers = await ptp.getPrinters();
+      console.log('[ELECTRON] 🖨️ Impresoras disponibles:', printers.map(p => p.name).join(', '));
+
+      // Buscar impresora térmica
+      const thermalPrinter = printers.find(p =>
+        p.name.toLowerCase().includes('80') ||
+        p.name.toLowerCase().includes('thermal') ||
+        p.name.toLowerCase().includes('pos') ||
+        p.name.toLowerCase().includes('ticket')
+      );
+
+      // Opciones de impresión
+      const printOptions = {
+        scale: 'noscale', // Sin escala adicional, ya escalamos el PDF
+        monochrome: true,
+        orientation: 'portrait',
+      };
+
+      if (thermalPrinter) {
+        console.log('[ELECTRON] 🎯 Impresora térmica detectada:', thermalPrinter.name);
+        printOptions.printer = thermalPrinter.name;
+      } else {
+        console.log('[ELECTRON] ⚠️ No se detectó impresora térmica específica, usando predeterminada');
+      }
+
+      console.log('[ELECTRON] 📋 Opciones de impresión:', JSON.stringify(printOptions));
+
+      // Imprimir el PDF escalado
+      await ptp.print(printFilePath, printOptions);
+
+      console.log('[ELECTRON] ✅ PDF enviado a la impresora térmica exitosamente');
+
+      // Limpiar archivo temporal
+      try {
+        fs.unlinkSync(modifiedFilePath);
+        console.log('[ELECTRON] 🗑️ Archivo temporal eliminado');
+      } catch (cleanupError) {
+        console.log('[ELECTRON] ⚠️ No se pudo eliminar archivo temporal:', cleanupError.message);
+      }
+
       return {
         success: true,
         downloaded: true,
-        path: filePath,
-        opened: false,
-        error: openResult
+        printed: true,
+        path: filePath
+      };
+    } catch (pdfError) {
+      console.error('[ELECTRON] ❌ Error al modificar PDF:', pdfError);
+      console.log('[ELECTRON] 🔄 Imprimiendo PDF original sin modificar...');
+
+      // Si falla la modificación, imprimir el original
+      await ptp.print(filePath, { scale: 'noscale', monochrome: true });
+
+      return {
+        success: true,
+        downloaded: true,
+        printed: true,
+        path: filePath
       };
     }
-
-    console.log('[ELECTRON] ✅ PDF abierto con el visor del sistema');
-
-    return {
-      success: true,
-      downloaded: true,
-      path: filePath,
-      opened: true
-    };
   } catch (error) {
     console.error('[ELECTRON] ❌ Error en print-pdf:', error);
-    return { success: false, error: error.message };
+    return {
+      success: false,
+      error: error.message,
+      details: error.toString()
+    };
   }
 });
 

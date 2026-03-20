@@ -57,6 +57,8 @@ export default function NewSaleScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Product[]>([]);
   const [searching, setSearching] = useState(false);
+  const [barcodeBuffer, setBarcodeBuffer] = useState('');
+  const [lastKeyTime, setLastKeyTime] = useState(0);
 
   const [documentType, setDocumentType] = useState<'03' | '01'>('03');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -76,6 +78,7 @@ export default function NewSaleScreen() {
   const [saleChange, setSaleChange] = useState(0); // Vuelto de la venta
   const [showImageModal, setShowImageModal] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [isInitializing, setIsInitializing] = useState(true);
 
   // Payment method selection states
   const [selectedParentMethod, setSelectedParentMethod] = useState<string | null>(null);
@@ -86,6 +89,8 @@ export default function NewSaleScreen() {
   useEffect(() => {
     const initialize = async () => {
       console.log('🔄 Inicializando store desde AsyncStorage...');
+      setIsInitializing(true);
+
       await initializeFromStorage();
 
       // Si hay una caja registradora seleccionada pero no hay sesión, intentar cargar la sesión activa
@@ -101,16 +106,68 @@ export default function NewSaleScreen() {
       // Load payment methods
       console.log('💳 Cargando métodos de pago...');
       await loadPaymentMethods();
+
+      setIsInitializing(false);
     };
     initialize();
   }, []);
 
   useEffect(() => {
-    if (!currentSession) {
-      // Si no hay sesión activa, redirigir a abrir sesión
+    // Solo redirigir si ya terminó de inicializar y no hay sesión
+    if (!isInitializing && !currentSession) {
+      console.log('⚠️ No hay sesión activa después de inicializar, redirigiendo a abrir sesión');
       navigation.navigate(ROUTES.OPEN_SESSION as never);
     }
-  }, [currentSession]);
+  }, [currentSession, isInitializing]);
+
+  // Listener global para capturar escaneo de código de barras
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+
+    let barcodeTimeout: NodeJS.Timeout;
+
+    const handleKeyPress = (event: KeyboardEvent) => {
+      const currentTime = Date.now();
+      const timeDiff = currentTime - lastKeyTime;
+
+      // Si pasa más de 100ms entre teclas, reiniciar el buffer (nueva entrada)
+      if (timeDiff > 100) {
+        setBarcodeBuffer('');
+      }
+
+      setLastKeyTime(currentTime);
+
+      // Si es Enter, procesar el código de barras
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        if (barcodeBuffer.length > 0) {
+          console.log('📷 Código de barras capturado:', barcodeBuffer);
+          handleBarcodeScanned(barcodeBuffer);
+          setBarcodeBuffer('');
+        }
+        return;
+      }
+
+      // Ignorar teclas especiales
+      if (event.key.length > 1) return;
+
+      // Agregar carácter al buffer
+      setBarcodeBuffer((prev) => prev + event.key);
+
+      // Limpiar buffer después de 200ms de inactividad
+      clearTimeout(barcodeTimeout);
+      barcodeTimeout = setTimeout(() => {
+        setBarcodeBuffer('');
+      }, 200);
+    };
+
+    window.addEventListener('keypress', handleKeyPress);
+
+    return () => {
+      window.removeEventListener('keypress', handleKeyPress);
+      clearTimeout(barcodeTimeout);
+    };
+  }, [barcodeBuffer, lastKeyTime, currentSession]);
 
   const handleSearchProducts = async (query: string) => {
     console.log('🔍 handleSearchProducts llamado con query:', query);
@@ -143,6 +200,92 @@ export default function NewSaleScreen() {
     } catch (error) {
       console.error('❌ Error searching products:', error);
       Alert.alert('Error', 'No se pudieron buscar productos. Verifica tu conexión.');
+      setSearchResults([]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  // Manejar escaneo de código de barras (cuando se presiona Enter)
+  const handleBarcodeScanned = async (query: string) => {
+    console.log('📷 Código escaneado:', query);
+
+    if (!query || query.length < 2) {
+      console.log('⚠️ Código muy corto, ignorando');
+      return;
+    }
+
+    if (!currentSession) {
+      console.error('❌ No hay sesión activa');
+      Alert.alert('Error', 'No hay una sesión activa. Por favor, abre una sesión primero.');
+      return;
+    }
+
+    try {
+      setSearching(true);
+
+      // Si el código tiene 8 dígitos, buscar cliente (DNI)
+      if (query.length === 8 && /^\d+$/.test(query)) {
+        console.log('👤 Código de 8 dígitos detectado, buscando cliente por DNI...');
+        try {
+          const customerResults = await posService.autocompleteCustomers(query, 10);
+
+          if (customerResults.data.length > 0) {
+            // Buscar coincidencia exacta por número de documento
+            const exactMatch = customerResults.data.find(
+              (customer) => customer.documentNumber === query
+            );
+
+            if (exactMatch) {
+              console.log('✅ Cliente encontrado:', exactMatch.fullName || exactMatch.name);
+
+              // Si ya hay un cliente, reemplazarlo
+              if (selectedCustomer) {
+                console.log('🔄 Reemplazando cliente anterior:', selectedCustomer.name);
+              }
+
+              // Agregar el nuevo cliente
+              handleSelectCustomer(exactMatch);
+              setSearching(false);
+              return;
+            }
+          }
+
+          console.log('ℹ️ No se encontró cliente con DNI:', query);
+          // Si no se encuentra cliente, continuar buscando como producto
+        } catch (customerError) {
+          console.log('⚠️ Error al buscar cliente, continuando con búsqueda de producto');
+        }
+      }
+
+      // Buscar como producto (código de barras)
+      console.log('🔍 Buscando producto por código de barras...');
+      const results = await posService.searchProducts(query, 20, currentSession.cashRegisterId);
+
+      if (results.length === 0) {
+        console.log('❌ No se encontró ningún producto con ese código');
+        Alert.alert(
+          'No encontrado',
+          `No se encontró ningún producto o cliente con el código: ${query}`
+        );
+        setSearchQuery('');
+        setSearchResults([]);
+      } else if (results.length === 1) {
+        // Si hay exactamente 1 resultado, agregarlo automáticamente al carrito
+        console.log('✅ Producto encontrado, agregando al carrito automáticamente');
+        await handleAddProduct(results[0]);
+        // Limpiar búsqueda para el siguiente escaneo
+        setSearchQuery('');
+        setSearchResults([]);
+      } else {
+        // Si hay múltiples resultados, mostrarlos para que el usuario seleccione
+        console.log(`⚠️ Se encontraron ${results.length} productos, mostrando resultados`);
+        setSearchResults(results);
+      }
+    } catch (error) {
+      console.error('❌ Error al procesar código escaneado:', error);
+      Alert.alert('Error', 'No se pudo procesar el código. Verifica tu conexión.');
+      setSearchQuery('');
       setSearchResults([]);
     } finally {
       setSearching(false);
@@ -304,26 +447,43 @@ export default function NewSaleScreen() {
       setSaleResponse(result);
       setSaleChange(change);
       setShowSaleSuccessModal(true);
+
+      // Imprimir automáticamente el ticket después de confirmar la venta
+      if (result.pdf?.base64 && result.pdf?.filename) {
+        console.log('🖨️ Imprimiendo ticket automáticamente...');
+        // Usar setTimeout para asegurar que el modal se muestre primero
+        setTimeout(() => {
+          handlePrintPDF(result.pdf.base64, result.pdf.filename);
+        }, 500);
+      }
     } catch (error) {
       console.error('❌ Error al procesar venta:', error);
       Alert.alert('Error', error instanceof Error ? error.message : 'No se pudo procesar la venta');
     }
   };
 
-  const handlePrintPDF = async () => {
+  const handlePrintPDF = async (pdfBase64?: string, pdfFilename?: string) => {
     console.log('🔍 handlePrintPDF iniciado');
     console.log('📄 saleResponse:', saleResponse);
 
-    if (!saleResponse?.pdf) {
-      console.error('❌ No hay PDF disponible');
-      Alert.alert('Error', 'No hay PDF disponible para imprimir');
-      return;
+    // Si se pasan parámetros directamente, usarlos (para reimprimir)
+    let base64 = pdfBase64;
+    let filename = pdfFilename;
+
+    // Si no se pasan parámetros, usar saleResponse (para impresión después de venta)
+    if (!base64 || !filename) {
+      if (!saleResponse?.pdf) {
+        console.error('❌ No hay PDF disponible');
+        Alert.alert('Error', 'No hay PDF disponible para imprimir');
+        return;
+      }
+      base64 = saleResponse.pdf.base64;
+      filename = saleResponse.pdf.filename;
     }
 
-    try {
-      const { base64, filename } = saleResponse.pdf;
-      console.log('📦 PDF info:', { filename, base64Length: base64?.length });
+    console.log('📦 PDF info:', { filename, base64Length: base64?.length });
 
+    try {
       // Detectar si estamos en Electron
       const isElectron = typeof window !== 'undefined' && (window as any).electronAPI?.isElectron;
       console.log('🔍 Detección Electron:', {
@@ -339,16 +499,13 @@ export default function NewSaleScreen() {
         const result = await (window as any).electronAPI.printPDF(base64, filename);
         console.log('📊 Resultado de printPDF:', result);
 
-        if (result.success && result.downloaded) {
-          console.log('✅ PDF descargado y abierto');
-          Alert.alert(
-            'PDF Descargado',
-            `El PDF se guardó en:\n${result.path}\n\nSe abrió automáticamente para que puedas imprimirlo.`,
-            [{ text: 'OK' }]
-          );
+        if (result.success && result.printed) {
+          console.log('✅ PDF enviado a la impresora');
+          // No mostrar alerta para no interrumpir el flujo
+          // El ticket se imprime automáticamente
         } else {
-          console.error('❌ Error al descargar PDF:', result.error);
-          Alert.alert('Error', 'No se pudo descargar el PDF');
+          console.error('❌ Error al imprimir PDF:', result.error);
+          Alert.alert('Error', 'No se pudo imprimir el PDF automáticamente');
         }
       } else if (Platform.OS === 'web') {
         // En web (navegador), abrir el PDF en una nueva ventana para imprimir
@@ -400,6 +557,89 @@ export default function NewSaleScreen() {
     } catch (error) {
       console.error('❌ Error al imprimir PDF:', error);
       Alert.alert('Error', 'No se pudo imprimir el PDF');
+    }
+  };
+
+  const handleReprintTicket = async (saleId: string) => {
+    try {
+      console.log('🖨️ Reimprimiendo ticket para venta:', saleId);
+      const response = await posService.regenerateTicket(saleId);
+      console.log('✅ Ticket regenerado:', response.filename);
+
+      // Imprimir el PDF regenerado
+      await handlePrintPDF(response.pdfBase64, response.filename);
+    } catch (error) {
+      console.error('❌ Error al reimprimir ticket:', error);
+      Alert.alert('Error', 'No se pudo reimprimir el ticket');
+    }
+  };
+
+  const handleGenerateCreditNote = async (saleId: string) => {
+    try {
+      // Confirmar antes de generar la nota de crédito
+      Alert.alert(
+        'Generar Nota de Crédito',
+        '¿Está seguro que desea generar una nota de crédito para esta venta? Esta acción anulará la venta.',
+        [
+          {
+            text: 'Cancelar',
+            style: 'cancel',
+          },
+          {
+            text: 'Generar',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                console.log('📝 Generando nota de crédito para venta:', saleId);
+                const response = await posService.generateCreditNote(saleId);
+                console.log('✅ Nota de crédito generada:', response.creditNote.code);
+
+                // Imprimir automáticamente la nota de crédito
+                if (response.pdf?.base64 && response.pdf?.filename) {
+                  await handlePrintPDF(response.pdf.base64, response.pdf.filename);
+                }
+
+                Alert.alert(
+                  'Éxito',
+                  `Nota de crédito ${response.creditNote.code} generada correctamente`,
+                  [
+                    {
+                      text: 'OK',
+                      onPress: () => {
+                        // Recargar las ventas para mostrar la nota de crédito
+                        handleLoadRecentSales();
+                      },
+                    },
+                  ]
+                );
+              } catch (error) {
+                console.error('❌ Error al generar nota de crédito:', error);
+                Alert.alert(
+                  'Error',
+                  error instanceof Error ? error.message : 'No se pudo generar la nota de crédito'
+                );
+              }
+            },
+          },
+        ]
+      );
+    } catch (error) {
+      console.error('❌ Error al generar nota de crédito:', error);
+      Alert.alert('Error', 'No se pudo generar la nota de crédito');
+    }
+  };
+
+  const handleDownloadCreditNote = async (saleId: string) => {
+    try {
+      console.log('📥 Descargando nota de crédito para venta:', saleId);
+      const response = await posService.downloadCreditNote(saleId);
+      console.log('✅ Nota de crédito descargada:', response.filename);
+
+      // Imprimir/descargar el PDF de la nota de crédito
+      await handlePrintPDF(response.pdfBase64, response.filename);
+    } catch (error) {
+      console.error('❌ Error al descargar nota de crédito:', error);
+      Alert.alert('Error', 'No se pudo descargar la nota de crédito');
     }
   };
 
@@ -572,8 +812,9 @@ export default function NewSaleScreen() {
               style={styles.searchInput}
               value={searchQuery}
               onChangeText={handleSearchProducts}
-              placeholder="Buscar productos..."
+              placeholder="Buscar productos (manual) o escanear código de barras..."
               placeholderTextColor="#999"
+              returnKeyType="search"
             />
             {searching && <ActivityIndicator style={styles.searchLoader} />}
           </View>
@@ -1175,86 +1416,137 @@ export default function NewSaleScreen() {
                     // Calcular total pagado desde las transacciones
                     const totalPaid = transactions.reduce((sum, t) => sum + t.amount, 0);
 
-                    return (
-                      <TouchableOpacity
-                        key={saleId}
-                        style={styles.saleItem}
-                        onPress={() => {
-                          setShowRecentSales(false);
-                          // @ts-expect-error - Navigation types
-                          navigation.navigate(ROUTES.SALE_DETAIL, { saleId });
-                        }}
-                      >
-                        <View style={styles.saleItemHeader}>
-                          <Text style={styles.saleNumber}>
-                            {sale.code} - #{sale.saleNumber}
-                          </Text>
-                          <Text style={styles.saleStatus}>
-                            {sale.status === 'CONFIRMED'
-                              ? '✓ Confirmada'
-                              : sale.status === 'PROCESSING'
-                                ? '⏳ Procesando'
-                                : sale.status === 'PENDING'
-                                  ? '⏸ Pendiente'
-                                  : sale.status === 'REJECTED'
-                                    ? '✗ Rechazada'
-                                    : '✗ Cancelada'}
-                          </Text>
-                        </View>
-                        <View style={styles.saleItemDetails}>
-                          <Text style={styles.saleDocType}>
-                            {sale.documentType === 'FACTURA' ? 'Factura' : 'Boleta'}
-                            {' - '}
-                            {sale.saleType}
-                          </Text>
-                          <Text style={styles.saleTotal}>{formatCurrency(sale.total)}</Text>
-                        </View>
-                        {sale.customerSnapshot && (
-                          <Text style={styles.saleCustomer}>
-                            Cliente: {sale.customerSnapshot.fullName || 'Sin nombre'}
-                            {sale.customerSnapshot.documentNumber &&
-                              ` - ${sale.customerSnapshot.documentNumber}`}
-                          </Text>
-                        )}
+                    // Verificar si tiene nota de crédito
+                    const hasCreditNote = !!sale.creditNote;
 
-                        {/* Métodos de Pago */}
-                        {transactions && transactions.length > 0 && (
-                          <View style={styles.salePaymentsContainer}>
-                            <Text style={styles.salePaymentsTitle}>💳 Métodos de Pago:</Text>
-                            {transactions.map((transaction, index) => (
-                              <View key={index} style={styles.salePaymentRow}>
-                                <Text style={styles.salePaymentMethod}>
-                                  • {transaction.paymentMethod.name}
-                                </Text>
-                                <Text style={styles.salePaymentAmount}>
-                                  {formatCurrency(transaction.amount)}
+                    return (
+                      <View key={saleId} style={styles.saleItem}>
+                        <TouchableOpacity
+                          style={styles.saleItemClickable}
+                          onPress={() => {
+                            setShowRecentSales(false);
+                            // @ts-expect-error - Navigation types
+                            navigation.navigate(ROUTES.SALE_DETAIL, { saleId });
+                          }}
+                        >
+                          <View style={styles.saleItemHeader}>
+                            <View style={styles.saleNumberContainer}>
+                              <Text style={styles.saleNumber}>
+                                {sale.code} - #{sale.saleNumber}
+                              </Text>
+                              {hasCreditNote && (
+                                <View style={styles.creditNoteBadge}>
+                                  <Text style={styles.creditNoteBadgeText}>📝 NC</Text>
+                                </View>
+                              )}
+                            </View>
+                            <Text style={styles.saleStatus}>
+                              {sale.status === 'CONFIRMED'
+                                ? '✓ Confirmada'
+                                : sale.status === 'PROCESSING'
+                                  ? '⏳ Procesando'
+                                  : sale.status === 'PENDING'
+                                    ? '⏸ Pendiente'
+                                    : sale.status === 'REJECTED'
+                                      ? '✗ Rechazada'
+                                      : '✗ Cancelada'}
+                            </Text>
+                          </View>
+                          <View style={styles.saleItemDetails}>
+                            <Text style={styles.saleDocType}>
+                              {sale.documentType === 'FACTURA' ? 'Factura' : 'Boleta'}
+                              {' - '}
+                              {sale.saleType}
+                            </Text>
+                            <Text style={styles.saleTotal}>{formatCurrency(sale.total)}</Text>
+                          </View>
+                          {sale.customerSnapshot && (
+                            <Text style={styles.saleCustomer}>
+                              Cliente: {sale.customerSnapshot.fullName || 'Sin nombre'}
+                              {sale.customerSnapshot.documentNumber &&
+                                ` - ${sale.customerSnapshot.documentNumber}`}
+                            </Text>
+                          )}
+
+                          {/* Métodos de Pago */}
+                          {transactions && transactions.length > 0 && (
+                            <View style={styles.salePaymentsContainer}>
+                              <Text style={styles.salePaymentsTitle}>💳 Métodos de Pago:</Text>
+                              {transactions.map((transaction, index) => (
+                                <View key={index} style={styles.salePaymentRow}>
+                                  <Text style={styles.salePaymentMethod}>
+                                    • {transaction.paymentMethod.name}
+                                  </Text>
+                                  <Text style={styles.salePaymentAmount}>
+                                    {formatCurrency(transaction.amount)}
+                                  </Text>
+                                </View>
+                              ))}
+                              <View style={styles.salePaymentTotal}>
+                                <Text style={styles.salePaymentTotalLabel}>Total Pagado:</Text>
+                                <Text style={styles.salePaymentTotalValue}>
+                                  {formatCurrency(totalPaid)}
                                 </Text>
                               </View>
-                            ))}
-                            <View style={styles.salePaymentTotal}>
-                              <Text style={styles.salePaymentTotalLabel}>Total Pagado:</Text>
-                              <Text style={styles.salePaymentTotalValue}>
-                                {formatCurrency(totalPaid)}
-                              </Text>
                             </View>
-                          </View>
-                        )}
+                          )}
 
-                        <View style={styles.saleItemDetails}>
-                          <Text style={styles.saleItemCount}>
-                            📦 {sale.itemCount} items ({sale.totalQuantity} unidades)
+                          <View style={styles.saleItemDetails}>
+                            <Text style={styles.saleItemCount}>
+                              📦 {sale.itemCount} items ({sale.totalQuantity} unidades)
+                            </Text>
+                          </View>
+                          <Text style={styles.saleDate}>
+                            {new Date(sale.saleDate).toLocaleString('es-PE', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
                           </Text>
+                        </TouchableOpacity>
+
+                        {/* Botones de acción */}
+                        <View style={styles.saleItemActions}>
+                          {/* Botón de Reimprimir Ticket */}
+                          <TouchableOpacity
+                            style={styles.reprintButton}
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              handleReprintTicket(saleId);
+                            }}
+                          >
+                            <Text style={styles.reprintButtonIcon}>🖨️</Text>
+                            <Text style={styles.reprintButtonText}>Reimprimir Ticket</Text>
+                          </TouchableOpacity>
+
+                          {/* Botón de Nota de Crédito */}
+                          {hasCreditNote ? (
+                            <TouchableOpacity
+                              style={styles.creditNoteButton}
+                              onPress={(e) => {
+                                e.stopPropagation();
+                                handleDownloadCreditNote(saleId);
+                              }}
+                            >
+                              <Text style={styles.creditNoteButtonIcon}>📥</Text>
+                              <Text style={styles.creditNoteButtonText}>Descargar NC</Text>
+                            </TouchableOpacity>
+                          ) : (
+                            <TouchableOpacity
+                              style={styles.generateCreditNoteButton}
+                              onPress={(e) => {
+                                e.stopPropagation();
+                                handleGenerateCreditNote(saleId);
+                              }}
+                            >
+                              <Text style={styles.generateCreditNoteButtonIcon}>📝</Text>
+                              <Text style={styles.generateCreditNoteButtonText}>Generar NC</Text>
+                            </TouchableOpacity>
+                          )}
                         </View>
-                        <Text style={styles.saleDate}>
-                          {new Date(sale.saleDate).toLocaleString('es-PE', {
-                            day: '2-digit',
-                            month: '2-digit',
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </Text>
-                      </TouchableOpacity>
+                      </View>
                     );
                   })
               )}
@@ -2254,11 +2546,14 @@ const styles = StyleSheet.create({
   },
   saleItem: {
     backgroundColor: '#F9F9F9',
-    padding: 16,
     borderRadius: 8,
     marginBottom: 12,
     borderWidth: 1,
     borderColor: '#E0E0E0',
+    overflow: 'hidden',
+  },
+  saleItemClickable: {
+    padding: 16,
   },
   saleItemHeader: {
     flexDirection: 'row',
@@ -2266,10 +2561,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
+  saleNumberContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   saleNumber: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#333',
+  },
+  creditNoteBadge: {
+    backgroundColor: '#FF9800',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  creditNoteBadgeText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
   },
   saleStatus: {
     fontSize: 12,
@@ -2377,6 +2688,69 @@ const styles = StyleSheet.create({
   saleDate: {
     fontSize: 12,
     color: '#999',
+  },
+  saleItemActions: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+  },
+  reprintButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#007AFF',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  reprintButtonIcon: {
+    fontSize: 18,
+  },
+  reprintButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  generateCreditNoteButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FF9800',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    gap: 8,
+    borderLeftWidth: 1,
+    borderLeftColor: '#FFFFFF',
+  },
+  generateCreditNoteButtonIcon: {
+    fontSize: 18,
+  },
+  generateCreditNoteButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  creditNoteButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#4CAF50',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    gap: 8,
+    borderLeftWidth: 1,
+    borderLeftColor: '#FFFFFF',
+  },
+  creditNoteButtonIcon: {
+    fontSize: 18,
+  },
+  creditNoteButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   closeModalButton: {
     backgroundColor: '#007AFF',

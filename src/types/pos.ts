@@ -379,6 +379,13 @@ export interface ActiveSaleData {
       totalAmount: number;
       methods: any[];
     };
+    creditNote?: {
+      id: string;
+      code: string;
+      status: string;
+      createdAt: string;
+      pdfUrl?: string;
+    };
   };
   transactions: Array<{
     transactionId: string;
@@ -391,4 +398,18 @@ export interface ActiveSaleData {
     createdAt: string;
   }>;
   createdAt: string;
+}
+
+export interface CreditNoteResponse {
+  creditNote: {
+    id: string;
+    code: string;
+    status: string;
+    createdAt: string;
+  };
+  pdf: {
+    base64: string;
+    filename: string;
+    mimeType: string;
+  };
 }

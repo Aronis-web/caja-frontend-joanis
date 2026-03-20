@@ -423,7 +423,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
     try {
       set({ isLoading: true, error: null });
 
-      // Siempre usar B2C como tipo de venta
+      // Siempre usar B2C como tipo de venta (MAYÚSCULAS)
       const saleType = 'B2C';
       console.log('📄 [STORE] Tipo de venta:', saleType);
       console.log('👤 [STORE] Cliente ID:', customerId || 'Sin cliente');
@@ -505,6 +505,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
       }
 
       console.log('📤 [STORE] Enviando request:', JSON.stringify(requestData, null, 2));
+      console.log('🔍 [STORE] Verificando saleType antes de enviar:', requestData.saleType);
 
       const response = await posService.createSale(currentSession.id, requestData);
 

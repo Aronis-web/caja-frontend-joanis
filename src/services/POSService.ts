@@ -23,6 +23,7 @@ import type {
   CreatePaymentMethodRequest,
   CreateCashRegisterRequest,
   ActiveSalesResponse,
+  CreditNoteResponse,
 } from '@/types/pos';
 
 class POSService {
@@ -404,6 +405,27 @@ class POSService {
 
   async getCustomer(id: string): Promise<Customer> {
     return this.request<Customer>(`/customers/${id}`);
+  }
+
+  // Regenerate ticket
+  async regenerateTicket(saleId: string): Promise<{ pdfBase64: string; filename: string }> {
+    return this.request<{ pdfBase64: string; filename: string }>(
+      `/pos/sales/regenerate-ticket/${saleId}`
+    );
+  }
+
+  // Credit Notes
+  async generateCreditNote(saleId: string, reason?: string): Promise<CreditNoteResponse> {
+    return this.request<CreditNoteResponse>(`/pos/sales/${saleId}/credit-note`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason || 'Anulación de venta' }),
+    });
+  }
+
+  async downloadCreditNote(saleId: string): Promise<{ pdfBase64: string; filename: string }> {
+    return this.request<{ pdfBase64: string; filename: string }>(
+      `/pos/sales/${saleId}/credit-note/pdf`
+    );
   }
 }
 
