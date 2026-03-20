@@ -334,13 +334,13 @@ export interface ActiveSalesResponse {
   };
   summary: {
     totalSalesCount: number;
-    totalSalesCents: number;
-    totalPaymentsCents: number;
-    totalRefundsCents: number;
+    totalSales: number;
+    totalPayments: number;
+    totalRefunds: number;
     paymentMethodBreakdown: {
       [key: string]: {
         count: number;
-        totalCents: number;
+        total: number;
       };
     };
   };
@@ -361,33 +361,20 @@ export interface ActiveSaleTransaction {
     customerSnapshot?: {
       fullName?: string;
       documentNumber?: string;
+      email?: string;
+      phone?: string;
+      documentType?: string;
     };
-    subtotalCents: number;
-    taxCents: number;
-    discountCents: number;
-    totalCents: number;
+    companySnapshot?: any;
+    subtotal: number;
+    tax: number;
+    discount: number;
+    total: number;
     itemCount: number;
-    totalQuantity: number;
+    totalQuantity: string;
     items: any[];
-    payments: {
-      paymentMethod: {
-        id: string;
-        name: string;
-        code: string;
-      };
-      amountCents: number;
-      referenceNumber?: string;
-    }[];
-    paymentSummary: {
-      totalPayments: number;
-      totalAmountCents: number;
-      methods: {
-        methodName: string;
-        amountCents: number;
-      }[];
-    };
   };
-  amountCents: number;
+  amount: number;
   paymentMethod: {
     id: string;
     name: string;

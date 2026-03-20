@@ -1096,13 +1096,13 @@ export default function NewSaleScreen() {
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Monto total:</Text>
                   <Text style={styles.summaryValue}>
-                    {formatCurrency(activeSalesData.summary.totalSalesCents / 100)}
+                    {formatCurrency(activeSalesData.summary.totalSales)}
                   </Text>
                 </View>
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Pagos recibidos:</Text>
                   <Text style={styles.summaryValue}>
-                    {formatCurrency(activeSalesData.summary.totalPaymentsCents / 100)}
+                    {formatCurrency(activeSalesData.summary.totalPayments)}
                   </Text>
                 </View>
               </View>
@@ -1116,94 +1116,118 @@ export default function NewSaleScreen() {
                   </Text>
                 </View>
               ) : (
-                activeSalesData.sales.map((saleTransaction) => (
-                  <TouchableOpacity
-                    key={saleTransaction.transactionId}
-                    style={styles.saleItem}
-                    onPress={() => {
-                      setShowRecentSales(false);
-                      // @ts-expect-error - Navigation types
-                      navigation.navigate(ROUTES.SALE_DETAIL, { saleId: saleTransaction.saleId });
-                    }}
-                  >
-                    <View style={styles.saleItemHeader}>
-                      <Text style={styles.saleNumber}>
-                        {saleTransaction.sale.code} - #{saleTransaction.sale.saleNumber}
-                      </Text>
-                      <Text style={styles.saleStatus}>
-                        {saleTransaction.sale.status === 'CONFIRMED'
-                          ? '✓ Confirmada'
-                          : saleTransaction.sale.status === 'PROCESSING'
-                            ? '⏳ Procesando'
-                            : saleTransaction.sale.status === 'PENDING'
-                              ? '⏸ Pendiente'
-                              : saleTransaction.sale.status === 'REJECTED'
-                                ? '✗ Rechazada'
-                                : '✗ Cancelada'}
-                      </Text>
-                    </View>
-                    <View style={styles.saleItemDetails}>
-                      <Text style={styles.saleDocType}>
-                        {saleTransaction.sale.documentType === 'FACTURA' ? 'Factura' : 'Boleta'}
-                        {' - '}
-                        {saleTransaction.sale.saleType}
-                      </Text>
-                      <Text style={styles.saleTotal}>
-                        {formatCurrency(saleTransaction.sale.totalCents / 100)}
-                      </Text>
-                    </View>
-                    {saleTransaction.sale.customerSnapshot && (
-                      <Text style={styles.saleCustomer}>
-                        Cliente: {saleTransaction.sale.customerSnapshot.fullName || 'Sin nombre'}
-                        {saleTransaction.sale.customerSnapshot.documentNumber &&
-                          ` - ${saleTransaction.sale.customerSnapshot.documentNumber}`}
-                      </Text>
-                    )}
+                (() => {
+                  // Agrupar transacciones por saleId
+                  const salesMap = new Map<
+                    string,
+                    {
+                      sale: any;
+                      payments: Array<{ method: any; amount: number }>;
+                    }
+                  >();
 
-                    {/* Métodos de Pago */}
-                    {saleTransaction.sale.payments && saleTransaction.sale.payments.length > 0 && (
-                      <View style={styles.salePaymentsContainer}>
-                        <Text style={styles.salePaymentsTitle}>💳 Métodos de Pago:</Text>
-                        {saleTransaction.sale.payments.map((payment, index) => (
-                          <View key={index} style={styles.salePaymentRow}>
-                            <Text style={styles.salePaymentMethod}>
-                              • {payment.paymentMethod.name}
-                            </Text>
-                            <Text style={styles.salePaymentAmount}>
-                              {formatCurrency(payment.amountCents / 100)}
-                            </Text>
-                          </View>
-                        ))}
-                        {saleTransaction.sale.paymentSummary && (
-                          <View style={styles.salePaymentTotal}>
-                            <Text style={styles.salePaymentTotalLabel}>Total Pagado:</Text>
-                            <Text style={styles.salePaymentTotalValue}>
-                              {formatCurrency(
-                                saleTransaction.sale.paymentSummary.totalAmountCents / 100
-                              )}
-                            </Text>
+                  activeSalesData.sales.forEach((transaction) => {
+                    const saleId = transaction.saleId;
+                    if (!salesMap.has(saleId)) {
+                      salesMap.set(saleId, {
+                        sale: transaction.sale,
+                        payments: [],
+                      });
+                    }
+                    salesMap.get(saleId)!.payments.push({
+                      method: transaction.paymentMethod,
+                      amount: transaction.amount,
+                    });
+                  });
+
+                  // Convertir a array y renderizar
+                  return Array.from(salesMap.entries()).map(([saleId, { sale, payments }]) => {
+                    // Calcular total pagado
+                    const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+
+                    return (
+                      <TouchableOpacity
+                        key={saleId}
+                        style={styles.saleItem}
+                        onPress={() => {
+                          setShowRecentSales(false);
+                          // @ts-expect-error - Navigation types
+                          navigation.navigate(ROUTES.SALE_DETAIL, { saleId });
+                        }}
+                      >
+                        <View style={styles.saleItemHeader}>
+                          <Text style={styles.saleNumber}>
+                            {sale.code} - #{sale.saleNumber}
+                          </Text>
+                          <Text style={styles.saleStatus}>
+                            {sale.status === 'CONFIRMED'
+                              ? '✓ Confirmada'
+                              : sale.status === 'PROCESSING'
+                                ? '⏳ Procesando'
+                                : sale.status === 'PENDING'
+                                  ? '⏸ Pendiente'
+                                  : sale.status === 'REJECTED'
+                                    ? '✗ Rechazada'
+                                    : '✗ Cancelada'}
+                          </Text>
+                        </View>
+                        <View style={styles.saleItemDetails}>
+                          <Text style={styles.saleDocType}>
+                            {sale.documentType === 'FACTURA' ? 'Factura' : 'Boleta'}
+                            {' - '}
+                            {sale.saleType}
+                          </Text>
+                          <Text style={styles.saleTotal}>{formatCurrency(sale.total)}</Text>
+                        </View>
+                        {sale.customerSnapshot && (
+                          <Text style={styles.saleCustomer}>
+                            Cliente: {sale.customerSnapshot.fullName || 'Sin nombre'}
+                            {sale.customerSnapshot.documentNumber &&
+                              ` - ${sale.customerSnapshot.documentNumber}`}
+                          </Text>
+                        )}
+
+                        {/* Métodos de Pago */}
+                        {payments && payments.length > 0 && (
+                          <View style={styles.salePaymentsContainer}>
+                            <Text style={styles.salePaymentsTitle}>💳 Métodos de Pago:</Text>
+                            {payments.map((payment, index) => (
+                              <View key={index} style={styles.salePaymentRow}>
+                                <Text style={styles.salePaymentMethod}>
+                                  • {payment.method.name}
+                                </Text>
+                                <Text style={styles.salePaymentAmount}>
+                                  {formatCurrency(payment.amount)}
+                                </Text>
+                              </View>
+                            ))}
+                            <View style={styles.salePaymentTotal}>
+                              <Text style={styles.salePaymentTotalLabel}>Total Pagado:</Text>
+                              <Text style={styles.salePaymentTotalValue}>
+                                {formatCurrency(totalPaid)}
+                              </Text>
+                            </View>
                           </View>
                         )}
-                      </View>
-                    )}
 
-                    <View style={styles.saleItemDetails}>
-                      <Text style={styles.saleItemCount}>
-                        📦 {saleTransaction.sale.itemCount} items (
-                        {saleTransaction.sale.totalQuantity} unidades)
-                      </Text>
-                    </View>
-                    <Text style={styles.saleDate}>
-                      {new Date(saleTransaction.sale.saleDate).toLocaleString('es-PE', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </Text>
-                  </TouchableOpacity>
-                ))
+                        <View style={styles.saleItemDetails}>
+                          <Text style={styles.saleItemCount}>
+                            📦 {sale.itemCount} items ({sale.totalQuantity} unidades)
+                          </Text>
+                        </View>
+                        <Text style={styles.saleDate}>
+                          {new Date(sale.saleDate).toLocaleString('es-PE', {
+                            day: '2-digit',
+                            month: '2-digit',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  });
+                })()
               )}
             </ScrollView>
 
@@ -1363,7 +1387,7 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   rightPanel: {
-    width: 500,
+    width: 650,
     backgroundColor: '#FFFFFF',
     borderLeftWidth: 1,
     borderLeftColor: '#E0E0E0',
@@ -1721,14 +1745,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#333',
-    minWidth: 50,
+    width: 60,
     height: 36,
     textAlign: 'center',
     backgroundColor: '#FFF',
     borderWidth: 1,
     borderColor: '#E0E0E0',
     borderRadius: 6,
-    paddingHorizontal: 8,
+    paddingHorizontal: 4,
   },
   cartItemPrice: {
     fontSize: 12,
@@ -1756,7 +1780,7 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   totalLabelBold: {
-    fontSize: 18,
+    fontSize: 24,
     fontWeight: 'bold',
     color: '#333',
   },
@@ -1766,7 +1790,7 @@ const styles = StyleSheet.create({
     color: '#333',
   },
   totalValueBold: {
-    fontSize: 22,
+    fontSize: 32,
     fontWeight: 'bold',
     color: '#4CAF50',
   },
@@ -1784,7 +1808,8 @@ const styles = StyleSheet.create({
   },
   button: {
     flex: 1,
-    padding: 14,
+    paddingVertical: 24,
+    paddingHorizontal: 20,
     borderRadius: 8,
     alignItems: 'center',
   },
@@ -1794,7 +1819,7 @@ const styles = StyleSheet.create({
     borderColor: '#E0E0E0',
   },
   clearButtonText: {
-    fontSize: 16,
+    fontSize: 20,
     fontWeight: '600',
     color: '#666',
   },
@@ -1802,7 +1827,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#4CAF50',
   },
   processButtonText: {
-    fontSize: 16,
+    fontSize: 20,
     fontWeight: '600',
     color: '#FFFFFF',
   },
