@@ -66,6 +66,7 @@ export default function NewSaleScreen() {
   const [loadingSales, setLoadingSales] = useState(false);
   const [showSaleSuccessModal, setShowSaleSuccessModal] = useState(false);
   const [saleResponse, setSaleResponse] = useState<CreateSaleResponse | null>(null);
+  const [saleChange, setSaleChange] = useState(0); // Vuelto de la venta
 
   // Payment method selection states
   const [selectedParentMethod, setSelectedParentMethod] = useState<string | null>(null);
@@ -201,15 +202,20 @@ export default function NewSaleScreen() {
 
     console.log('💰 Total de la venta:', total);
     console.log('💳 Total de pagos:', paymentsTotal);
-    console.log('📊 Diferencia:', Math.abs(total - paymentsTotal));
+    console.log('📊 Diferencia:', paymentsTotal - total);
 
-    if (Math.abs(total - paymentsTotal) > 0.01) {
-      console.log('❌ Error: Los totales no coinciden');
-      Alert.alert('Error', 'El total de pagos no coincide con el total de la venta');
+    // Permitir venta si el pago es mayor o igual al total
+    if (paymentsTotal < total) {
+      console.log('❌ Error: Pago insuficiente');
+      Alert.alert('Error', 'El monto pagado es insuficiente');
       return;
     }
 
-    console.log('✅ Totales coinciden, procesando venta...');
+    // Calcular el vuelto
+    const change = paymentsTotal - total;
+    console.log('💵 Vuelto:', change);
+
+    console.log('✅ Pago suficiente, procesando venta...');
     console.log('👤 Cliente:', selectedCustomer?.id || 'Sin cliente');
     console.log('📄 Tipo de documento:', documentType);
     console.log('🛒 Items en carrito:', cartItems.length);
@@ -223,8 +229,9 @@ export default function NewSaleScreen() {
       // Cerrar modal de pago solo después de que la venta se complete exitosamente
       setShowPaymentModal(false);
 
-      // Guardar la respuesta y mostrar el modal de éxito
+      // Guardar la respuesta, el vuelto y mostrar el modal de éxito
       setSaleResponse(result);
+      setSaleChange(change);
       setShowSaleSuccessModal(true);
     } catch (error) {
       console.error('❌ Error al procesar venta:', error);
@@ -768,21 +775,32 @@ export default function NewSaleScreen() {
                         {formatCurrency(getPaymentsTotal())}
                       </Text>
                     </View>
-                    <View style={styles.summaryRow}>
-                      <Text style={styles.summaryLabel}>
-                        {getPaymentsTotal() < getCartTotal() ? 'Faltante:' : 'Vuelto:'}
-                      </Text>
-                      <Text
+
+                    {/* Faltante/Vuelto - Grande y Destacado */}
+                    {getPaymentsTotal() !== getCartTotal() && (
+                      <View
                         style={[
-                          styles.summaryValueHighlight,
+                          styles.changeHighlightBox,
                           getPaymentsTotal() < getCartTotal()
-                            ? styles.summaryValueMissing
-                            : styles.summaryValueChange,
+                            ? styles.changeHighlightBoxMissing
+                            : styles.changeHighlightBoxChange,
                         ]}
                       >
-                        {formatCurrency(Math.abs(getPaymentsTotal() - getCartTotal()))}
-                      </Text>
-                    </View>
+                        <Text style={styles.changeHighlightLabel}>
+                          {getPaymentsTotal() < getCartTotal() ? '⚠️ FALTANTE' : '💰 VUELTO'}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.changeHighlightValue,
+                            getPaymentsTotal() < getCartTotal()
+                              ? styles.summaryValueMissing
+                              : styles.summaryValueChange,
+                          ]}
+                        >
+                          {formatCurrency(Math.abs(getPaymentsTotal() - getCartTotal()))}
+                        </Text>
+                      </View>
+                    )}
                   </View>
                 </View>
               )}
@@ -803,21 +821,18 @@ export default function NewSaleScreen() {
                 style={[
                   styles.button,
                   styles.modalConfirmButton,
-                  (Math.abs(getCartTotal() - getPaymentsTotal()) > 0.01 || isLoading) &&
-                    styles.buttonDisabled,
+                  (getPaymentsTotal() < getCartTotal() || isLoading) && styles.buttonDisabled,
                 ]}
                 onPress={() => {
                   const total = getCartTotal();
                   const paymentsTotal = getPaymentsTotal();
-                  const diff = Math.abs(total - paymentsTotal);
                   console.log('🔘 Botón presionado');
                   console.log('💰 Total carrito:', total);
                   console.log('💳 Total pagos:', paymentsTotal);
-                  console.log('📊 Diferencia:', diff);
-                  console.log('🔒 Está deshabilitado:', diff > 0.01 || isLoading);
+                  console.log('🔒 Está deshabilitado:', paymentsTotal < total || isLoading);
                   console.log('⏳ isLoading:', isLoading);
 
-                  if (diff > 0.01 || isLoading) {
+                  if (paymentsTotal < total || isLoading) {
                     console.log('❌ Botón deshabilitado, no se ejecuta handleCompleteSale');
                     return;
                   }
@@ -932,6 +947,24 @@ export default function NewSaleScreen() {
 
             {saleResponse && (
               <View style={styles.successDetails}>
+                {/* Total a Pagar - Grande y Destacado */}
+                <View style={styles.successTotalBox}>
+                  <Text style={styles.successTotalLabel}>TOTAL A PAGAR</Text>
+                  <Text style={styles.successTotalValue}>
+                    {formatCurrency(saleResponse.sale.totalCents / 100)}
+                  </Text>
+                </View>
+
+                {/* Vuelto - Grande y Destacado */}
+                {saleChange > 0 && (
+                  <View style={styles.successChangeBox}>
+                    <Text style={styles.successChangeLabel}>💰 VUELTO</Text>
+                    <Text style={styles.successChangeValue}>{formatCurrency(saleChange)}</Text>
+                  </View>
+                )}
+
+                <View style={styles.divider} />
+
                 <View style={styles.successRow}>
                   <Text style={styles.successLabel}>Código de Venta:</Text>
                   <Text style={styles.successValue}>{saleResponse.sale.code}</Text>
@@ -945,13 +978,6 @@ export default function NewSaleScreen() {
                 <View style={styles.successRow}>
                   <Text style={styles.successLabel}>Estado:</Text>
                   <Text style={styles.successValue}>{saleResponse.document.status}</Text>
-                </View>
-
-                <View style={styles.successRow}>
-                  <Text style={styles.successLabel}>Total:</Text>
-                  <Text style={styles.successValueBold}>
-                    {formatCurrency(saleResponse.sale.totalCents / 100)}
-                  </Text>
                 </View>
 
                 <View style={styles.divider} />
@@ -1551,6 +1577,31 @@ const styles = StyleSheet.create({
   summaryValueChange: {
     color: '#4CAF50',
   },
+  changeHighlightBox: {
+    marginTop: 24,
+    padding: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    borderWidth: 4,
+  },
+  changeHighlightBoxMissing: {
+    backgroundColor: '#FFEBEE',
+    borderColor: '#F44336',
+  },
+  changeHighlightBoxChange: {
+    backgroundColor: '#E8F5E9',
+    borderColor: '#4CAF50',
+  },
+  changeHighlightLabel: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    marginBottom: 16,
+    letterSpacing: 2,
+  },
+  changeHighlightValue: {
+    fontSize: 64,
+    fontWeight: 'bold',
+  },
   modalButtons: {
     flexDirection: 'row',
     gap: 24,
@@ -1719,6 +1770,48 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 40,
     marginBottom: 48,
+  },
+  successTotalBox: {
+    backgroundColor: '#E3F2FD',
+    padding: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    marginBottom: 24,
+    borderWidth: 3,
+    borderColor: '#2196F3',
+  },
+  successTotalLabel: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#1976D2',
+    marginBottom: 12,
+    letterSpacing: 2,
+  },
+  successTotalValue: {
+    fontSize: 56,
+    fontWeight: 'bold',
+    color: '#1565C0',
+  },
+  successChangeBox: {
+    backgroundColor: '#E8F5E9',
+    padding: 40,
+    borderRadius: 16,
+    alignItems: 'center',
+    marginBottom: 24,
+    borderWidth: 4,
+    borderColor: '#4CAF50',
+  },
+  successChangeLabel: {
+    fontSize: 36,
+    fontWeight: 'bold',
+    color: '#2E7D32',
+    marginBottom: 16,
+    letterSpacing: 2,
+  },
+  successChangeValue: {
+    fontSize: 72,
+    fontWeight: 'bold',
+    color: '#1B5E20',
   },
   successRow: {
     flexDirection: 'row',
