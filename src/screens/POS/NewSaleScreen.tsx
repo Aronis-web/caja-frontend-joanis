@@ -1116,118 +1116,94 @@ export default function NewSaleScreen() {
                   </Text>
                 </View>
               ) : (
-                (() => {
-                  // Agrupar transacciones por saleId
-                  const salesMap = new Map<
-                    string,
-                    {
-                      sale: any;
-                      payments: Array<{ method: any; amount: number }>;
-                    }
-                  >();
+                activeSalesData.sales.map((saleData) => {
+                  const { saleId, sale, transactions } = saleData;
 
-                  activeSalesData.sales.forEach((transaction) => {
-                    const saleId = transaction.saleId;
-                    if (!salesMap.has(saleId)) {
-                      salesMap.set(saleId, {
-                        sale: transaction.sale,
-                        payments: [],
-                      });
-                    }
-                    salesMap.get(saleId)!.payments.push({
-                      method: transaction.paymentMethod,
-                      amount: transaction.amount,
-                    });
-                  });
+                  // Calcular total pagado desde las transacciones
+                  const totalPaid = transactions.reduce((sum, t) => sum + t.amount, 0);
 
-                  // Convertir a array y renderizar
-                  return Array.from(salesMap.entries()).map(([saleId, { sale, payments }]) => {
-                    // Calcular total pagado
-                    const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+                  return (
+                    <TouchableOpacity
+                      key={saleId}
+                      style={styles.saleItem}
+                      onPress={() => {
+                        setShowRecentSales(false);
+                        // @ts-expect-error - Navigation types
+                        navigation.navigate(ROUTES.SALE_DETAIL, { saleId });
+                      }}
+                    >
+                      <View style={styles.saleItemHeader}>
+                        <Text style={styles.saleNumber}>
+                          {sale.code} - #{sale.saleNumber}
+                        </Text>
+                        <Text style={styles.saleStatus}>
+                          {sale.status === 'CONFIRMED'
+                            ? '✓ Confirmada'
+                            : sale.status === 'PROCESSING'
+                              ? '⏳ Procesando'
+                              : sale.status === 'PENDING'
+                                ? '⏸ Pendiente'
+                                : sale.status === 'REJECTED'
+                                  ? '✗ Rechazada'
+                                  : '✗ Cancelada'}
+                        </Text>
+                      </View>
+                      <View style={styles.saleItemDetails}>
+                        <Text style={styles.saleDocType}>
+                          {sale.documentType === 'FACTURA' ? 'Factura' : 'Boleta'}
+                          {' - '}
+                          {sale.saleType}
+                        </Text>
+                        <Text style={styles.saleTotal}>{formatCurrency(sale.total)}</Text>
+                      </View>
+                      {sale.customerSnapshot && (
+                        <Text style={styles.saleCustomer}>
+                          Cliente: {sale.customerSnapshot.fullName || 'Sin nombre'}
+                          {sale.customerSnapshot.documentNumber &&
+                            ` - ${sale.customerSnapshot.documentNumber}`}
+                        </Text>
+                      )}
 
-                    return (
-                      <TouchableOpacity
-                        key={saleId}
-                        style={styles.saleItem}
-                        onPress={() => {
-                          setShowRecentSales(false);
-                          // @ts-expect-error - Navigation types
-                          navigation.navigate(ROUTES.SALE_DETAIL, { saleId });
-                        }}
-                      >
-                        <View style={styles.saleItemHeader}>
-                          <Text style={styles.saleNumber}>
-                            {sale.code} - #{sale.saleNumber}
-                          </Text>
-                          <Text style={styles.saleStatus}>
-                            {sale.status === 'CONFIRMED'
-                              ? '✓ Confirmada'
-                              : sale.status === 'PROCESSING'
-                                ? '⏳ Procesando'
-                                : sale.status === 'PENDING'
-                                  ? '⏸ Pendiente'
-                                  : sale.status === 'REJECTED'
-                                    ? '✗ Rechazada'
-                                    : '✗ Cancelada'}
-                          </Text>
-                        </View>
-                        <View style={styles.saleItemDetails}>
-                          <Text style={styles.saleDocType}>
-                            {sale.documentType === 'FACTURA' ? 'Factura' : 'Boleta'}
-                            {' - '}
-                            {sale.saleType}
-                          </Text>
-                          <Text style={styles.saleTotal}>{formatCurrency(sale.total)}</Text>
-                        </View>
-                        {sale.customerSnapshot && (
-                          <Text style={styles.saleCustomer}>
-                            Cliente: {sale.customerSnapshot.fullName || 'Sin nombre'}
-                            {sale.customerSnapshot.documentNumber &&
-                              ` - ${sale.customerSnapshot.documentNumber}`}
-                          </Text>
-                        )}
-
-                        {/* Métodos de Pago */}
-                        {payments && payments.length > 0 && (
-                          <View style={styles.salePaymentsContainer}>
-                            <Text style={styles.salePaymentsTitle}>💳 Métodos de Pago:</Text>
-                            {payments.map((payment, index) => (
-                              <View key={index} style={styles.salePaymentRow}>
-                                <Text style={styles.salePaymentMethod}>
-                                  • {payment.method.name}
-                                </Text>
-                                <Text style={styles.salePaymentAmount}>
-                                  {formatCurrency(payment.amount)}
-                                </Text>
-                              </View>
-                            ))}
-                            <View style={styles.salePaymentTotal}>
-                              <Text style={styles.salePaymentTotalLabel}>Total Pagado:</Text>
-                              <Text style={styles.salePaymentTotalValue}>
-                                {formatCurrency(totalPaid)}
+                      {/* Métodos de Pago */}
+                      {transactions && transactions.length > 0 && (
+                        <View style={styles.salePaymentsContainer}>
+                          <Text style={styles.salePaymentsTitle}>💳 Métodos de Pago:</Text>
+                          {transactions.map((transaction, index) => (
+                            <View key={index} style={styles.salePaymentRow}>
+                              <Text style={styles.salePaymentMethod}>
+                                • {transaction.paymentMethod.name}
+                              </Text>
+                              <Text style={styles.salePaymentAmount}>
+                                {formatCurrency(transaction.amount)}
                               </Text>
                             </View>
+                          ))}
+                          <View style={styles.salePaymentTotal}>
+                            <Text style={styles.salePaymentTotalLabel}>Total Pagado:</Text>
+                            <Text style={styles.salePaymentTotalValue}>
+                              {formatCurrency(totalPaid)}
+                            </Text>
                           </View>
-                        )}
-
-                        <View style={styles.saleItemDetails}>
-                          <Text style={styles.saleItemCount}>
-                            📦 {sale.itemCount} items ({sale.totalQuantity} unidades)
-                          </Text>
                         </View>
-                        <Text style={styles.saleDate}>
-                          {new Date(sale.saleDate).toLocaleString('es-PE', {
-                            day: '2-digit',
-                            month: '2-digit',
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
+                      )}
+
+                      <View style={styles.saleItemDetails}>
+                        <Text style={styles.saleItemCount}>
+                          📦 {sale.itemCount} items ({sale.totalQuantity} unidades)
                         </Text>
-                      </TouchableOpacity>
-                    );
-                  });
-                })()
+                      </View>
+                      <Text style={styles.saleDate}>
+                        {new Date(sale.saleDate).toLocaleString('es-PE', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })
               )}
             </ScrollView>
 
@@ -1657,30 +1633,32 @@ const styles = StyleSheet.create({
     color: '#BBB',
   },
   cartItem: {
-    padding: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#F0F0F0',
   },
   cartItemRow: {
     flexDirection: 'row',
     gap: 12,
+    alignItems: 'stretch',
   },
   cartItemImage: {
-    width: 80,
-    height: 80,
+    width: 120,
+    height: 120,
     borderRadius: 8,
     backgroundColor: '#F5F5F5',
   },
   cartItemImagePlaceholder: {
-    width: 80,
-    height: 80,
+    width: 120,
+    height: 120,
     borderRadius: 8,
     backgroundColor: '#F5F5F5',
     justifyContent: 'center',
     alignItems: 'center',
   },
   cartItemImagePlaceholderText: {
-    fontSize: 32,
+    fontSize: 48,
   },
   cartItemInfo: {
     flex: 1,
@@ -1689,11 +1667,11 @@ const styles = StyleSheet.create({
   cartItemHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
+    alignItems: 'flex-start',
+    marginBottom: 2,
   },
   cartItemName: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '600',
     color: '#333',
     flex: 1,
@@ -1701,14 +1679,14 @@ const styles = StyleSheet.create({
   removeButtonContainer: {
     backgroundColor: '#FFEBEE',
     borderRadius: 8,
-    padding: 8,
-    minWidth: 44,
-    minHeight: 44,
+    padding: 10,
+    minWidth: 48,
+    minHeight: 48,
     justifyContent: 'center',
     alignItems: 'center',
   },
   removeButton: {
-    fontSize: 28,
+    fontSize: 32,
   },
   cartItemDetails: {
     flexDirection: 'row',
@@ -1719,18 +1697,18 @@ const styles = StyleSheet.create({
   quantityControl: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 12,
   },
   quantityButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#F0F0F0',
     justifyContent: 'center',
     alignItems: 'center',
   },
   quantityButtonText: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '600',
     color: '#333',
   },
@@ -1742,11 +1720,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   quantityInput: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '600',
     color: '#333',
     width: 60,
-    height: 36,
+    height: 40,
     textAlign: 'center',
     backgroundColor: '#FFF',
     borderWidth: 1,
@@ -1755,12 +1733,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   cartItemPrice: {
-    fontSize: 12,
+    fontSize: 14,
     color: '#666',
     marginBottom: 4,
   },
   cartItemTotal: {
-    fontSize: 14,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#007AFF',
   },

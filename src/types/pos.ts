@@ -344,11 +344,10 @@ export interface ActiveSalesResponse {
       };
     };
   };
-  sales: ActiveSaleTransaction[];
+  sales: ActiveSaleData[];
 }
 
-export interface ActiveSaleTransaction {
-  transactionId: string;
+export interface ActiveSaleData {
   saleId: string;
   sale: {
     id: string;
@@ -373,12 +372,22 @@ export interface ActiveSaleTransaction {
     itemCount: number;
     totalQuantity: string;
     items: any[];
+    payments: any[];
+    paymentSummary: {
+      totalPayments: number;
+      totalAmount: number;
+      methods: any[];
+    };
   };
-  amount: number;
-  paymentMethod: {
-    id: string;
-    name: string;
-    code: string;
-  };
+  transactions: Array<{
+    transactionId: string;
+    amount: number;
+    paymentMethod: {
+      id: string;
+      name: string;
+      code: string;
+    };
+    createdAt: string;
+  }>;
   createdAt: string;
 }
