@@ -73,6 +73,8 @@ export default function NewSaleScreen() {
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [activeSalesData, setActiveSalesData] = useState<ActiveSalesResponse | null>(null);
   const [loadingSales, setLoadingSales] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [salesPerPage] = useState(20);
   const [showSaleSuccessModal, setShowSaleSuccessModal] = useState(false);
   const [saleResponse, setSaleResponse] = useState<CreateSaleResponse | null>(null);
   const [saleChange, setSaleChange] = useState(0); // Vuelto de la venta
@@ -384,18 +386,30 @@ export default function NewSaleScreen() {
     setShowPaymentModal(true);
   };
 
-  const handleLoadRecentSales = async () => {
+  const handleLoadRecentSales = async (page: number = 1) => {
     if (!selectedCashRegister) return;
 
     try {
       setLoadingSales(true);
       console.log('📊 [VENTAS] Cargando ventas de la sesión...');
       console.log('📊 [VENTAS] Cash Register ID:', selectedCashRegister.id);
+      console.log('📊 [VENTAS] Página:', page);
+      console.log('📊 [VENTAS] Límite por página:', salesPerPage);
 
-      const salesData = await posService.getActiveSales(selectedCashRegister.id);
+      const salesData = await posService.getActiveSales(
+        selectedCashRegister.id,
+        page,
+        salesPerPage
+      );
 
       console.log('✅ [VENTAS] Respuesta del backend:', JSON.stringify(salesData, null, 2));
-      console.log('📈 [VENTAS] Total de ventas:', salesData.sales?.length || 0);
+      console.log('📈 [VENTAS] Total de ventas en esta página:', salesData.sales?.length || 0);
+      console.log(
+        '📈 [VENTAS] Total de ventas en la sesión:',
+        salesData.pagination?.totalSales || 0
+      );
+      console.log('📄 [VENTAS] Página actual:', salesData.pagination?.page || 1);
+      console.log('📄 [VENTAS] Total de páginas:', salesData.pagination?.totalPages || 1);
       console.log('💰 [VENTAS] Total ventas (cents):', salesData.summary?.totalSalesCents || 0);
       console.log('💳 [VENTAS] Total pagos (cents):', salesData.summary?.totalPaymentsCents || 0);
 
@@ -407,6 +421,7 @@ export default function NewSaleScreen() {
       }
 
       setActiveSalesData(salesData);
+      setCurrentPage(page);
       setShowRecentSales(true);
     } catch (error) {
       console.error('❌ [VENTAS] Error loading active sales:', error);
@@ -1534,203 +1549,256 @@ export default function NewSaleScreen() {
                   </Text>
                 </View>
               ) : (
-                activeSalesData.sales
-                  .slice()
-                  .reverse()
-                  .map((saleData) => {
-                    const { saleId, sale, transactions } = saleData;
+                activeSalesData.sales.map((saleData) => {
+                  const { saleId, sale, transactions } = saleData;
 
-                    // Calcular total pagado desde las transacciones
-                    const totalPaid = transactions.reduce((sum, t) => sum + t.amount, 0);
+                  // Calcular total pagado desde las transacciones
+                  const totalPaid = transactions.reduce((sum, t) => sum + t.amount, 0);
 
-                    // Verificar si tiene nota de crédito
-                    const hasCreditNote = sale.hasCreditNote || false;
+                  // Verificar si tiene nota de crédito
+                  const hasCreditNote = sale.hasCreditNote || false;
 
-                    return (
-                      <View key={saleId} style={styles.saleItem}>
-                        <TouchableOpacity
-                          style={styles.saleItemClickable}
-                          onPress={() => {
-                            setShowRecentSales(false);
-                            // @ts-expect-error - Navigation types
-                            navigation.navigate(ROUTES.SALE_DETAIL, { saleId });
-                          }}
-                        >
-                          <View style={styles.saleItemHeader}>
-                            <View style={styles.saleNumberContainer}>
-                              <Text style={styles.saleNumber}>
-                                {sale.code} - #{sale.saleNumber}
-                              </Text>
-                              {hasCreditNote && (
-                                <View style={styles.creditNoteBadge}>
-                                  <Text style={styles.creditNoteBadgeText}>📝 NC</Text>
-                                </View>
-                              )}
-                            </View>
-                            {(() => {
-                              const getStatusStyle = (status: string) => {
-                                switch (status) {
-                                  case 'DRAFT':
-                                    return {
-                                      style: styles.statusDraft,
-                                      text: '📝 Borrador',
-                                    };
-                                  case 'CONFIRMED':
-                                    return {
-                                      style: styles.statusConfirmed,
-                                      text: '✓ Confirmada',
-                                    };
-                                  case 'CONFIRMED_DEV_PARCIAL':
-                                    return {
-                                      style: styles.statusDevParcial,
-                                      text: '↩️ Dev. Parcial',
-                                    };
-                                  case 'CONFIRMED_DEV_TOTAL':
-                                    return {
-                                      style: styles.statusDevTotal,
-                                      text: '↩️ Dev. Total',
-                                    };
-                                  case 'INVOICED':
-                                    return {
-                                      style: styles.statusInvoiced,
-                                      text: '📄 Facturada',
-                                    };
-                                  case 'PAID':
-                                    return {
-                                      style: styles.statusPaid,
-                                      text: '💰 Pagada',
-                                    };
-                                  case 'CANCELLED':
-                                    return {
-                                      style: styles.statusCancelled,
-                                      text: '✗ Cancelada',
-                                    };
-                                  case 'REFUNDED':
-                                    return {
-                                      style: styles.statusRefunded,
-                                      text: '💸 Reembolsada',
-                                    };
-                                  default:
-                                    return {
-                                      style: styles.statusDefault,
-                                      text: status,
-                                    };
-                                }
-                              };
-                              const statusInfo = getStatusStyle(sale.status);
-                              return (
-                                <View style={statusInfo.style}>
-                                  <Text style={styles.statusText}>{statusInfo.text}</Text>
-                                </View>
-                              );
-                            })()}
-                          </View>
-                          <View style={styles.saleItemDetails}>
-                            <Text style={styles.saleDocType}>
-                              {sale.documentType === 'FACTURA' ? 'Factura' : 'Boleta'}
-                              {' - '}
-                              {sale.saleType}
+                  return (
+                    <View key={saleId} style={styles.saleItem}>
+                      <TouchableOpacity
+                        style={styles.saleItemClickable}
+                        onPress={() => {
+                          setShowRecentSales(false);
+                          // @ts-expect-error - Navigation types
+                          navigation.navigate(ROUTES.SALE_DETAIL, { saleId });
+                        }}
+                      >
+                        <View style={styles.saleItemHeader}>
+                          <View style={styles.saleNumberContainer}>
+                            <Text style={styles.saleNumber}>
+                              {sale.code} - #{sale.saleNumber}
                             </Text>
-                            <Text style={styles.saleTotal}>{formatCurrency(sale.total)}</Text>
+                            {hasCreditNote && (
+                              <View style={styles.creditNoteBadge}>
+                                <Text style={styles.creditNoteBadgeText}>📝 NC</Text>
+                              </View>
+                            )}
                           </View>
-                          {sale.customerSnapshot && (
-                            <Text style={styles.saleCustomer}>
-                              Cliente: {sale.customerSnapshot.fullName || 'Sin nombre'}
-                              {sale.customerSnapshot.documentNumber &&
-                                ` - ${sale.customerSnapshot.documentNumber}`}
-                            </Text>
-                          )}
+                          {(() => {
+                            const getStatusStyle = (status: string) => {
+                              switch (status) {
+                                case 'DRAFT':
+                                  return {
+                                    style: styles.statusDraft,
+                                    text: '📝 Borrador',
+                                  };
+                                case 'CONFIRMED':
+                                  return {
+                                    style: styles.statusConfirmed,
+                                    text: '✓ Confirmada',
+                                  };
+                                case 'CONFIRMED_DEV_PARCIAL':
+                                  return {
+                                    style: styles.statusDevParcial,
+                                    text: '↩️ Dev. Parcial',
+                                  };
+                                case 'CONFIRMED_DEV_TOTAL':
+                                  return {
+                                    style: styles.statusDevTotal,
+                                    text: '↩️ Dev. Total',
+                                  };
+                                case 'INVOICED':
+                                  return {
+                                    style: styles.statusInvoiced,
+                                    text: '📄 Facturada',
+                                  };
+                                case 'PAID':
+                                  return {
+                                    style: styles.statusPaid,
+                                    text: '💰 Pagada',
+                                  };
+                                case 'CANCELLED':
+                                  return {
+                                    style: styles.statusCancelled,
+                                    text: '✗ Cancelada',
+                                  };
+                                case 'REFUNDED':
+                                  return {
+                                    style: styles.statusRefunded,
+                                    text: '💸 Reembolsada',
+                                  };
+                                default:
+                                  return {
+                                    style: styles.statusDefault,
+                                    text: status,
+                                  };
+                              }
+                            };
+                            const statusInfo = getStatusStyle(sale.status);
+                            return (
+                              <View style={statusInfo.style}>
+                                <Text style={styles.statusText}>{statusInfo.text}</Text>
+                              </View>
+                            );
+                          })()}
+                        </View>
+                        <View style={styles.saleItemDetails}>
+                          <Text style={styles.saleDocType}>
+                            {sale.documentType === 'FACTURA' ? 'Factura' : 'Boleta'}
+                            {' - '}
+                            {sale.saleType}
+                          </Text>
+                          <Text style={styles.saleTotal}>{formatCurrency(sale.total)}</Text>
+                        </View>
+                        {sale.customerSnapshot && (
+                          <Text style={styles.saleCustomer}>
+                            Cliente: {sale.customerSnapshot.fullName || 'Sin nombre'}
+                            {sale.customerSnapshot.documentNumber &&
+                              ` - ${sale.customerSnapshot.documentNumber}`}
+                          </Text>
+                        )}
 
-                          {/* Métodos de Pago */}
-                          {transactions && transactions.length > 0 && (
-                            <View style={styles.salePaymentsContainer}>
-                              <Text style={styles.salePaymentsTitle}>💳 Métodos de Pago:</Text>
-                              {transactions.map((transaction, index) => (
-                                <View key={index} style={styles.salePaymentRow}>
-                                  <Text style={styles.salePaymentMethod}>
-                                    • {transaction.paymentMethod.name}
-                                  </Text>
-                                  <Text style={styles.salePaymentAmount}>
-                                    {formatCurrency(transaction.amount)}
-                                  </Text>
-                                </View>
-                              ))}
-                              <View style={styles.salePaymentTotal}>
-                                <Text style={styles.salePaymentTotalLabel}>Total Pagado:</Text>
-                                <Text style={styles.salePaymentTotalValue}>
-                                  {formatCurrency(totalPaid)}
+                        {/* Métodos de Pago */}
+                        {transactions && transactions.length > 0 && (
+                          <View style={styles.salePaymentsContainer}>
+                            <Text style={styles.salePaymentsTitle}>💳 Métodos de Pago:</Text>
+                            {transactions.map((transaction, index) => (
+                              <View key={index} style={styles.salePaymentRow}>
+                                <Text style={styles.salePaymentMethod}>
+                                  • {transaction.paymentMethod.name}
+                                </Text>
+                                <Text style={styles.salePaymentAmount}>
+                                  {formatCurrency(transaction.amount)}
                                 </Text>
                               </View>
+                            ))}
+                            <View style={styles.salePaymentTotal}>
+                              <Text style={styles.salePaymentTotalLabel}>Total Pagado:</Text>
+                              <Text style={styles.salePaymentTotalValue}>
+                                {formatCurrency(totalPaid)}
+                              </Text>
                             </View>
-                          )}
-
-                          <View style={styles.saleItemDetails}>
-                            <Text style={styles.saleItemCount}>
-                              📦 {sale.itemCount} items ({sale.totalQuantity} unidades)
-                            </Text>
                           </View>
-                          <Text style={styles.saleDate}>
-                            {new Date(sale.saleDate).toLocaleString('es-PE', {
-                              day: '2-digit',
-                              month: '2-digit',
-                              year: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
+                        )}
+
+                        <View style={styles.saleItemDetails}>
+                          <Text style={styles.saleItemCount}>
+                            📦 {sale.itemCount} items ({sale.totalQuantity} unidades)
                           </Text>
+                        </View>
+                        <Text style={styles.saleDate}>
+                          {new Date(sale.saleDate).toLocaleString('es-PE', {
+                            day: '2-digit',
+                            month: '2-digit',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </Text>
+                      </TouchableOpacity>
+
+                      {/* Botones de acción */}
+                      <View style={styles.saleItemActions}>
+                        {/* Botón de Reimprimir Ticket */}
+                        <TouchableOpacity
+                          style={styles.reprintButton}
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            handleReprintTicket(saleId);
+                          }}
+                        >
+                          <Text style={styles.reprintButtonIcon}>🖨️</Text>
+                          <Text style={styles.reprintButtonText}>Reimprimir Ticket</Text>
                         </TouchableOpacity>
 
-                        {/* Botones de acción */}
-                        <View style={styles.saleItemActions}>
-                          {/* Botón de Reimprimir Ticket */}
+                        {/* Botón de Nota de Crédito */}
+                        {hasCreditNote ? (
                           <TouchableOpacity
-                            style={styles.reprintButton}
+                            style={styles.creditNoteButton}
                             onPress={(e) => {
+                              console.log('🟢 [BUTTON] Botón Imprimir NC presionado');
+                              console.log('🟢 [BUTTON] Sale ID:', saleId);
+                              console.log('🟢 [BUTTON] Has Credit Note:', hasCreditNote);
+                              console.log('🟢 [BUTTON] Credit Notes:', sale.creditNotes);
                               e.stopPropagation();
-                              handleReprintTicket(saleId);
+                              handlePrintCreditNote(saleId, sale.creditNotes);
                             }}
                           >
-                            <Text style={styles.reprintButtonIcon}>🖨️</Text>
-                            <Text style={styles.reprintButtonText}>Reimprimir Ticket</Text>
+                            <Text style={styles.creditNoteButtonIcon}>🖨️</Text>
+                            <Text style={styles.creditNoteButtonText}>Imprimir NC</Text>
                           </TouchableOpacity>
-
-                          {/* Botón de Nota de Crédito */}
-                          {hasCreditNote ? (
-                            <TouchableOpacity
-                              style={styles.creditNoteButton}
-                              onPress={(e) => {
-                                console.log('🟢 [BUTTON] Botón Imprimir NC presionado');
-                                console.log('🟢 [BUTTON] Sale ID:', saleId);
-                                console.log('🟢 [BUTTON] Has Credit Note:', hasCreditNote);
-                                console.log('🟢 [BUTTON] Credit Notes:', sale.creditNotes);
-                                e.stopPropagation();
-                                handlePrintCreditNote(saleId, sale.creditNotes);
-                              }}
-                            >
-                              <Text style={styles.creditNoteButtonIcon}>🖨️</Text>
-                              <Text style={styles.creditNoteButtonText}>Imprimir NC</Text>
-                            </TouchableOpacity>
-                          ) : (
-                            <TouchableOpacity
-                              style={styles.generateCreditNoteButton}
-                              onPress={(e) => {
-                                console.log('🟠 [BUTTON] Botón Generar NC presionado');
-                                console.log('🟠 [BUTTON] Sale ID:', saleId);
-                                console.log('🟠 [BUTTON] Has Credit Note:', hasCreditNote);
-                                e.stopPropagation();
-                                handleGenerateCreditNote(saleId);
-                              }}
-                            >
-                              <Text style={styles.generateCreditNoteButtonIcon}>📝</Text>
-                              <Text style={styles.generateCreditNoteButtonText}>Generar NC</Text>
-                            </TouchableOpacity>
-                          )}
-                        </View>
+                        ) : (
+                          <TouchableOpacity
+                            style={styles.generateCreditNoteButton}
+                            onPress={(e) => {
+                              console.log('🟠 [BUTTON] Botón Generar NC presionado');
+                              console.log('🟠 [BUTTON] Sale ID:', saleId);
+                              console.log('🟠 [BUTTON] Has Credit Note:', hasCreditNote);
+                              e.stopPropagation();
+                              handleGenerateCreditNote(saleId);
+                            }}
+                          >
+                            <Text style={styles.generateCreditNoteButtonIcon}>📝</Text>
+                            <Text style={styles.generateCreditNoteButtonText}>Generar NC</Text>
+                          </TouchableOpacity>
+                        )}
                       </View>
-                    );
-                  })
+                    </View>
+                  );
+                })
               )}
             </ScrollView>
+
+            {/* Paginación */}
+            {activeSalesData &&
+              activeSalesData.pagination &&
+              activeSalesData.pagination.totalPages > 1 && (
+                <View style={styles.paginationContainer}>
+                  <TouchableOpacity
+                    style={[
+                      styles.paginationButton,
+                      !activeSalesData.pagination.hasPreviousPage &&
+                        styles.paginationButtonDisabled,
+                    ]}
+                    onPress={() => handleLoadRecentSales(currentPage - 1)}
+                    disabled={!activeSalesData.pagination.hasPreviousPage || loadingSales}
+                  >
+                    <Text
+                      style={[
+                        styles.paginationButtonText,
+                        !activeSalesData.pagination.hasPreviousPage &&
+                          styles.paginationButtonTextDisabled,
+                      ]}
+                    >
+                      ← Anterior
+                    </Text>
+                  </TouchableOpacity>
+
+                  <View style={styles.paginationInfo}>
+                    <Text style={styles.paginationText}>
+                      Página {activeSalesData.pagination.page} de{' '}
+                      {activeSalesData.pagination.totalPages}
+                    </Text>
+                    <Text style={styles.paginationSubtext}>
+                      ({activeSalesData.pagination.totalSales} ventas totales)
+                    </Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.paginationButton,
+                      !activeSalesData.pagination.hasNextPage && styles.paginationButtonDisabled,
+                    ]}
+                    onPress={() => handleLoadRecentSales(currentPage + 1)}
+                    disabled={!activeSalesData.pagination.hasNextPage || loadingSales}
+                  >
+                    <Text
+                      style={[
+                        styles.paginationButtonText,
+                        !activeSalesData.pagination.hasNextPage &&
+                          styles.paginationButtonTextDisabled,
+                      ]}
+                    >
+                      Siguiente →
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
 
             <TouchableOpacity
               style={styles.closeModalButton}
@@ -3273,6 +3341,52 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  // Pagination Styles
+  paginationContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  paginationButton: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    minWidth: 120,
+    alignItems: 'center',
+  },
+  paginationButtonDisabled: {
+    backgroundColor: '#CCCCCC',
+    opacity: 0.6,
+  },
+  paginationButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  paginationButtonTextDisabled: {
+    color: '#999999',
+  },
+  paginationInfo: {
+    alignItems: 'center',
+    flex: 1,
+    marginHorizontal: 16,
+  },
+  paginationText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333333',
+    marginBottom: 4,
+  },
+  paginationSubtext: {
+    fontSize: 14,
+    color: '#666666',
   },
   // Success Modal Styles
   successModalContent: {

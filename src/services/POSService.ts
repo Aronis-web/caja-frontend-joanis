@@ -173,8 +173,14 @@ class POSService {
     return this.request<Sale[]>(`/pos/sales?sessionId=${sessionId}&limit=${limit}`);
   }
 
-  async getActiveSales(cashRegisterId: string): Promise<ActiveSalesResponse> {
-    return this.request<ActiveSalesResponse>(`/pos/sessions/active-sales/${cashRegisterId}`);
+  async getActiveSales(
+    cashRegisterId: string,
+    page: number = 1,
+    limit: number = 20
+  ): Promise<ActiveSalesResponse> {
+    return this.request<ActiveSalesResponse>(
+      `/pos/sessions/active-sales/${cashRegisterId}?page=${page}&limit=${limit}`
+    );
   }
 
   async downloadSalePDF(saleId: string, documentId: string): Promise<Blob> {

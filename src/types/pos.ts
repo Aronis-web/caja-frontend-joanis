@@ -345,6 +345,14 @@ export interface ActiveSalesResponse {
       };
     };
   };
+  pagination: {
+    page: number;
+    limit: number;
+    totalSales: number;
+    totalPages: number;
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+  };
   sales: ActiveSaleData[];
 }
 
