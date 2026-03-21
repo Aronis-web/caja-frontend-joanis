@@ -178,8 +178,12 @@ class POSService {
     page: number = 1,
     limit: number = 20
   ): Promise<ActiveSalesResponse> {
+    // Validar y sanitizar parámetros
+    const validPage = Math.max(1, Math.floor(Number(page) || 1));
+    const validLimit = Math.max(1, Math.min(100, Math.floor(Number(limit) || 20)));
+
     return this.request<ActiveSalesResponse>(
-      `/pos/sessions/active-sales/${cashRegisterId}?page=${page}&limit=${limit}`
+      `/pos/sessions/active-sales/${cashRegisterId}?page=${validPage}&limit=${validLimit}`
     );
   }
 
