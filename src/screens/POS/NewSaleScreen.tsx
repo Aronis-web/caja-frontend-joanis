@@ -389,16 +389,20 @@ export default function NewSaleScreen() {
   const handleLoadRecentSales = async (page: number = 1) => {
     if (!selectedCashRegister) return;
 
+    // Validar que la página sea válida (mínimo 1)
+    const validPage = Math.max(1, Math.floor(page));
+
     try {
       setLoadingSales(true);
       console.log('📊 [VENTAS] Cargando ventas de la sesión...');
       console.log('📊 [VENTAS] Cash Register ID:', selectedCashRegister.id);
-      console.log('📊 [VENTAS] Página:', page);
+      console.log('📊 [VENTAS] Página solicitada:', page);
+      console.log('📊 [VENTAS] Página validada:', validPage);
       console.log('📊 [VENTAS] Límite por página:', salesPerPage);
 
       const salesData = await posService.getActiveSales(
         selectedCashRegister.id,
-        page,
+        validPage,
         salesPerPage
       );
 
@@ -421,7 +425,7 @@ export default function NewSaleScreen() {
       }
 
       setActiveSalesData(salesData);
-      setCurrentPage(page);
+      setCurrentPage(validPage);
       setShowRecentSales(true);
     } catch (error) {
       console.error('❌ [VENTAS] Error loading active sales:', error);
