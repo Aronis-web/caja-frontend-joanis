@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -25,12 +25,22 @@ export const LoginScreen: React.FC<LoginScreenProps> = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+  const [loginAttempted, setLoginAttempted] = useState(false);
   const { width, height } = useWindowDimensions();
 
   const { loginWithCredentials, isLoading, error } = useAuthStore();
 
   const isTablet = width >= 768 || height >= 768;
   const isLandscape = width > height;
+
+  // Mostrar error cuando cambie después de un intento de login
+  useEffect(() => {
+    if (loginAttempted && error && !isLoading) {
+      console.log('❌ Mostrando error en pantalla:', error);
+      Alert.alert('Error de inicio de sesión', error);
+      setLoginAttempted(false);
+    }
+  }, [error, isLoading, loginAttempted]);
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -39,19 +49,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = () => {
     }
 
     console.log('🔑 Iniciando proceso de login...');
+    setLoginAttempted(true);
     const success = await loginWithCredentials(email, password, rememberMe);
 
-    if (!success) {
-      console.log('❌ Login falló, mostrando error:', error);
-      // El error ya está en el estado, mostrarlo
-      Alert.alert(
-        'Error de inicio de sesión',
-        error || 'No se pudo iniciar sesión. Por favor, intenta nuevamente.'
-      );
-      return;
+    if (success) {
+      console.log('✅ Login exitoso');
+      setLoginAttempted(false);
     }
-
-    console.log('✅ Login exitoso');
   };
 
   return (
