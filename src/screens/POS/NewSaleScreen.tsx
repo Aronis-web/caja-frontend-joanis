@@ -1530,18 +1530,6 @@ export default function NewSaleScreen() {
                   <Text style={styles.summaryLabel}>Total de ventas:</Text>
                   <Text style={styles.summaryValue}>{activeSalesData.summary.totalSalesCount}</Text>
                 </View>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Monto total:</Text>
-                  <Text style={styles.summaryValue}>
-                    {formatCurrency(activeSalesData.summary.totalSales)}
-                  </Text>
-                </View>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Pagos recibidos:</Text>
-                  <Text style={styles.summaryValue}>
-                    {formatCurrency(activeSalesData.summary.totalPayments)}
-                  </Text>
-                </View>
               </View>
             )}
 
