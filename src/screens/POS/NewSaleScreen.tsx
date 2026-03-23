@@ -19,6 +19,7 @@ import {
   Platform,
   Linking,
   Keyboard,
+  useWindowDimensions,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { usePOSStore } from '@/store/pos';
@@ -28,6 +29,7 @@ import { ROUTES } from '@/constants/routes';
 
 export default function NewSaleScreen() {
   const navigation = useNavigation();
+  const { width: windowWidth } = useWindowDimensions();
   const {
     selectedCashRegister,
     currentSession,
@@ -803,6 +805,21 @@ export default function NewSaleScreen() {
 
   const formatCurrency = (amount: number) => `S/ ${amount.toFixed(2)}`;
 
+  // Calcular ancho del panel derecho (carrito) de forma proporcional
+  // En pantallas grandes (>1200px): 35% del ancho
+  // En pantallas medianas (800-1200px): 40% del ancho
+  // En pantallas pequeñas (<800px): 45% del ancho
+  // Mínimo: 320px, Máximo: 650px
+  const getRightPanelWidth = () => {
+    if (windowWidth > 1200) {
+      return Math.min(Math.max(windowWidth * 0.35, 320), 650);
+    } else if (windowWidth > 800) {
+      return Math.min(Math.max(windowWidth * 0.4, 320), 650);
+    } else {
+      return Math.min(Math.max(windowWidth * 0.45, 320), 650);
+    }
+  };
+
   const renderProductItem = ({ item }: { item: Product }) => (
     <TouchableOpacity style={styles.productItem} onPress={() => handleAddProduct(item)}>
       {item.imageUrl ? (
@@ -976,7 +993,7 @@ export default function NewSaleScreen() {
         </View>
 
         {/* Right Panel - Cart */}
-        <View style={styles.rightPanel}>
+        <View style={[styles.rightPanel, { width: getRightPanelWidth() }]}>
           {/* Customer Search with Autocomplete */}
           <View style={styles.customerSearchContainer}>
             <View style={styles.customerSearchHeader}>
@@ -2251,7 +2268,6 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   rightPanel: {
-    width: 650,
     backgroundColor: '#FFFFFF',
     borderLeftWidth: 1,
     borderLeftColor: '#E0E0E0',
