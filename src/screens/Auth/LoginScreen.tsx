@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  Alert,
   useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,7 +24,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
-  const [loginAttempted, setLoginAttempted] = useState(false);
   const { width, height } = useWindowDimensions();
 
   const { loginWithCredentials, isLoading, error } = useAuthStore();
@@ -33,29 +31,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = () => {
   const isTablet = width >= 768 || height >= 768;
   const isLandscape = width > height;
 
-  // Mostrar error cuando cambie después de un intento de login
-  useEffect(() => {
-    if (loginAttempted && error && !isLoading) {
-      console.log('❌ Mostrando error en pantalla:', error);
-      Alert.alert('Error de inicio de sesión', error);
-      setLoginAttempted(false);
-    }
-  }, [error, isLoading, loginAttempted]);
-
   const handleLogin = async () => {
     if (!email || !password) {
-      Alert.alert('Error', 'Por favor completa todos los campos');
       return;
     }
 
     console.log('🔑 Iniciando proceso de login...');
-    setLoginAttempted(true);
-    const success = await loginWithCredentials(email, password, rememberMe);
-
-    if (success) {
-      console.log('✅ Login exitoso');
-      setLoginAttempted(false);
-    }
+    await loginWithCredentials(email, password, rememberMe);
   };
 
   return (
@@ -235,6 +217,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = () => {
                 )}
               </View>
             </TouchableOpacity>
+
+            {error && !isLoading && (
+              <View style={styles.errorContainer}>
+                <Ionicons name="alert-circle" size={20} color="#EF4444" />
+                <Text style={[styles.errorText, isTablet && styles.errorTextTablet]}>{error}</Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.footer}>
@@ -444,6 +433,26 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  errorText: {
+    color: '#DC2626',
+    fontSize: 14,
+    fontWeight: '500',
+    marginLeft: 8,
+    flex: 1,
+  },
+  errorTextTablet: {
+    fontSize: 16,
   },
   footer: {
     alignItems: 'center',
