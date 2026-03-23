@@ -14,9 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/store/auth';
-
-// Importar versión desde package.json
-const packageJson = require('../../../package.json');
+import packageJson from '../../../package.json';
 
 interface LoginScreenProps {
   navigation?: any;
@@ -40,21 +38,20 @@ export const LoginScreen: React.FC<LoginScreenProps> = () => {
       return;
     }
 
-    try {
-      console.log('🔑 Iniciando proceso de login...');
-      const success = await loginWithCredentials(email, password, rememberMe);
+    console.log('🔑 Iniciando proceso de login...');
+    const success = await loginWithCredentials(email, password, rememberMe);
 
-      if (!success) {
-        console.log('❌ Login falló');
-        Alert.alert('Error', error || 'Credenciales incorrectas');
-        return;
-      }
-
-      console.log('✅ Login exitoso');
-    } catch (error) {
-      console.error('❌ Error en handleLogin:', error);
-      Alert.alert('Error', 'No se pudo conectar al servidor');
+    if (!success) {
+      console.log('❌ Login falló, mostrando error:', error);
+      // El error ya está en el estado, mostrarlo
+      Alert.alert(
+        'Error de inicio de sesión',
+        error || 'No se pudo iniciar sesión. Por favor, intenta nuevamente.'
+      );
+      return;
     }
+
+    console.log('✅ Login exitoso');
   };
 
   return (

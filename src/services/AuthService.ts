@@ -69,7 +69,14 @@ class AuthService {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw this.createAuthError(response.status, errorData.message || 'Login failed');
+        const errorMessage = errorData.message || 'Error al iniciar sesión';
+
+        // Mensajes específicos según el código de estado
+        if (response.status === 401 || response.status === 400) {
+          throw this.createAuthError(response.status, 'Credenciales incorrectas');
+        }
+
+        throw this.createAuthError(response.status, errorMessage);
       }
 
       const data: LoginResponse = await response.json();

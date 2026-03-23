@@ -110,7 +110,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       console.log('📡 Respuesta recibida del servidor');
 
       if (!response.user || !response.user.id) {
-        throw new Error('Invalid user data received from server');
+        const errorMsg = 'Datos de usuario inválidos recibidos del servidor';
+        set({ error: errorMsg, isLoading: false });
+        throw new Error(errorMsg);
       }
 
       if (!response.user.permissions) {
@@ -175,8 +177,27 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       return true;
     } catch (_error) {
-      const errorMessage = _error instanceof Error ? _error.message : 'Login failed';
-      console.error('Login error:', errorMessage);
+      let errorMessage = 'Error al iniciar sesión';
+
+      // Manejar diferentes tipos de errores
+      if (_error instanceof Error) {
+        if (_error.message.includes('Network error')) {
+          errorMessage = 'No se pudo conectar al servidor. Verifica tu conexión.';
+        } else if (_error.message.includes('Timeout')) {
+          errorMessage = 'El servidor tardó demasiado en responder. Intenta nuevamente.';
+        } else if (
+          _error.message.includes('Credenciales incorrectas') ||
+          _error.message.includes('Invalid credentials')
+        ) {
+          errorMessage = 'Correo o contraseña incorrectos';
+        } else if (_error.message.includes('Datos de usuario inválidos')) {
+          errorMessage = _error.message;
+        } else {
+          errorMessage = _error.message;
+        }
+      }
+
+      console.error('❌ Login error:', errorMessage);
       set({ error: errorMessage, isLoading: false });
       return false;
     }
