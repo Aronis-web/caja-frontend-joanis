@@ -26,7 +26,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = () => {
   const [rememberMe, setRememberMe] = useState(false);
   const { width, height } = useWindowDimensions();
 
-  const { loginWithCredentials, isLoading, error } = useAuthStore();
+  const { loginWithCredentials, isLoading, error, clearError } = useAuthStore();
 
   const isTablet = width >= 768 || height >= 768;
   const isLandscape = width > height;
@@ -38,6 +38,17 @@ export const LoginScreen: React.FC<LoginScreenProps> = () => {
 
     console.log('🔑 Iniciando proceso de login...');
     await loginWithCredentials(email, password, rememberMe);
+  };
+
+  // Limpiar error cuando el usuario empiece a escribir
+  const handleEmailChange = (text: string) => {
+    setEmail(text);
+    if (error) clearError();
+  };
+
+  const handlePasswordChange = (text: string) => {
+    setPassword(text);
+    if (error) clearError();
   };
 
   return (
@@ -126,7 +137,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = () => {
                   placeholder="correo@empresa.com"
                   placeholderTextColor="#94A3B8"
                   value={email}
-                  onChangeText={setEmail}
+                  onChangeText={handleEmailChange}
                   keyboardType="email-address"
                   autoCapitalize="none"
                   autoCorrect={false}
@@ -155,7 +166,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = () => {
                   placeholder="Ingresa tu contraseña"
                   placeholderTextColor="#94A3B8"
                   value={password}
-                  onChangeText={setPassword}
+                  onChangeText={handlePasswordChange}
                   secureTextEntry={!showPassword}
                   autoCorrect={false}
                 />

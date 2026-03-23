@@ -29,6 +29,7 @@ interface AuthState extends PermissionCheck {
   logout: () => Promise<void>;
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
+  clearError: () => void;
   initAuth: () => Promise<void>;
   refreshAccessToken: () => Promise<boolean>;
   clearInvalidAuth: (showSessionExpiredMessage?: boolean) => Promise<void>;
@@ -219,6 +220,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   setLoading: (isLoading) => set({ isLoading }),
 
   setError: (error) => set({ error }),
+
+  clearError: () => set({ error: null }),
 
   initAuth: async () => {
     try {
