@@ -64,9 +64,11 @@ export default function POSDashboardScreen() {
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [updateReady, setUpdateReady] = useState(false);
 
-  // Verificar si estamos en Electron
+  // Verificar si estamos en Electron (o web en general para mostrar el botón)
   const isElectron =
-    Platform.OS === 'web' && typeof window !== 'undefined' && window.electronAPI?.isElectron;
+    Platform.OS === 'web' &&
+    typeof window !== 'undefined' &&
+    (window.electronAPI?.isElectron || window.electronAPI !== undefined);
 
   // Cargar versión actual
   useEffect(() => {
