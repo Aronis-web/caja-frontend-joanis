@@ -5,18 +5,21 @@
 
 // ============ PRODUCTOS OFFLINE ============
 
+export type TaxType = 'GRAVADO' | 'EXONERADO' | 'INAFECTO' | 'gravado' | 'exonerado' | 'inafecto';
+
 export interface OfflineProduct {
   id: string;
-  sku: string;
-  barcode: string;
+  sku: string | null;
+  barcode: string | null;
   name: string;
-  categoryName: string;
+  categoryName: string | null;
   salePriceCents: number;
-  taxType: 'GRAVADO' | 'EXONERADO' | 'INAFECTO';
+  taxType: TaxType;
   serverStock: number; // Stock según última sincronización
   localStock: number; // Stock ajustado por ventas locales
-  unitOfMeasure: string;
-  imageUrl?: string;
+  unitOfMeasure: string | null;
+  codigoAfectacionIgv?: string; // Código SUNAT de afectación IGV (10, 20, 30, etc.)
+  imageUrl?: string | null;
   syncId: string;
   updatedAt: string;
 }
@@ -99,8 +102,27 @@ export interface SyncMetadata {
 
 // ============ RESPUESTAS DEL SERVIDOR ============
 
+/**
+ * Producto tal como viene del backend (puede tener campos diferentes)
+ */
+export interface ApiProduct {
+  id: string;
+  sku?: string;
+  barcode?: string;
+  title?: string; // Backend usa "title" en lugar de "name"
+  name?: string;
+  categoryName?: string;
+  salePriceCents: number;
+  taxType?: string;
+  availableStock?: number; // Backend usa "availableStock" en lugar de "serverStock"
+  serverStock?: number;
+  unitOfMeasure?: string;
+  codigoAfectacionIgv?: string;
+  imageUrl?: string | null;
+}
+
 export interface OfflineCatalogResponse {
-  products: OfflineProduct[];
+  products: ApiProduct[];
   syncMetadata: {
     syncId: string;
     syncTimestamp: string;
@@ -111,15 +133,23 @@ export interface OfflineCatalogResponse {
     checksum: string;
     expiresAt: string;
   };
-  tokenPool: {
+  tokenPool?: {
     tokens: PreGeneratedToken[];
     poolId: string;
     expiresAt: string;
     replenishThreshold: number;
+    totalTokens?: number;
   };
-  nextSync: {
+  nextSync?: {
     recommendedMs: number;
     minMs: number;
+    reason?: string;
+  };
+  companyInfo?: {
+    ruc: string;
+    razonSocial: string;
+    nombreComercial?: string;
+    direccion: string;
   };
 }
 

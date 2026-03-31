@@ -199,6 +199,12 @@ class OfflineSyncService {
 
       console.log(`📦 [SYNC] Procesando ${response.products.length} productos...`);
 
+      // Guardar companyInfo si viene en la respuesta
+      if (response.companyInfo) {
+        localStorage.setItem('@offline:company_info', JSON.stringify(response.companyInfo));
+        console.log(`🏢 [SYNC] Información de empresa guardada: ${response.companyInfo.razonSocial}`);
+      }
+
       // Mapear productos al formato local con validación
       // El backend envía "title" en lugar de "name" y "availableStock" en lugar de "serverStock"
       const products: OfflineProduct[] = response.products.map((p: any, index) => {
@@ -206,6 +212,12 @@ class OfflineSyncService {
         const productName = p.title || p.name;
         // Obtener stock (puede venir como "availableStock" o "serverStock")
         const stock = p.availableStock ?? p.serverStock ?? 0;
+        // Normalizar taxType a mayúsculas para consistencia interna
+        const rawTaxType = p.taxType || 'gravado';
+        const normalizedTaxType = rawTaxType.toUpperCase() as
+          | 'GRAVADO'
+          | 'EXONERADO'
+          | 'INAFECTO';
 
         // Validar campos requeridos
         if (!p.id) {
@@ -222,10 +234,11 @@ class OfflineSyncService {
           name: productName || 'Sin nombre',
           categoryName: p.categoryName || null,
           salePriceCents: p.salePriceCents || 0,
-          taxType: p.taxType || 'GRAVADO',
+          taxType: normalizedTaxType,
           serverStock: stock,
           localStock: p.localStock ?? stock,
           unitOfMeasure: p.unitOfMeasure || null,
+          codigoAfectacionIgv: p.codigoAfectacionIgv || null,
           imageUrl: p.imageUrl || null,
           syncId: response.syncMetadata.syncId,
           updatedAt: new Date().toISOString(),

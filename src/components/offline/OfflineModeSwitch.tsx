@@ -69,26 +69,27 @@ export default function OfflineModeSwitch({
 
   // Vista mini para el header - muy discreta
   if (mini) {
-    // Si está online, mostrar solo un pequeño indicador verde
-    if (isOnline) {
-      return (
-        <View style={styles.miniContainer}>
-          <View style={[styles.miniDot, styles.miniDotOnline]} />
-        </View>
-      );
-    }
+    // TODO: MODO PRUEBAS - Siempre mostrar el switch completo
+    // // Si está online, mostrar solo un pequeño indicador verde
+    // if (isOnline) {
+    //   return (
+    //     <View style={styles.miniContainer}>
+    //       <View style={[styles.miniDot, styles.miniDotOnline]} />
+    //     </View>
+    //   );
+    // }
 
-    // Si está offline pero aún en período de gracia (2 min), mostrar indicador amarillo de espera
-    if (!showOfflineSwitch) {
-      return (
-        <View style={[styles.miniContainer, styles.miniContainerWaiting]}>
-          <View style={[styles.miniDot, styles.miniDotWaiting]} />
-          <Text style={styles.miniWaitingText}>⏳</Text>
-        </View>
-      );
-    }
+    // // Si está offline pero aún en período de gracia (2 min), mostrar indicador amarillo de espera
+    // if (!showOfflineSwitch) {
+    //   return (
+    //     <View style={[styles.miniContainer, styles.miniContainerWaiting]}>
+    //       <View style={[styles.miniDot, styles.miniDotWaiting]} />
+    //       <Text style={styles.miniWaitingText}>⏳</Text>
+    //     </View>
+    //   );
+    // }
 
-    // Si está offline y pasó el período de gracia, mostrar switch pequeño
+    // Siempre mostrar switch para pruebas
     return (
       <TouchableOpacity
         style={[
@@ -100,12 +101,11 @@ export default function OfflineModeSwitch({
         disabled={false} // TODO: MODO PRUEBAS - Sin restricciones
         activeOpacity={0.7}
       >
-        <View style={[styles.miniDot, styles.miniDotOffline]} />
+        <View style={[styles.miniDot, isOnline ? styles.miniDotOnline : styles.miniDotOffline]} />
         <View
           style={[
             styles.miniSwitch,
             isOfflineModeEnabled && styles.miniSwitchOn,
-            !canEnable && !isOfflineModeEnabled && styles.miniSwitchDisabled,
           ]}
         >
           <View style={[styles.miniThumb, isOfflineModeEnabled && styles.miniThumbOn]} />

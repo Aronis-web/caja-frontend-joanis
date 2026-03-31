@@ -144,6 +144,7 @@ class OfflineDatabaseService {
         serverStock INTEGER DEFAULT 0,
         localStock INTEGER DEFAULT 0,
         unitOfMeasure TEXT,
+        codigoAfectacionIgv TEXT,
         imageUrl TEXT,
         syncId TEXT,
         updatedAt TEXT
@@ -279,8 +280,8 @@ class OfflineDatabaseService {
 
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO products
-      (id, sku, barcode, name, categoryName, salePriceCents, taxType, serverStock, localStock, unitOfMeasure, imageUrl, syncId, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, sku, barcode, name, categoryName, salePriceCents, taxType, serverStock, localStock, unitOfMeasure, codigoAfectacionIgv, imageUrl, syncId, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     for (const product of products) {
@@ -295,6 +296,7 @@ class OfflineDatabaseService {
         product.serverStock,
         product.localStock || product.serverStock,
         product.unitOfMeasure,
+        product.codigoAfectacionIgv || null,
         product.imageUrl || null,
         syncId,
         new Date().toISOString(),
