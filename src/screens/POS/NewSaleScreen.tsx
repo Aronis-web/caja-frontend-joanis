@@ -2268,6 +2268,9 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   rightPanel: {
+    flex: 0.4,
+    minWidth: 320,
+    maxWidth: 650,
     backgroundColor: '#FFFFFF',
     borderLeftWidth: 1,
     borderLeftColor: '#E0E0E0',
