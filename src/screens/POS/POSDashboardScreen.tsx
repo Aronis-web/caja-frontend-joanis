@@ -272,18 +272,30 @@ export default function POSDashboardScreen() {
         visible={updateModalVisible}
         transparent={true}
         animationType="fade"
-        onRequestClose={() => setUpdateModalVisible(false)}
+        onRequestClose={() => {
+          // No permitir cerrar si está descargando o la actualización está lista
+          if (!downloading && !updateReady) {
+            setUpdateModalVisible(false);
+          }
+        }}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>⚙️ Actualización de Software</Text>
-              <TouchableOpacity
-                style={styles.modalCloseButton}
-                onPress={() => setUpdateModalVisible(false)}
-              >
-                <Text style={styles.modalCloseText}>✕</Text>
-              </TouchableOpacity>
+              {/* Solo mostrar botón de cerrar si no está descargando ni la actualización está lista */}
+              {!downloading && !updateReady ? (
+                <TouchableOpacity
+                  style={styles.modalCloseButton}
+                  onPress={() => setUpdateModalVisible(false)}
+                >
+                  <Text style={styles.modalCloseText}>✕</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.modalCloseButtonDisabled}>
+                  <Text style={styles.modalCloseTextDisabled}>✕</Text>
+                </View>
+              )}
             </View>
 
             <View style={styles.modalBody}>
@@ -332,7 +344,13 @@ export default function POSDashboardScreen() {
               {/* Progreso de descarga */}
               {downloading && (
                 <View style={styles.downloadProgressContainer}>
-                  <Text style={styles.downloadingText}>Descargando actualización...</Text>
+                  <View style={styles.downloadingHeader}>
+                    <ActivityIndicator size="small" color="#4CAF50" />
+                    <Text style={styles.downloadingTitle}>Descargando actualización</Text>
+                  </View>
+                  <Text style={styles.downloadingSubtext}>
+                    Por favor espere, no cierre la aplicación...
+                  </Text>
                   <View style={styles.progressBarContainer}>
                     <View style={[styles.progressBar, { width: `${downloadProgress}%` }]} />
                   </View>
@@ -344,9 +362,12 @@ export default function POSDashboardScreen() {
               {updateReady && (
                 <View style={styles.updateReadyContainer}>
                   <Text style={styles.updateReadyIcon}>✅</Text>
-                  <Text style={styles.updateReadyText}>
-                    Actualización descargada y lista para instalar
-                  </Text>
+                  <View style={styles.updateReadyTextContainer}>
+                    <Text style={styles.updateReadyTitle}>¡Actualización lista!</Text>
+                    <Text style={styles.updateReadyText}>
+                      La descarga se completó correctamente. Reinicie para aplicar los cambios.
+                    </Text>
+                  </View>
                 </View>
               )}
             </View>
@@ -376,10 +397,10 @@ export default function POSDashboardScreen() {
 
               {updateReady && (
                 <TouchableOpacity
-                  style={[styles.modalButton, styles.installButton]}
+                  style={[styles.modalButton, styles.restartButton]}
                   onPress={handleInstallUpdate}
                 >
-                  <Text style={styles.modalButtonText}>🚀 Instalar y Reiniciar</Text>
+                  <Text style={styles.restartButtonText}>🔄 Reiniciar para Ver los Cambios</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -711,6 +732,19 @@ const styles = StyleSheet.create({
     color: '#666',
     fontWeight: '600',
   },
+  modalCloseButtonDisabled: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#E0E0E0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCloseTextDisabled: {
+    fontSize: 16,
+    color: '#BDBDBD',
+    fontWeight: '600',
+  },
   modalBody: {
     padding: 20,
   },
@@ -806,15 +840,29 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   downloadProgressContainer: {
-    padding: 16,
-    backgroundColor: '#F5F5F5',
-    borderRadius: 8,
+    padding: 20,
+    backgroundColor: '#E8F5E9',
+    borderRadius: 12,
     alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#4CAF50',
   },
-  downloadingText: {
-    fontSize: 14,
+  downloadingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+  },
+  downloadingTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#2E7D32',
+  },
+  downloadingSubtext: {
+    fontSize: 13,
     color: '#666',
-    marginBottom: 12,
+    marginBottom: 16,
+    textAlign: 'center',
   },
   progressBarContainer: {
     width: '100%',
@@ -835,20 +883,31 @@ const styles = StyleSheet.create({
   },
   updateReadyContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 12,
-    padding: 16,
+    padding: 20,
     backgroundColor: '#E8F5E9',
-    borderRadius: 8,
+    borderRadius: 12,
     marginTop: 8,
+    borderWidth: 2,
+    borderColor: '#4CAF50',
   },
   updateReadyIcon: {
-    fontSize: 24,
+    fontSize: 32,
+  },
+  updateReadyTextContainer: {
+    flex: 1,
+  },
+  updateReadyTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#2E7D32',
+    marginBottom: 4,
   },
   updateReadyText: {
-    fontSize: 14,
-    color: '#2E7D32',
-    flex: 1,
+    fontSize: 13,
+    color: '#558B2F',
+    lineHeight: 18,
   },
   modalActions: {
     padding: 16,
@@ -868,6 +927,16 @@ const styles = StyleSheet.create({
   },
   installButton: {
     backgroundColor: '#FF9800',
+  },
+  restartButton: {
+    backgroundColor: '#4CAF50',
+    paddingVertical: 18,
+    borderRadius: 12,
+  },
+  restartButtonText: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: 'bold',
   },
   modalButtonText: {
     color: '#FFFFFF',
