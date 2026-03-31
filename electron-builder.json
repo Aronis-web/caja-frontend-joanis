@@ -6,6 +6,7 @@
   },
   "files": [
     "electron.js",
+    "preload.js",
     "package.json",
     "index.js",
     "node_modules/**/*",
