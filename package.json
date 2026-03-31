@@ -21,8 +21,8 @@
     "electron:export": "expo export --platform web --output-dir web-build && node node_modules/electron/cli.js electron.js",
     "electron:build": "expo export --platform web --output-dir web-build && node fix-html.js && electron-builder build --win --x64 && node copy-assets.js",
     "dist": "npm run electron:build",
-    "publish": "npm run electron:build -- --publish always",
-    "publish:draft": "npm run electron:build -- --publish onTagOrDraft"
+    "publish": "expo export --platform web --output-dir web-build && node fix-html.js && electron-builder build --win --x64 --publish always && node copy-assets.js",
+    "publish:draft": "expo export --platform web --output-dir web-build && node fix-html.js && electron-builder build --win --x64 --publish onTagOrDraft && node copy-assets.js"
   },
   "dependencies": {
     "@expo-google-fonts/baloo-2": "^0.4.2",
