@@ -14,6 +14,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Función para imprimir PDF
   printPDF: (base64Data, filename) => {
     return ipcRenderer.invoke('print-pdf', { base64Data, filename });
+  },
+  // Funciones para actualizaciones
+  getAppVersion: () => {
+    return ipcRenderer.invoke('get-app-version');
+  },
+  checkForUpdates: () => {
+    return ipcRenderer.invoke('check-for-updates');
+  },
+  downloadUpdate: () => {
+    return ipcRenderer.invoke('download-update');
+  },
+  installUpdate: () => {
+    return ipcRenderer.invoke('install-update');
+  },
+  // Escuchar eventos de actualización
+  onUpdateStatus: (callback) => {
+    ipcRenderer.on('update-status', (event, status) => callback(status));
+  },
+  onDownloadProgress: (callback) => {
+    ipcRenderer.on('download-progress', (event, progress) => callback(progress));
   }
 });
 

@@ -3,7 +3,7 @@
  * Main POS interface showing session status and action buttons
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,11 +12,40 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  Modal,
+  Platform,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useAuthStore } from '@/store/auth';
 import { usePOSStore } from '@/store/pos';
 import { ROUTES } from '@/constants/routes';
+
+// Tipos para la API de Electron
+interface UpdateInfo {
+  updateAvailable: boolean;
+  currentVersion: string;
+  latestVersion?: string;
+  releaseDate?: string;
+  updateDownloaded?: boolean;
+  message?: string;
+  error?: string;
+}
+
+interface ElectronAPI {
+  isElectron: boolean;
+  getAppVersion: () => Promise<{ version: string; name: string }>;
+  checkForUpdates: () => Promise<UpdateInfo>;
+  downloadUpdate: () => Promise<{ success: boolean; message?: string; error?: string }>;
+  installUpdate: () => Promise<{ success: boolean; message?: string }>;
+  onUpdateStatus: (callback: (status: { status: string; version: string }) => void) => void;
+  onDownloadProgress: (callback: (progress: { percent: number }) => void) => void;
+}
+
+declare global {
+  interface Window {
+    electronAPI?: ElectronAPI;
+  }
+}
 
 export default function POSDashboardScreen() {
   const navigation = useNavigation();
@@ -25,6 +54,93 @@ export default function POSDashboardScreen() {
     usePOSStore();
 
   const [refreshing, setRefreshing] = useState(false);
+
+  // Estados para el modal de actualizaciones
+  const [updateModalVisible, setUpdateModalVisible] = useState(false);
+  const [currentVersion, setCurrentVersion] = useState('...');
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [updateReady, setUpdateReady] = useState(false);
+
+  // Verificar si estamos en Electron
+  const isElectron =
+    Platform.OS === 'web' && typeof window !== 'undefined' && window.electronAPI?.isElectron;
+
+  // Cargar versión actual
+  useEffect(() => {
+    if (isElectron && window.electronAPI) {
+      window.electronAPI.getAppVersion().then((info) => {
+        setCurrentVersion(info.version);
+      });
+
+      // Escuchar eventos de actualización
+      window.electronAPI.onUpdateStatus((status) => {
+        if (status.status === 'downloaded') {
+          setUpdateReady(true);
+          setDownloading(false);
+        }
+      });
+
+      window.electronAPI.onDownloadProgress((progress) => {
+        setDownloadProgress(Math.round(progress.percent));
+      });
+    }
+  }, [isElectron]);
+
+  // Verificar actualizaciones
+  const handleCheckUpdates = useCallback(async () => {
+    if (!isElectron || !window.electronAPI) return;
+
+    setCheckingUpdate(true);
+    setUpdateInfo(null);
+
+    try {
+      const result = await window.electronAPI.checkForUpdates();
+      setUpdateInfo(result);
+      if (result.updateDownloaded) {
+        setUpdateReady(true);
+      }
+    } catch (error) {
+      console.error('Error checking updates:', error);
+      setUpdateInfo({
+        updateAvailable: false,
+        currentVersion: currentVersion,
+        error: 'Error al verificar actualizaciones',
+      });
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }, [isElectron, currentVersion]);
+
+  // Descargar actualización
+  const handleDownloadUpdate = useCallback(async () => {
+    if (!isElectron || !window.electronAPI) return;
+
+    setDownloading(true);
+    setDownloadProgress(0);
+
+    try {
+      await window.electronAPI.downloadUpdate();
+    } catch (error) {
+      console.error('Error downloading update:', error);
+      setDownloading(false);
+      Alert.alert('Error', 'No se pudo descargar la actualización');
+    }
+  }, [isElectron]);
+
+  // Instalar actualización
+  const handleInstallUpdate = useCallback(async () => {
+    if (!isElectron || !window.electronAPI) return;
+
+    try {
+      await window.electronAPI.installUpdate();
+    } catch (error) {
+      console.error('Error installing update:', error);
+      Alert.alert('Error', 'No se pudo instalar la actualización');
+    }
+  }, [isElectron]);
 
   console.log('📊 POSDashboardScreen renderizado');
   console.log('📊 selectedCashRegister:', selectedCashRegister?.name);
@@ -131,12 +247,143 @@ export default function POSDashboardScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>{selectedCashRegister?.name}</Text>
-        <View
-          style={[styles.statusBadge, currentSession ? styles.statusOpen : styles.statusClosed]}
-        >
-          <Text style={styles.statusText}>{currentSession ? 'ABIERTA' : 'CERRADA'}</Text>
+        <View style={styles.headerRight}>
+          {/* Botón de actualización - solo mostrar en Electron */}
+          {isElectron && (
+            <TouchableOpacity
+              style={styles.updateButton}
+              onPress={() => setUpdateModalVisible(true)}
+            >
+              <Text style={styles.updateButtonIcon}>⚙️</Text>
+            </TouchableOpacity>
+          )}
+          <View
+            style={[styles.statusBadge, currentSession ? styles.statusOpen : styles.statusClosed]}
+          >
+            <Text style={styles.statusText}>{currentSession ? 'ABIERTA' : 'CERRADA'}</Text>
+          </View>
         </View>
       </View>
+
+      {/* Modal de Actualizaciones */}
+      <Modal
+        visible={updateModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setUpdateModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>⚙️ Actualización de Software</Text>
+              <TouchableOpacity
+                style={styles.modalCloseButton}
+                onPress={() => setUpdateModalVisible(false)}
+              >
+                <Text style={styles.modalCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              {/* Versión actual */}
+              <View style={styles.versionRow}>
+                <Text style={styles.versionLabel}>Versión instalada:</Text>
+                <Text style={styles.versionValue}>v{currentVersion}</Text>
+              </View>
+
+              {/* Estado de verificación */}
+              {checkingUpdate && (
+                <View style={styles.statusRow}>
+                  <ActivityIndicator size="small" color="#007AFF" />
+                  <Text style={styles.statusText2}>Verificando actualizaciones...</Text>
+                </View>
+              )}
+
+              {/* Resultado de verificación */}
+              {updateInfo && !checkingUpdate && (
+                <View style={styles.updateResultContainer}>
+                  {updateInfo.error ? (
+                    <View style={styles.errorContainer}>
+                      <Text style={styles.errorIcon}>⚠️</Text>
+                      <Text style={styles.errorText}>{updateInfo.error}</Text>
+                    </View>
+                  ) : updateInfo.updateAvailable ? (
+                    <View style={styles.updateAvailableContainer}>
+                      <Text style={styles.updateAvailableIcon}>🎉</Text>
+                      <Text style={styles.updateAvailableTitle}>¡Nueva versión disponible!</Text>
+                      <Text style={styles.updateAvailableVersion}>v{updateInfo.latestVersion}</Text>
+                      {updateInfo.releaseDate && (
+                        <Text style={styles.updateDate}>
+                          Publicada: {new Date(updateInfo.releaseDate).toLocaleDateString('es-PE')}
+                        </Text>
+                      )}
+                    </View>
+                  ) : (
+                    <View style={styles.upToDateContainer}>
+                      <Text style={styles.upToDateIcon}>✅</Text>
+                      <Text style={styles.upToDateText}>Tienes la última versión instalada</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* Progreso de descarga */}
+              {downloading && (
+                <View style={styles.downloadProgressContainer}>
+                  <Text style={styles.downloadingText}>Descargando actualización...</Text>
+                  <View style={styles.progressBarContainer}>
+                    <View style={[styles.progressBar, { width: `${downloadProgress}%` }]} />
+                  </View>
+                  <Text style={styles.progressText}>{downloadProgress}%</Text>
+                </View>
+              )}
+
+              {/* Actualización lista */}
+              {updateReady && (
+                <View style={styles.updateReadyContainer}>
+                  <Text style={styles.updateReadyIcon}>✅</Text>
+                  <Text style={styles.updateReadyText}>
+                    Actualización descargada y lista para instalar
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {/* Botones de acción */}
+            <View style={styles.modalActions}>
+              {!downloading && !updateReady && (
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.checkButton]}
+                  onPress={handleCheckUpdates}
+                  disabled={checkingUpdate}
+                >
+                  <Text style={styles.modalButtonText}>
+                    {checkingUpdate ? 'Verificando...' : '🔍 Verificar Actualizaciones'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {updateInfo?.updateAvailable && !downloading && !updateReady && (
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.downloadButton]}
+                  onPress={handleDownloadUpdate}
+                >
+                  <Text style={styles.modalButtonText}>⬇️ Descargar Actualización</Text>
+                </TouchableOpacity>
+              )}
+
+              {updateReady && (
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.installButton]}
+                  onPress={handleInstallUpdate}
+                >
+                  <Text style={styles.modalButtonText}>🚀 Instalar y Reiniciar</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Session Info */}
       {currentSession ? (
@@ -272,6 +519,22 @@ const styles = StyleSheet.create({
     color: '#333',
     flex: 1,
   },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  updateButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F0F0F0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  updateButtonIcon: {
+    fontSize: 18,
+  },
   statusBadge: {
     paddingHorizontal: 16,
     paddingVertical: 6,
@@ -400,6 +663,213 @@ const styles = StyleSheet.create({
   actionButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
+    fontWeight: '600',
+  },
+  // Estilos del Modal de Actualizaciones
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    width: '90%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+  },
+  modalCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F0F0F0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCloseText: {
+    fontSize: 16,
+    color: '#666',
+    fontWeight: '600',
+  },
+  modalBody: {
+    padding: 20,
+  },
+  versionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  versionLabel: {
+    fontSize: 15,
+    color: '#666',
+  },
+  versionValue: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#007AFF',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 16,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+  },
+  statusText2: {
+    fontSize: 14,
+    color: '#666',
+  },
+  updateResultContainer: {
+    marginTop: 8,
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 16,
+    backgroundColor: '#FFF3CD',
+    borderRadius: 8,
+  },
+  errorIcon: {
+    fontSize: 24,
+  },
+  errorText: {
+    fontSize: 14,
+    color: '#856404',
+    flex: 1,
+  },
+  updateAvailableContainer: {
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#E8F5E9',
+    borderRadius: 8,
+  },
+  updateAvailableIcon: {
+    fontSize: 40,
+    marginBottom: 8,
+  },
+  updateAvailableTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#2E7D32',
+    marginBottom: 4,
+  },
+  updateAvailableVersion: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#1B5E20',
+  },
+  updateDate: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 8,
+  },
+  upToDateContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 16,
+    backgroundColor: '#E3F2FD',
+    borderRadius: 8,
+  },
+  upToDateIcon: {
+    fontSize: 24,
+  },
+  upToDateText: {
+    fontSize: 14,
+    color: '#1565C0',
+    flex: 1,
+  },
+  downloadProgressContainer: {
+    padding: 16,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  downloadingText: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 12,
+  },
+  progressBarContainer: {
+    width: '100%',
+    height: 8,
+    backgroundColor: '#E0E0E0',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressBar: {
+    height: '100%',
+    backgroundColor: '#4CAF50',
+  },
+  progressText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#4CAF50',
+    marginTop: 8,
+  },
+  updateReadyContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 16,
+    backgroundColor: '#E8F5E9',
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  updateReadyIcon: {
+    fontSize: 24,
+  },
+  updateReadyText: {
+    fontSize: 14,
+    color: '#2E7D32',
+    flex: 1,
+  },
+  modalActions: {
+    padding: 16,
+    paddingTop: 0,
+    gap: 10,
+  },
+  modalButton: {
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  checkButton: {
+    backgroundColor: '#007AFF',
+  },
+  downloadButton: {
+    backgroundColor: '#4CAF50',
+  },
+  installButton: {
+    backgroundColor: '#FF9800',
+  },
+  modalButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
     fontWeight: '600',
   },
 });

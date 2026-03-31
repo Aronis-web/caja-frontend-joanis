@@ -414,6 +414,92 @@ ipcMain.handle('print-pdf', async (event, { base64Data, filename }) => {
   }
 });
 
+// ===== HANDLERS IPC PARA ACTUALIZACIONES MANUALES =====
+
+// Variable para almacenar el estado de la actualización
+let updateInfo = null;
+let updateDownloaded = false;
+
+// Obtener versión de la app
+ipcMain.handle('get-app-version', async () => {
+  return {
+    version: app.getVersion(),
+    name: app.getName()
+  };
+});
+
+// Verificar actualizaciones manualmente
+ipcMain.handle('check-for-updates', async () => {
+  if (isDev) {
+    return {
+      updateAvailable: false,
+      currentVersion: app.getVersion(),
+      message: 'Las actualizaciones no están disponibles en modo desarrollo'
+    };
+  }
+
+  try {
+    console.log('[UPDATE] Verificando actualizaciones manualmente...');
+    const result = await autoUpdater.checkForUpdates();
+
+    if (result && result.updateInfo) {
+      updateInfo = result.updateInfo;
+      const currentVersion = app.getVersion();
+      const latestVersion = result.updateInfo.version;
+
+      // Comparar versiones
+      const updateAvailable = latestVersion !== currentVersion;
+
+      return {
+        updateAvailable,
+        currentVersion,
+        latestVersion,
+        releaseDate: result.updateInfo.releaseDate,
+        updateDownloaded
+      };
+    }
+
+    return {
+      updateAvailable: false,
+      currentVersion: app.getVersion(),
+      message: 'No se pudo obtener información de actualizaciones'
+    };
+  } catch (error) {
+    console.error('[UPDATE] Error al verificar actualizaciones:', error);
+    return {
+      updateAvailable: false,
+      currentVersion: app.getVersion(),
+      error: error.message
+    };
+  }
+});
+
+// Descargar actualización
+ipcMain.handle('download-update', async () => {
+  if (isDev) {
+    return { success: false, message: 'No disponible en modo desarrollo' };
+  }
+
+  try {
+    console.log('[UPDATE] Iniciando descarga de actualización...');
+    await autoUpdater.downloadUpdate();
+    return { success: true, message: 'Descarga iniciada' };
+  } catch (error) {
+    console.error('[UPDATE] Error al descargar:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Instalar actualización
+ipcMain.handle('install-update', async () => {
+  if (updateDownloaded) {
+    console.log('[UPDATE] Instalando actualización...');
+    autoUpdater.quitAndInstall(false, true);
+    return { success: true };
+  }
+  return { success: false, message: 'No hay actualización descargada' };
+});
+
 // ===== SISTEMA DE ACTUALIZACIONES AUTOMÁTICAS =====
 
 // Configurar eventos del auto-updater
@@ -429,6 +515,16 @@ function setupAutoUpdater() {
   // Cuando hay una actualización disponible
   autoUpdater.on('update-available', (info) => {
     console.log('Actualización disponible:', info.version);
+    updateInfo = info;
+
+    // Enviar evento al renderer
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('update-status', {
+        status: 'available',
+        version: info.version,
+        releaseDate: info.releaseDate
+      });
+    }
 
     dialog.showMessageBox(mainWindow, {
       type: 'info',
@@ -479,11 +575,30 @@ function setupAutoUpdater() {
   autoUpdater.on('download-progress', (progressObj) => {
     const percent = Math.round(progressObj.percent);
     console.log(`Descargando actualización: ${percent}%`);
+
+    // Enviar progreso al renderer
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('download-progress', {
+        percent,
+        bytesPerSecond: progressObj.bytesPerSecond,
+        transferred: progressObj.transferred,
+        total: progressObj.total
+      });
+    }
   });
 
   // Actualización descargada y lista para instalar
   autoUpdater.on('update-downloaded', (info) => {
     console.log('Actualización descargada:', info.version);
+    updateDownloaded = true;
+
+    // Enviar evento al renderer
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('update-status', {
+        status: 'downloaded',
+        version: info.version
+      });
+    }
 
     dialog.showMessageBox(mainWindow, {
       type: 'info',
