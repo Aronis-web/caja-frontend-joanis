@@ -14,9 +14,15 @@ config.transformer = {
 };
 
 // Configuración para resolver módulos correctamente
+// Excluir sql.js del bundling - se carga dinámicamente desde CDN en runtime
 config.resolver = {
   ...config.resolver,
   sourceExts: [...config.resolver.sourceExts, 'jsx', 'js', 'ts', 'tsx', 'json'],
+  // Bloquear sql.js para que no sea procesado por Metro (usa import.meta internamente)
+  blockList: [
+    ...(config.resolver.blockList || []),
+    /node_modules\/sql\.js\/.*/,
+  ],
 };
 
 // Deshabilitar el runtime de Metro para evitar import.meta

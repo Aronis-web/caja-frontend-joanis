@@ -27,6 +27,10 @@
       "from": "web-build",
       "to": "web-build",
       "filter": ["**/*"]
+    },
+    {
+      "from": "node_modules/sql.js/dist/sql-wasm.wasm",
+      "to": "sql-wasm.wasm"
     }
   ],
   "win": {

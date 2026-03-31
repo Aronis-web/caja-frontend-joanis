@@ -23,8 +23,12 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { usePOSStore } from '@/store/pos';
+import { useOfflineStore } from '@/store/offline';
 import { posService } from '@/services/POSService';
+import { networkMonitor } from '@/services/NetworkMonitor';
+import { OfflineModeSwitch } from '@/components/offline';
 import type { Product, Customer, CreateSaleResponse, ActiveSalesResponse } from '@/types/pos';
+import type { OfflineProduct, OfflineSaleItem, OfflineSalePayment } from '@/types/offline';
 import { ROUTES } from '@/constants/routes';
 
 export default function NewSaleScreen() {
@@ -55,6 +59,20 @@ export default function NewSaleScreen() {
     loadPaymentMethods,
     loadActiveSession,
   } = usePOSStore();
+
+  // Offline store
+  const {
+    isOfflineModeEnabled,
+    connectionStatus,
+    availableTokens,
+    pendingSales,
+    isInitialized: isOfflineInitialized,
+    initialize: initializeOffline,
+    searchProductsOffline,
+    getProductByBarcode: getProductByBarcodeOffline,
+    createOfflineSale,
+    setConnectionStatus,
+  } = useOfflineStore();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Product[]>([]);
@@ -118,9 +136,28 @@ export default function NewSaleScreen() {
       console.log('💳 Cargando métodos de pago...');
       await loadPaymentMethods();
 
+      // Initialize offline system
+      console.log('📴 Inicializando sistema offline...');
+      await initializeOffline();
+
       setIsInitializing(false);
     };
     initialize();
+  }, []);
+
+  // Initialize network monitor
+  useEffect(() => {
+    console.log('🌐 Iniciando monitor de red...');
+    networkMonitor.start();
+
+    const unsubscribe = networkMonitor.subscribe((isOnline) => {
+      setConnectionStatus(isOnline ? 'ONLINE' : 'OFFLINE');
+    });
+
+    return () => {
+      unsubscribe();
+      networkMonitor.stop();
+    };
   }, []);
 
   useEffect(() => {
@@ -189,6 +226,44 @@ export default function NewSaleScreen() {
       return;
     }
 
+    // Si está en modo offline, buscar en la base de datos local
+    if (isOfflineModeEnabled) {
+      console.log('📴 Buscando en modo OFFLINE...');
+      try {
+        setSearching(true);
+        const offlineResults = await searchProductsOffline(query, 20);
+        console.log('✅ Productos encontrados (offline):', offlineResults.length);
+
+        // Convertir OfflineProduct a Product para compatibilidad
+        const results: Product[] = offlineResults.map((p) => ({
+          id: p.id,
+          sku: p.sku,
+          barcode: p.barcode,
+          name: p.name,
+          code: p.sku || p.barcode,
+          categoryName: p.categoryName,
+          salePriceCents: p.salePriceCents,
+          price: p.salePriceCents / 100,
+          stock: p.localStock,
+          availableStock: p.localStock,
+          taxType: p.taxType,
+          taxRate: p.taxType === 'GRAVADO' ? 18 : 0,
+          imageUrl: p.imageUrl,
+          isActive: true,
+        }));
+
+        setSearchResults(results);
+      } catch (error) {
+        console.error('❌ Error buscando productos offline:', error);
+        Alert.alert('Error', 'Error al buscar productos en modo offline.');
+        setSearchResults([]);
+      } finally {
+        setSearching(false);
+      }
+      return;
+    }
+
+    // Modo online normal
     console.log('📋 currentSession:', currentSession);
     if (!currentSession) {
       console.error('❌ No hay sesión activa');
@@ -462,7 +537,88 @@ export default function NewSaleScreen() {
     console.log('📄 Tipo de documento:', documentType);
     console.log('🛒 Items en carrito:', cartItems.length);
     console.log('💳 Métodos de pago:', cartPayments.length);
+    console.log('📴 Modo offline:', isOfflineModeEnabled);
 
+    // ============ MODO OFFLINE ============
+    if (isOfflineModeEnabled) {
+      console.log('📴 Procesando venta en MODO OFFLINE...');
+
+      if (!selectedCashRegister || !currentSession) {
+        Alert.alert('Error', 'No hay sesión activa');
+        return;
+      }
+
+      try {
+        // Convertir items del carrito al formato offline
+        const offlineItems: OfflineSaleItem[] = cartItems.map((item) => ({
+          productId: item.productId,
+          productName: item.productName || '',
+          productCode: item.productCode || '',
+          quantity: item.quantity,
+          unitPriceCents: Math.round((item.unitPrice || 0) * 100),
+          discountCents: Math.round((item.discount || 0) * 100),
+          taxRate: item.taxRate || 0,
+        }));
+
+        // Convertir pagos al formato offline
+        const offlinePayments: OfflineSalePayment[] = cartPayments.map((payment) => ({
+          paymentMethodId: payment.paymentMethodId,
+          paymentMethodName: payment.paymentMethodName || '',
+          amountCents: Math.round(payment.amount * 100),
+        }));
+
+        // Crear venta offline
+        const offlineSale = await createOfflineSale({
+          items: offlineItems,
+          payments: offlinePayments,
+          customerId: selectedCustomer?.id,
+          customerSnapshot: selectedCustomer
+            ? {
+                name: selectedCustomer.fullName || selectedCustomer.name,
+                documentNumber: selectedCustomer.documentNumber,
+                documentType: selectedCustomer.documentType,
+              }
+            : undefined,
+          documentType,
+          cashRegisterId: selectedCashRegister.id,
+          sessionId: currentSession.id,
+          sellerId: currentSession.userId,
+          cashRegisterCode: selectedCashRegister.code,
+        });
+
+        console.log('✅ Venta offline creada:', offlineSale.offlineTicketCode);
+
+        // Cerrar modal de pago
+        setShowPaymentModal(false);
+
+        // Mostrar alerta de éxito con información del ticket offline
+        Alert.alert(
+          '✅ Venta Offline Registrada',
+          `Código: ${offlineSale.offlineTicketCode}\n\nTotal: S/ ${(offlineSale.totalCents / 100).toFixed(2)}\nVuelto: S/ ${change.toFixed(2)}\n\n⚠️ Este ticket NO es un comprobante válido ante SUNAT.\n\nEl cliente podrá obtener su comprobante escaneando el QR cuando se restablezca la conexión.`,
+          [
+            {
+              text: 'Nueva Venta',
+              onPress: () => {
+                handleNewSale();
+              },
+            },
+          ]
+        );
+
+        // TODO: Imprimir ticket offline con QR
+        // Esto se implementará cuando tengamos el generador de tickets offline
+      } catch (error) {
+        console.error('❌ Error al procesar venta offline:', error);
+        Alert.alert(
+          'Error',
+          error instanceof Error ? error.message : 'No se pudo procesar la venta offline'
+        );
+      }
+
+      return;
+    }
+
+    // ============ MODO ONLINE (normal) ============
     try {
       console.log('📞 Llamando a createSale...');
       const result = await createSale(selectedCustomer?.id, documentType, 'Venta desde POS');
@@ -943,14 +1099,42 @@ export default function NewSaleScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Offline Status Bar */}
+      {(isOfflineModeEnabled || connectionStatus !== 'ONLINE' || pendingSales > 0) && (
+        <View style={styles.offlineStatusBar}>
+          <View
+            style={[
+              styles.connectionDot,
+              connectionStatus === 'ONLINE' ? styles.dotOnline : styles.dotOffline,
+            ]}
+          />
+          <Text style={styles.offlineStatusText}>
+            {connectionStatus === 'ONLINE' ? 'Online' : 'Sin conexión'}
+          </Text>
+          {isOfflineModeEnabled && (
+            <View style={styles.offlineBadge}>
+              <Text style={styles.offlineBadgeText}>⚡ MODO OFFLINE</Text>
+            </View>
+          )}
+          {isOfflineModeEnabled && (
+            <Text style={styles.offlineTokenCount}>🎫 {availableTokens} tokens</Text>
+          )}
+          {pendingSales > 0 && (
+            <Text style={styles.offlinePendingCount}>📋 {pendingSales} pendientes</Text>
+          )}
+        </View>
+      )}
+
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Nueva Venta</Text>
         <View style={styles.headerActions}>
+          {/* Offline Mode Switch - discreto al lado de Últimas Ventas */}
+          <OfflineModeSwitch mini />
           <TouchableOpacity
             style={styles.recentSalesButton}
             onPress={handleLoadRecentSales}
-            disabled={loadingSales}
+            disabled={loadingSales || isOfflineModeEnabled}
           >
             {loadingSales ? (
               <ActivityIndicator size="small" color="#007AFF" />
@@ -2254,6 +2438,51 @@ const styles = StyleSheet.create({
     color: '#666',
     padding: 4,
   },
+  // Offline Status Bar styles
+  offlineStatusBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#343a40',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    gap: 12,
+  },
+  connectionDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  dotOnline: {
+    backgroundColor: '#4caf50',
+  },
+  dotOffline: {
+    backgroundColor: '#f44336',
+  },
+  offlineStatusText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  offlineBadge: {
+    backgroundColor: '#ff9800',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  offlineBadgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  offlineTokenCount: {
+    color: '#fff',
+    fontSize: 12,
+  },
+  offlinePendingCount: {
+    color: '#ffeb3b',
+    fontSize: 12,
+    fontWeight: '600',
+  },
   closeButton: {
     fontSize: 24,
     color: '#666',
@@ -3049,20 +3278,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#333',
     marginBottom: 12,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  summaryLabel: {
-    fontSize: 16,
-    color: '#666',
-  },
-  summaryValue: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
   },
   salesList: {
     flex: 1,

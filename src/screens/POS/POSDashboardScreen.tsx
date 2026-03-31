@@ -18,6 +18,9 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { useAuthStore } from '@/store/auth';
 import { usePOSStore } from '@/store/pos';
+import { useOfflineStore } from '@/store/offline';
+import { offlineSyncService } from '@/services/OfflineSyncService';
+import { offlineDatabase } from '@/services/OfflineDatabase';
 import { ROUTES } from '@/constants/routes';
 
 // Tipos para la API de Electron
@@ -55,8 +58,27 @@ export default function POSDashboardScreen() {
 
   const [refreshing, setRefreshing] = useState(false);
 
+  // Estados para el modal de configuración
+  const [settingsModalVisible, setSettingsModalVisible] = useState(false);
+  const [activeTab, setActiveTab] = useState<'sync' | 'updates'>('sync');
+
+  // Estados de sincronización offline
+  const {
+    totalProducts,
+    availableTokens,
+    pendingSales,
+    lastProductSync,
+    isInitialized: offlineInitialized,
+    refreshStats,
+  } = useOfflineStore();
+  const [syncing, setSyncing] = useState(false);
+  const [syncingStock, setSyncingStock] = useState(false);
+  const [syncingTokens, setSyncingTokens] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
+
   // Estados para el modal de actualizaciones
-  const [updateModalVisible, setUpdateModalVisible] = useState(false);
   const [currentVersion, setCurrentVersion] = useState('...');
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -157,14 +179,160 @@ export default function POSDashboardScreen() {
   }, [handleCheckUpdates]);
 
   // Cerrar modal y resetear estados
-  const handleCloseUpdateModal = useCallback(() => {
-    if (!downloading && !updateReady) {
-      setUpdateModalVisible(false);
+  const handleCloseSettingsModal = useCallback(() => {
+    if (!downloading && !updateReady && !syncing) {
+      setSettingsModalVisible(false);
       setUpdateInfo(null);
       setDownloadError(null);
       setInstallError(null);
+      setSyncError(null);
+      setSyncSuccess(null);
     }
-  }, [downloading, updateReady]);
+  }, [downloading, updateReady, syncing]);
+
+  // ============ FUNCIONES DE SINCRONIZACIÓN ============
+
+  // Sincronización completa (productos + tokens)
+  const handleFullSync = useCallback(async () => {
+    if (!selectedCashRegister?.id) {
+      setSyncError('No hay caja registradora seleccionada');
+      return;
+    }
+
+    setSyncing(true);
+    setSyncError(null);
+    setSyncSuccess(null);
+
+    try {
+      console.log('🔄 [SETTINGS] Iniciando sincronización completa...');
+      await offlineSyncService.performInitialSync(selectedCashRegister.id);
+      await refreshStats();
+      setLastSyncTime(new Date().toISOString());
+      setSyncSuccess('Sincronización completa exitosa');
+      console.log('✅ [SETTINGS] Sincronización completa exitosa');
+    } catch (error) {
+      console.error('❌ [SETTINGS] Error en sincronización:', error);
+      setSyncError(error instanceof Error ? error.message : 'Error en sincronización');
+    } finally {
+      setSyncing(false);
+    }
+  }, [selectedCashRegister?.id, refreshStats]);
+
+  // Sincronizar solo productos
+  const handleSyncProducts = useCallback(async () => {
+    if (!selectedCashRegister?.id) {
+      setSyncError('No hay caja registradora seleccionada');
+      return;
+    }
+
+    setSyncing(true);
+    setSyncError(null);
+    setSyncSuccess(null);
+
+    try {
+      console.log('📦 [SETTINGS] Sincronizando productos...');
+      await offlineSyncService.syncProducts(selectedCashRegister.id, 'full');
+      await refreshStats();
+      setLastSyncTime(new Date().toISOString());
+      setSyncSuccess('Productos sincronizados correctamente');
+    } catch (error) {
+      console.error('❌ [SETTINGS] Error sincronizando productos:', error);
+      setSyncError(error instanceof Error ? error.message : 'Error sincronizando productos');
+    } finally {
+      setSyncing(false);
+    }
+  }, [selectedCashRegister?.id, refreshStats]);
+
+  // Sincronizar solo stock (delta)
+  const handleSyncStock = useCallback(async () => {
+    if (!selectedCashRegister?.id) {
+      setSyncError('No hay caja registradora seleccionada');
+      return;
+    }
+
+    setSyncingStock(true);
+    setSyncError(null);
+    setSyncSuccess(null);
+
+    try {
+      console.log('📊 [SETTINGS] Sincronizando stock...');
+      await offlineSyncService.syncStock(selectedCashRegister.id);
+      await refreshStats();
+      setSyncSuccess('Stock actualizado correctamente');
+    } catch (error) {
+      console.error('❌ [SETTINGS] Error sincronizando stock:', error);
+      setSyncError(error instanceof Error ? error.message : 'Error sincronizando stock');
+    } finally {
+      setSyncingStock(false);
+    }
+  }, [selectedCashRegister?.id, refreshStats]);
+
+  // Reponer tokens
+  const handleReplenishTokens = useCallback(async () => {
+    if (!selectedCashRegister?.id) {
+      setSyncError('No hay caja registradora seleccionada');
+      return;
+    }
+
+    setSyncingTokens(true);
+    setSyncError(null);
+    setSyncSuccess(null);
+
+    try {
+      console.log('🎫 [SETTINGS] Reponiendo tokens...');
+      await offlineSyncService.ensureTokenPool(selectedCashRegister.id);
+      await refreshStats();
+      setSyncSuccess('Tokens reabastecidos correctamente');
+    } catch (error) {
+      console.error('❌ [SETTINGS] Error reponiendo tokens:', error);
+      setSyncError(error instanceof Error ? error.message : 'Error reponiendo tokens');
+    } finally {
+      setSyncingTokens(false);
+    }
+  }, [selectedCashRegister?.id, refreshStats]);
+
+  // Limpiar base de datos offline
+  const handleClearOfflineData = useCallback(async () => {
+    Alert.alert(
+      'Confirmar limpieza',
+      '¿Está seguro de eliminar todos los datos offline? Esto eliminará productos y tokens almacenados localmente. Las ventas pendientes NO serán eliminadas.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setSyncing(true);
+              setSyncError(null);
+              // Limpiar productos y tokens pero mantener ventas pendientes
+              await offlineDatabase.clearProducts();
+              await offlineDatabase.clearTokens();
+              await refreshStats();
+              setSyncSuccess('Datos offline eliminados. Realice una nueva sincronización.');
+            } catch (error) {
+              setSyncError('Error al limpiar datos offline');
+            } finally {
+              setSyncing(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [refreshStats]);
+
+  // Formatear fecha de última sincronización
+  const formatLastSync = (dateStr: string | null | undefined) => {
+    if (!dateStr) return 'Nunca';
+    const date = new Date(dateStr);
+    return date.toLocaleString('es-PE', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
 
   console.log('📊 POSDashboardScreen renderizado');
   console.log('📊 selectedCashRegister:', selectedCashRegister?.name);
@@ -272,15 +440,13 @@ export default function POSDashboardScreen() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>{selectedCashRegister?.name}</Text>
         <View style={styles.headerRight}>
-          {/* Botón de actualización - solo mostrar en Electron */}
-          {isElectron && (
-            <TouchableOpacity
-              style={styles.updateButton}
-              onPress={() => setUpdateModalVisible(true)}
-            >
-              <Text style={styles.updateButtonIcon}>⚙️</Text>
-            </TouchableOpacity>
-          )}
+          {/* Botón de configuración */}
+          <TouchableOpacity
+            style={styles.settingsButton}
+            onPress={() => setSettingsModalVisible(true)}
+          >
+            <Text style={styles.settingsButtonIcon}>⚙️</Text>
+          </TouchableOpacity>
           <View
             style={[styles.statusBadge, currentSession ? styles.statusOpen : styles.statusClosed]}
           >
@@ -289,20 +455,23 @@ export default function POSDashboardScreen() {
         </View>
       </View>
 
-      {/* Modal de Actualizaciones */}
+      {/* Modal de Configuración con Pestañas */}
       <Modal
-        visible={updateModalVisible}
+        visible={settingsModalVisible}
         transparent={true}
         animationType="fade"
-        onRequestClose={handleCloseUpdateModal}
+        onRequestClose={handleCloseSettingsModal}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>⚙️ Actualización de Software</Text>
-              {/* Solo mostrar botón de cerrar si no está descargando ni la actualización está lista */}
-              {!downloading && !updateReady ? (
-                <TouchableOpacity style={styles.modalCloseButton} onPress={handleCloseUpdateModal}>
+          <View style={styles.settingsModalContent}>
+            {/* Header del Modal */}
+            <View style={styles.settingsModalHeader}>
+              <Text style={styles.settingsModalTitle}>⚙️ Configuración</Text>
+              {!downloading && !updateReady && !syncing ? (
+                <TouchableOpacity
+                  style={styles.modalCloseButton}
+                  onPress={handleCloseSettingsModal}
+                >
                   <Text style={styles.modalCloseText}>✕</Text>
                 </TouchableOpacity>
               ) : (
@@ -312,179 +481,375 @@ export default function POSDashboardScreen() {
               )}
             </View>
 
-            <View style={styles.modalBody}>
-              {/* Versión actual */}
-              <View style={styles.versionRow}>
-                <Text style={styles.versionLabel}>Versión instalada:</Text>
-                <Text style={styles.versionValue}>v{currentVersion}</Text>
-              </View>
+            {/* Pestañas */}
+            <View style={styles.tabsContainer}>
+              <TouchableOpacity
+                style={[styles.tab, activeTab === 'sync' && styles.tabActive]}
+                onPress={() => setActiveTab('sync')}
+              >
+                <Text style={[styles.tabText, activeTab === 'sync' && styles.tabTextActive]}>
+                  🔄 Sincronización
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.tab, activeTab === 'updates' && styles.tabActive]}
+                onPress={() => setActiveTab('updates')}
+              >
+                <Text style={[styles.tabText, activeTab === 'updates' && styles.tabTextActive]}>
+                  📦 Actualizaciones
+                </Text>
+              </TouchableOpacity>
+            </View>
 
-              {/* Estado de verificación */}
-              {checkingUpdate && (
-                <View style={styles.statusRow}>
-                  <ActivityIndicator size="small" color="#007AFF" />
-                  <Text style={styles.statusText2}>Verificando actualizaciones...</Text>
+            {/* Contenido de las pestañas */}
+            <ScrollView style={styles.settingsModalBody}>
+              {/* ============ PESTAÑA DE SINCRONIZACIÓN ============ */}
+              {activeTab === 'sync' && (
+                <View style={styles.tabContent}>
+                  {/* Estadísticas de sincronización */}
+                  <View style={styles.syncStatsCard}>
+                    <Text style={styles.cardTitle}>📊 Estado de Datos Offline</Text>
+
+                    <View style={styles.statsGrid}>
+                      <View style={styles.statBox}>
+                        <Text style={styles.statNumber}>{totalProducts.toLocaleString()}</Text>
+                        <Text style={styles.statLabel}>Productos</Text>
+                      </View>
+                      <View style={styles.statBox}>
+                        <Text
+                          style={[styles.statNumber, availableTokens < 100 && styles.statWarning]}
+                        >
+                          {availableTokens.toLocaleString()}
+                        </Text>
+                        <Text style={styles.statLabel}>Tokens</Text>
+                      </View>
+                      <View style={styles.statBox}>
+                        <Text style={[styles.statNumber, pendingSales > 0 && styles.statPending]}>
+                          {pendingSales}
+                        </Text>
+                        <Text style={styles.statLabel}>Ventas Pendientes</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.lastSyncRow}>
+                      <Text style={styles.lastSyncLabel}>Última sincronización:</Text>
+                      <Text style={styles.lastSyncValue}>
+                        {formatLastSync(lastSyncTime || lastProductSync)}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Mensajes de estado */}
+                  {syncError && (
+                    <View style={styles.syncErrorContainer}>
+                      <Text style={styles.syncErrorIcon}>❌</Text>
+                      <Text style={styles.syncErrorText}>{syncError}</Text>
+                    </View>
+                  )}
+
+                  {syncSuccess && (
+                    <View style={styles.syncSuccessContainer}>
+                      <Text style={styles.syncSuccessIcon}>✅</Text>
+                      <Text style={styles.syncSuccessText}>{syncSuccess}</Text>
+                    </View>
+                  )}
+
+                  {/* Acciones de sincronización */}
+                  <View style={styles.syncActionsCard}>
+                    <Text style={styles.cardTitle}>🔄 Acciones de Sincronización</Text>
+
+                    {/* Sincronización completa */}
+                    <TouchableOpacity
+                      style={[styles.syncActionButton, styles.syncActionPrimary]}
+                      onPress={handleFullSync}
+                      disabled={syncing || syncingStock || syncingTokens}
+                    >
+                      {syncing ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={styles.syncActionIcon}>🔄</Text>
+                      )}
+                      <View style={styles.syncActionTextContainer}>
+                        <Text style={styles.syncActionTitle}>Sincronización Completa</Text>
+                        <Text style={styles.syncActionDesc}>
+                          Descarga productos, stock y tokens
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    {/* Sincronizar solo productos */}
+                    <TouchableOpacity
+                      style={[styles.syncActionButton, styles.syncActionSecondary]}
+                      onPress={handleSyncProducts}
+                      disabled={syncing || syncingStock || syncingTokens}
+                    >
+                      {syncing ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={styles.syncActionIcon}>📦</Text>
+                      )}
+                      <View style={styles.syncActionTextContainer}>
+                        <Text style={styles.syncActionTitle}>Sincronizar Productos</Text>
+                        <Text style={styles.syncActionDesc}>Actualiza catálogo completo</Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    {/* Sincronizar stock */}
+                    <TouchableOpacity
+                      style={[styles.syncActionButton, styles.syncActionSecondary]}
+                      onPress={handleSyncStock}
+                      disabled={syncing || syncingStock || syncingTokens}
+                    >
+                      {syncingStock ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={styles.syncActionIcon}>📊</Text>
+                      )}
+                      <View style={styles.syncActionTextContainer}>
+                        <Text style={styles.syncActionTitle}>Actualizar Stock</Text>
+                        <Text style={styles.syncActionDesc}>Solo cambios de inventario</Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    {/* Reponer tokens */}
+                    <TouchableOpacity
+                      style={[styles.syncActionButton, styles.syncActionTokens]}
+                      onPress={handleReplenishTokens}
+                      disabled={syncing || syncingStock || syncingTokens}
+                    >
+                      {syncingTokens ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={styles.syncActionIcon}>🎫</Text>
+                      )}
+                      <View style={styles.syncActionTextContainer}>
+                        <Text style={styles.syncActionTitle}>Reponer Tokens</Text>
+                        <Text style={styles.syncActionDesc}>Completar hasta 1000 tokens</Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    {/* Limpiar datos */}
+                    <TouchableOpacity
+                      style={[styles.syncActionButton, styles.syncActionDanger]}
+                      onPress={handleClearOfflineData}
+                      disabled={syncing || syncingStock || syncingTokens}
+                    >
+                      <Text style={styles.syncActionIcon}>🗑️</Text>
+                      <View style={styles.syncActionTextContainer}>
+                        <Text style={styles.syncActionTitle}>Limpiar Datos Offline</Text>
+                        <Text style={styles.syncActionDesc}>
+                          Elimina productos y tokens locales
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               )}
 
-              {/* Resultado de verificación */}
-              {updateInfo && !checkingUpdate && (
-                <View style={styles.updateResultContainer}>
-                  {updateInfo.error ? (
-                    <View style={styles.errorContainer}>
-                      <Text style={styles.errorIcon}>⚠️</Text>
-                      <Text style={styles.errorText}>{updateInfo.error}</Text>
+              {/* ============ PESTAÑA DE ACTUALIZACIONES ============ */}
+              {activeTab === 'updates' && (
+                <View style={styles.tabContent}>
+                  <View style={styles.updateCard}>
+                    <Text style={styles.cardTitle}>📦 Actualización de Software</Text>
+
+                    {/* Versión actual */}
+                    <View style={styles.versionRow}>
+                      <Text style={styles.versionLabel}>Versión instalada:</Text>
+                      <Text style={styles.versionValue}>v{currentVersion}</Text>
                     </View>
-                  ) : updateInfo.updateAvailable ? (
-                    <View style={styles.updateAvailableContainer}>
-                      <Text style={styles.updateAvailableIcon}>🎉</Text>
-                      <Text style={styles.updateAvailableTitle}>¡Nueva versión disponible!</Text>
-                      <Text style={styles.updateAvailableVersion}>v{updateInfo.latestVersion}</Text>
-                      {updateInfo.releaseDate && (
-                        <Text style={styles.updateDate}>
-                          Publicada: {new Date(updateInfo.releaseDate).toLocaleDateString('es-PE')}
+
+                    {!isElectron && (
+                      <View style={styles.notElectronWarning}>
+                        <Text style={styles.notElectronIcon}>ℹ️</Text>
+                        <Text style={styles.notElectronText}>
+                          Las actualizaciones automáticas solo están disponibles en la aplicación de
+                          escritorio.
                         </Text>
+                      </View>
+                    )}
+
+                    {isElectron && (
+                      <>
+                        {/* Estado de verificación */}
+                        {checkingUpdate && (
+                          <View style={styles.statusRow}>
+                            <ActivityIndicator size="small" color="#007AFF" />
+                            <Text style={styles.statusText2}>Verificando actualizaciones...</Text>
+                          </View>
+                        )}
+
+                        {/* Resultado de verificación */}
+                        {updateInfo && !checkingUpdate && (
+                          <View style={styles.updateResultContainer}>
+                            {updateInfo.error ? (
+                              <View style={styles.errorContainer}>
+                                <Text style={styles.errorIcon}>⚠️</Text>
+                                <Text style={styles.errorText}>{updateInfo.error}</Text>
+                              </View>
+                            ) : updateInfo.updateAvailable ? (
+                              <View style={styles.updateAvailableContainer}>
+                                <Text style={styles.updateAvailableIcon}>🎉</Text>
+                                <Text style={styles.updateAvailableTitle}>
+                                  ¡Nueva versión disponible!
+                                </Text>
+                                <Text style={styles.updateAvailableVersion}>
+                                  v{updateInfo.latestVersion}
+                                </Text>
+                                {updateInfo.releaseDate && (
+                                  <Text style={styles.updateDate}>
+                                    Publicada:{' '}
+                                    {new Date(updateInfo.releaseDate).toLocaleDateString('es-PE')}
+                                  </Text>
+                                )}
+                              </View>
+                            ) : (
+                              <View style={styles.upToDateContainer}>
+                                <Text style={styles.upToDateIcon}>✅</Text>
+                                <Text style={styles.upToDateText}>
+                                  Tienes la última versión instalada
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                        )}
+
+                        {/* Progreso de descarga */}
+                        {downloading && (
+                          <View style={styles.downloadProgressContainer}>
+                            <View style={styles.downloadingHeader}>
+                              <ActivityIndicator size="small" color="#4CAF50" />
+                              <Text style={styles.downloadingTitle}>Descargando actualización</Text>
+                            </View>
+                            <Text style={styles.downloadingSubtext}>
+                              Por favor espere, no cierre la aplicación...
+                            </Text>
+                            <View style={styles.progressBarContainer}>
+                              <View
+                                style={[styles.progressBar, { width: `${downloadProgress}%` }]}
+                              />
+                            </View>
+                            <Text style={styles.progressText}>{downloadProgress}%</Text>
+                          </View>
+                        )}
+
+                        {/* Actualización lista */}
+                        {updateReady && !installError && (
+                          <View style={styles.updateReadyContainer}>
+                            <Text style={styles.updateReadyIcon}>✅</Text>
+                            <View style={styles.updateReadyTextContainer}>
+                              <Text style={styles.updateReadyTitle}>¡Actualización lista!</Text>
+                              <Text style={styles.updateReadyText}>
+                                La descarga se completó correctamente. Reinicie para aplicar los
+                                cambios.
+                              </Text>
+                            </View>
+                          </View>
+                        )}
+
+                        {/* Error de descarga */}
+                        {downloadError && (
+                          <View style={styles.downloadErrorContainer}>
+                            <Text style={styles.downloadErrorIcon}>❌</Text>
+                            <View style={styles.downloadErrorTextContainer}>
+                              <Text style={styles.downloadErrorTitle}>Error de descarga</Text>
+                              <Text style={styles.downloadErrorText}>{downloadError}</Text>
+                            </View>
+                          </View>
+                        )}
+
+                        {/* Error de instalación */}
+                        {installError && (
+                          <View style={styles.installErrorContainer}>
+                            <Text style={styles.installErrorIcon}>⚠️</Text>
+                            <View style={styles.installErrorTextContainer}>
+                              <Text style={styles.installErrorTitle}>Error de instalación</Text>
+                              <Text style={styles.installErrorText}>{installError}</Text>
+                            </View>
+                          </View>
+                        )}
+                      </>
+                    )}
+                  </View>
+
+                  {/* Botones de acción de actualizaciones */}
+                  {isElectron && (
+                    <View style={styles.updateActionsCard}>
+                      {/* Botón verificar */}
+                      {!downloading && !updateReady && !downloadError && (
+                        <TouchableOpacity
+                          style={[styles.modalButton, styles.checkButton]}
+                          onPress={handleCheckUpdates}
+                          disabled={checkingUpdate}
+                        >
+                          <Text style={styles.modalButtonText}>
+                            {checkingUpdate ? 'Verificando...' : '🔍 Verificar Actualizaciones'}
+                          </Text>
+                        </TouchableOpacity>
                       )}
-                    </View>
-                  ) : (
-                    <View style={styles.upToDateContainer}>
-                      <Text style={styles.upToDateIcon}>✅</Text>
-                      <Text style={styles.upToDateText}>Tienes la última versión instalada</Text>
+
+                      {/* Botón descargar */}
+                      {updateInfo?.updateAvailable &&
+                        !downloading &&
+                        !updateReady &&
+                        !downloadError && (
+                          <TouchableOpacity
+                            style={[styles.modalButton, styles.downloadButton]}
+                            onPress={handleDownloadUpdate}
+                          >
+                            <Text style={styles.modalButtonText}>⬇️ Descargar Actualización</Text>
+                          </TouchableOpacity>
+                        )}
+
+                      {/* Botón reintentar */}
+                      {downloadError && (
+                        <TouchableOpacity
+                          style={[styles.modalButton, styles.retryButton]}
+                          onPress={handleRetryDownload}
+                        >
+                          <Text style={styles.modalButtonText}>🔄 Reintentar</Text>
+                        </TouchableOpacity>
+                      )}
+
+                      {/* Botón reiniciar */}
+                      {updateReady && !installError && (
+                        <TouchableOpacity
+                          style={[styles.modalButton, styles.restartButton]}
+                          onPress={handleInstallUpdate}
+                        >
+                          <Text style={styles.restartButtonText}>
+                            🔄 Reiniciar para Ver los Cambios
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+
+                      {/* Botones cuando hay error de instalación */}
+                      {installError && (
+                        <>
+                          <TouchableOpacity
+                            style={[styles.modalButton, styles.retryButton]}
+                            onPress={handleInstallUpdate}
+                          >
+                            <Text style={styles.modalButtonText}>🔄 Reintentar Instalación</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.modalButton, styles.closeErrorButton]}
+                            onPress={() => {
+                              setInstallError(null);
+                              setUpdateReady(false);
+                              setSettingsModalVisible(false);
+                            }}
+                          >
+                            <Text style={styles.closeErrorButtonText}>
+                              Cerrar (reiniciar manualmente)
+                            </Text>
+                          </TouchableOpacity>
+                        </>
+                      )}
                     </View>
                   )}
                 </View>
               )}
-
-              {/* Progreso de descarga */}
-              {downloading && (
-                <View style={styles.downloadProgressContainer}>
-                  <View style={styles.downloadingHeader}>
-                    <ActivityIndicator size="small" color="#4CAF50" />
-                    <Text style={styles.downloadingTitle}>Descargando actualización</Text>
-                  </View>
-                  <Text style={styles.downloadingSubtext}>
-                    Por favor espere, no cierre la aplicación...
-                  </Text>
-                  <View style={styles.progressBarContainer}>
-                    <View style={[styles.progressBar, { width: `${downloadProgress}%` }]} />
-                  </View>
-                  <Text style={styles.progressText}>{downloadProgress}%</Text>
-                </View>
-              )}
-
-              {/* Actualización lista */}
-              {updateReady && !installError && (
-                <View style={styles.updateReadyContainer}>
-                  <Text style={styles.updateReadyIcon}>✅</Text>
-                  <View style={styles.updateReadyTextContainer}>
-                    <Text style={styles.updateReadyTitle}>¡Actualización lista!</Text>
-                    <Text style={styles.updateReadyText}>
-                      La descarga se completó correctamente. Reinicie para aplicar los cambios.
-                    </Text>
-                  </View>
-                </View>
-              )}
-
-              {/* Error de descarga */}
-              {downloadError && (
-                <View style={styles.downloadErrorContainer}>
-                  <Text style={styles.downloadErrorIcon}>❌</Text>
-                  <View style={styles.downloadErrorTextContainer}>
-                    <Text style={styles.downloadErrorTitle}>Error de descarga</Text>
-                    <Text style={styles.downloadErrorText}>{downloadError}</Text>
-                  </View>
-                </View>
-              )}
-
-              {/* Error de instalación */}
-              {installError && (
-                <View style={styles.installErrorContainer}>
-                  <Text style={styles.installErrorIcon}>⚠️</Text>
-                  <View style={styles.installErrorTextContainer}>
-                    <Text style={styles.installErrorTitle}>Error de instalación</Text>
-                    <Text style={styles.installErrorText}>{installError}</Text>
-                  </View>
-                </View>
-              )}
-            </View>
-
-            {/* Botones de acción */}
-            <View style={styles.modalActions}>
-              {/* Botón verificar - solo si no hay descarga, error o actualización lista */}
-              {!downloading && !updateReady && !downloadError && (
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.checkButton]}
-                  onPress={handleCheckUpdates}
-                  disabled={checkingUpdate}
-                >
-                  <Text style={styles.modalButtonText}>
-                    {checkingUpdate ? 'Verificando...' : '🔍 Verificar Actualizaciones'}
-                  </Text>
-                </TouchableOpacity>
-              )}
-
-              {/* Botón descargar - solo si hay actualización disponible */}
-              {updateInfo?.updateAvailable && !downloading && !updateReady && !downloadError && (
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.downloadButton]}
-                  onPress={handleDownloadUpdate}
-                >
-                  <Text style={styles.modalButtonText}>⬇️ Descargar Actualización</Text>
-                </TouchableOpacity>
-              )}
-
-              {/* Botón reintentar - solo si hubo error de descarga */}
-              {downloadError && (
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.retryButton]}
-                  onPress={handleRetryDownload}
-                >
-                  <Text style={styles.modalButtonText}>🔄 Reintentar</Text>
-                </TouchableOpacity>
-              )}
-
-              {/* Botón cerrar - solo si hubo error de descarga */}
-              {downloadError && (
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.closeErrorButton]}
-                  onPress={handleCloseUpdateModal}
-                >
-                  <Text style={styles.closeErrorButtonText}>Cerrar</Text>
-                </TouchableOpacity>
-              )}
-
-              {/* Botón reiniciar - cuando la actualización está lista */}
-              {updateReady && !installError && (
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.restartButton]}
-                  onPress={handleInstallUpdate}
-                >
-                  <Text style={styles.restartButtonText}>🔄 Reiniciar para Ver los Cambios</Text>
-                </TouchableOpacity>
-              )}
-
-              {/* Botones cuando hay error de instalación */}
-              {installError && (
-                <>
-                  <TouchableOpacity
-                    style={[styles.modalButton, styles.retryButton]}
-                    onPress={handleInstallUpdate}
-                  >
-                    <Text style={styles.modalButtonText}>🔄 Reintentar Instalación</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.modalButton, styles.closeErrorButton]}
-                    onPress={() => {
-                      setInstallError(null);
-                      setUpdateReady(false);
-                      setUpdateModalVisible(false);
-                    }}
-                  >
-                    <Text style={styles.closeErrorButtonText}>Cerrar (reiniciar manualmente)</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-            </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -628,16 +993,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
-  updateButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  settingsButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#F0F0F0',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  updateButtonIcon: {
-    fontSize: 18,
+  settingsButtonIcon: {
+    fontSize: 20,
   },
   statusBadge: {
     paddingHorizontal: 16,
@@ -769,25 +1134,26 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  // Estilos del Modal de Actualizaciones
+  // Estilos del Modal de Configuración
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  modalContent: {
+  settingsModalContent: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
-    width: '90%',
-    maxWidth: 400,
+    width: '95%',
+    maxWidth: 600,
+    maxHeight: '90%',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 10,
   },
-  modalHeader: {
+  settingsModalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -795,10 +1161,219 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E0E0E0',
   },
-  modalTitle: {
-    fontSize: 18,
+  settingsModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#333',
+  },
+  settingsModalBody: {
+    flex: 1,
+    maxHeight: 500,
+  },
+  // Estilos de pestañas
+  tabsContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#F5F5F5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    borderBottomWidth: 3,
+    borderBottomColor: 'transparent',
+  },
+  tabActive: {
+    backgroundColor: '#FFFFFF',
+    borderBottomColor: '#007AFF',
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  tabTextActive: {
+    color: '#007AFF',
+  },
+  tabContent: {
+    padding: 16,
+  },
+  // Estilos de tarjetas
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 16,
+  },
+  syncStatsCard: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E9ECEF',
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 16,
+  },
+  statBox: {
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    minWidth: 100,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  statNumber: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#007AFF',
+  },
+  statWarning: {
+    color: '#FF9800',
+  },
+  statPending: {
+    color: '#F44336',
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+    fontWeight: '500',
+  },
+  lastSyncRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E9ECEF',
+  },
+  lastSyncLabel: {
+    fontSize: 13,
+    color: '#666',
+  },
+  lastSyncValue: {
+    fontSize: 13,
     fontWeight: '600',
     color: '#333',
+  },
+  // Mensajes de estado de sync
+  syncErrorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEBEE',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    gap: 10,
+  },
+  syncErrorIcon: {
+    fontSize: 20,
+  },
+  syncErrorText: {
+    flex: 1,
+    color: '#C62828',
+    fontSize: 14,
+  },
+  syncSuccessContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8F5E9',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    gap: 10,
+  },
+  syncSuccessIcon: {
+    fontSize: 20,
+  },
+  syncSuccessText: {
+    flex: 1,
+    color: '#2E7D32',
+    fontSize: 14,
+  },
+  // Acciones de sincronización
+  syncActionsCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E9ECEF',
+  },
+  syncActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 10,
+    marginBottom: 10,
+    gap: 12,
+  },
+  syncActionPrimary: {
+    backgroundColor: '#007AFF',
+  },
+  syncActionSecondary: {
+    backgroundColor: '#5C6BC0',
+  },
+  syncActionTokens: {
+    backgroundColor: '#FF9800',
+  },
+  syncActionDanger: {
+    backgroundColor: '#9E9E9E',
+  },
+  syncActionIcon: {
+    fontSize: 24,
+    width: 32,
+    textAlign: 'center',
+  },
+  syncActionTextContainer: {
+    flex: 1,
+  },
+  syncActionTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  syncActionDesc: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.8)',
+    marginTop: 2,
+  },
+  // Tarjeta de actualizaciones
+  updateCard: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E9ECEF',
+  },
+  updateActionsCard: {
+    gap: 10,
+  },
+  notElectronWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E3F2FD',
+    padding: 12,
+    borderRadius: 8,
+    gap: 10,
+  },
+  notElectronIcon: {
+    fontSize: 20,
+  },
+  notElectronText: {
+    flex: 1,
+    color: '#1565C0',
+    fontSize: 13,
   },
   modalCloseButton: {
     width: 32,
