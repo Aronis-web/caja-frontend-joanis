@@ -63,6 +63,8 @@ export default function POSDashboardScreen() {
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [updateReady, setUpdateReady] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
 
   // Verificar si estamos en Electron (o web en general para mostrar el botón)
   const isElectron =
@@ -122,13 +124,14 @@ export default function POSDashboardScreen() {
 
     setDownloading(true);
     setDownloadProgress(0);
+    setDownloadError(null);
 
     try {
       await window.electronAPI.downloadUpdate();
     } catch (error) {
       console.error('Error downloading update:', error);
       setDownloading(false);
-      Alert.alert('Error', 'No se pudo descargar la actualización');
+      setDownloadError('No se pudo descargar la actualización. Verifique su conexión a internet.');
     }
   }, [isElectron]);
 
@@ -136,13 +139,32 @@ export default function POSDashboardScreen() {
   const handleInstallUpdate = useCallback(async () => {
     if (!isElectron || !window.electronAPI) return;
 
+    setInstallError(null);
+
     try {
       await window.electronAPI.installUpdate();
     } catch (error) {
       console.error('Error installing update:', error);
-      Alert.alert('Error', 'No se pudo instalar la actualización');
+      setInstallError('No se pudo instalar la actualización. Intente reiniciar manualmente.');
     }
   }, [isElectron]);
+
+  // Reintentar descarga
+  const handleRetryDownload = useCallback(() => {
+    setDownloadError(null);
+    setUpdateInfo(null);
+    handleCheckUpdates();
+  }, [handleCheckUpdates]);
+
+  // Cerrar modal y resetear estados
+  const handleCloseUpdateModal = useCallback(() => {
+    if (!downloading && !updateReady) {
+      setUpdateModalVisible(false);
+      setUpdateInfo(null);
+      setDownloadError(null);
+      setInstallError(null);
+    }
+  }, [downloading, updateReady]);
 
   console.log('📊 POSDashboardScreen renderizado');
   console.log('📊 selectedCashRegister:', selectedCashRegister?.name);
@@ -272,12 +294,7 @@ export default function POSDashboardScreen() {
         visible={updateModalVisible}
         transparent={true}
         animationType="fade"
-        onRequestClose={() => {
-          // No permitir cerrar si está descargando o la actualización está lista
-          if (!downloading && !updateReady) {
-            setUpdateModalVisible(false);
-          }
-        }}
+        onRequestClose={handleCloseUpdateModal}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -285,10 +302,7 @@ export default function POSDashboardScreen() {
               <Text style={styles.modalTitle}>⚙️ Actualización de Software</Text>
               {/* Solo mostrar botón de cerrar si no está descargando ni la actualización está lista */}
               {!downloading && !updateReady ? (
-                <TouchableOpacity
-                  style={styles.modalCloseButton}
-                  onPress={() => setUpdateModalVisible(false)}
-                >
+                <TouchableOpacity style={styles.modalCloseButton} onPress={handleCloseUpdateModal}>
                   <Text style={styles.modalCloseText}>✕</Text>
                 </TouchableOpacity>
               ) : (
@@ -359,7 +373,7 @@ export default function POSDashboardScreen() {
               )}
 
               {/* Actualización lista */}
-              {updateReady && (
+              {updateReady && !installError && (
                 <View style={styles.updateReadyContainer}>
                   <Text style={styles.updateReadyIcon}>✅</Text>
                   <View style={styles.updateReadyTextContainer}>
@@ -370,11 +384,34 @@ export default function POSDashboardScreen() {
                   </View>
                 </View>
               )}
+
+              {/* Error de descarga */}
+              {downloadError && (
+                <View style={styles.downloadErrorContainer}>
+                  <Text style={styles.downloadErrorIcon}>❌</Text>
+                  <View style={styles.downloadErrorTextContainer}>
+                    <Text style={styles.downloadErrorTitle}>Error de descarga</Text>
+                    <Text style={styles.downloadErrorText}>{downloadError}</Text>
+                  </View>
+                </View>
+              )}
+
+              {/* Error de instalación */}
+              {installError && (
+                <View style={styles.installErrorContainer}>
+                  <Text style={styles.installErrorIcon}>⚠️</Text>
+                  <View style={styles.installErrorTextContainer}>
+                    <Text style={styles.installErrorTitle}>Error de instalación</Text>
+                    <Text style={styles.installErrorText}>{installError}</Text>
+                  </View>
+                </View>
+              )}
             </View>
 
             {/* Botones de acción */}
             <View style={styles.modalActions}>
-              {!downloading && !updateReady && (
+              {/* Botón verificar - solo si no hay descarga, error o actualización lista */}
+              {!downloading && !updateReady && !downloadError && (
                 <TouchableOpacity
                   style={[styles.modalButton, styles.checkButton]}
                   onPress={handleCheckUpdates}
@@ -386,7 +423,8 @@ export default function POSDashboardScreen() {
                 </TouchableOpacity>
               )}
 
-              {updateInfo?.updateAvailable && !downloading && !updateReady && (
+              {/* Botón descargar - solo si hay actualización disponible */}
+              {updateInfo?.updateAvailable && !downloading && !updateReady && !downloadError && (
                 <TouchableOpacity
                   style={[styles.modalButton, styles.downloadButton]}
                   onPress={handleDownloadUpdate}
@@ -395,13 +433,56 @@ export default function POSDashboardScreen() {
                 </TouchableOpacity>
               )}
 
-              {updateReady && (
+              {/* Botón reintentar - solo si hubo error de descarga */}
+              {downloadError && (
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.retryButton]}
+                  onPress={handleRetryDownload}
+                >
+                  <Text style={styles.modalButtonText}>🔄 Reintentar</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Botón cerrar - solo si hubo error de descarga */}
+              {downloadError && (
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.closeErrorButton]}
+                  onPress={handleCloseUpdateModal}
+                >
+                  <Text style={styles.closeErrorButtonText}>Cerrar</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Botón reiniciar - cuando la actualización está lista */}
+              {updateReady && !installError && (
                 <TouchableOpacity
                   style={[styles.modalButton, styles.restartButton]}
                   onPress={handleInstallUpdate}
                 >
                   <Text style={styles.restartButtonText}>🔄 Reiniciar para Ver los Cambios</Text>
                 </TouchableOpacity>
+              )}
+
+              {/* Botones cuando hay error de instalación */}
+              {installError && (
+                <>
+                  <TouchableOpacity
+                    style={[styles.modalButton, styles.retryButton]}
+                    onPress={handleInstallUpdate}
+                  >
+                    <Text style={styles.modalButtonText}>🔄 Reintentar Instalación</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modalButton, styles.closeErrorButton]}
+                    onPress={() => {
+                      setInstallError(null);
+                      setUpdateReady(false);
+                      setUpdateModalVisible(false);
+                    }}
+                  >
+                    <Text style={styles.closeErrorButtonText}>Cerrar (reiniciar manualmente)</Text>
+                  </TouchableOpacity>
+                </>
               )}
             </View>
           </View>
@@ -937,6 +1018,73 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 17,
     fontWeight: 'bold',
+  },
+  retryButton: {
+    backgroundColor: '#FF9800',
+  },
+  closeErrorButton: {
+    backgroundColor: '#9E9E9E',
+  },
+  closeErrorButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  downloadErrorContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    padding: 20,
+    backgroundColor: '#FFEBEE',
+    borderRadius: 12,
+    marginTop: 8,
+    borderWidth: 2,
+    borderColor: '#F44336',
+  },
+  downloadErrorIcon: {
+    fontSize: 32,
+  },
+  downloadErrorTextContainer: {
+    flex: 1,
+  },
+  downloadErrorTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#C62828',
+    marginBottom: 4,
+  },
+  downloadErrorText: {
+    fontSize: 13,
+    color: '#B71C1C',
+    lineHeight: 18,
+  },
+  installErrorContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    padding: 20,
+    backgroundColor: '#FFF3E0',
+    borderRadius: 12,
+    marginTop: 8,
+    borderWidth: 2,
+    borderColor: '#FF9800',
+  },
+  installErrorIcon: {
+    fontSize: 32,
+  },
+  installErrorTextContainer: {
+    flex: 1,
+  },
+  installErrorTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#E65100',
+    marginBottom: 4,
+  },
+  installErrorText: {
+    fontSize: 13,
+    color: '#F57C00',
+    lineHeight: 18,
   },
   modalButtonText: {
     color: '#FFFFFF',
