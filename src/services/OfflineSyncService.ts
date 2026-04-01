@@ -424,7 +424,7 @@ class OfflineSyncService {
 
       for (let i = 0; i < pendingSales.length; i += this.config.salesBatchSize) {
         const batch = pendingSales.slice(i, i + this.config.salesBatchSize);
-        const batchId = `batch-${Date.now()}-${i}`;
+        const batchId = crypto.randomUUID();
 
         // Log de debug para ver los sessionIds de las ventas
         console.log(
