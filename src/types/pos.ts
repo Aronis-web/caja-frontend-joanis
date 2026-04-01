@@ -311,6 +311,7 @@ export interface CreateCustomerRequest {
   email?: string;
   phone?: string;
   address?: string;
+  aceptaPublicidad?: boolean;
 }
 
 // Request types

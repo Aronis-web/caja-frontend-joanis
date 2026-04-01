@@ -20,6 +20,7 @@ import {
   Linking,
   Keyboard,
   useWindowDimensions,
+  Switch,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { usePOSStore } from '@/store/pos';
@@ -118,6 +119,7 @@ export default function NewSaleScreen() {
     email: string;
     phone: string;
     address: string;
+    aceptaPublicidad: boolean;
   }>({
     customerType: 'PERSONA',
     documentType: 'DNI',
@@ -129,6 +131,7 @@ export default function NewSaleScreen() {
     email: '',
     phone: '',
     address: '',
+    aceptaPublicidad: true,
   });
 
   const [activeSalesData, setActiveSalesData] = useState<ActiveSalesResponse | null>(null);
@@ -508,6 +511,7 @@ export default function NewSaleScreen() {
       email: '',
       phone: '',
       address: '',
+      aceptaPublicidad: true,
     });
 
     setShowCustomerDropdown(false);
@@ -590,6 +594,7 @@ export default function NewSaleScreen() {
         ...(email.trim() && { email: email.trim() }),
         ...(phone.trim() && { phone: phone.trim() }),
         ...(address.trim() && { address: address.trim() }),
+        aceptaPublicidad: newCustomerData.aceptaPublicidad,
       };
 
       const newCustomer = await posService.createCustomer(requestData);
@@ -3178,6 +3183,19 @@ export default function NewSaleScreen() {
                     />
                   </View>
                 </View>
+
+                {/* Switch Acepta Publicidad */}
+                <View style={styles.addCustomerSwitchRow}>
+                  <Text style={styles.addCustomerSwitchLabel}>Permitir publicidad</Text>
+                  <Switch
+                    value={newCustomerData.aceptaPublicidad}
+                    onValueChange={(value) =>
+                      setNewCustomerData((prev) => ({ ...prev, aceptaPublicidad: value }))
+                    }
+                    trackColor={{ false: '#E0E0E0', true: '#81C784' }}
+                    thumbColor={newCustomerData.aceptaPublicidad ? '#4CAF50' : '#BDBDBD'}
+                  />
+                </View>
               </ScrollView>
             )}
 
@@ -3654,6 +3672,22 @@ const styles = StyleSheet.create({
   addCustomerFormRow: {
     flexDirection: 'row',
     marginBottom: 16,
+  },
+  addCustomerSwitchRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#F9F9F9',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  addCustomerSwitchLabel: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#333',
   },
   addCustomerLabel: {
     fontSize: 14,
