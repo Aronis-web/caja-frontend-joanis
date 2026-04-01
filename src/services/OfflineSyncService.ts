@@ -376,6 +376,10 @@ class OfflineSyncService {
     this.emit('sales:sync:start', { count: pendingSales.length });
 
     try {
+      // Obtener el sessionId de la primera venta pendiente
+      const firstSaleSessionId = pendingSales[0].sessionId;
+      console.log(`🔍 [SYNC] SessionId de primera venta: "${firstSaleSessionId}"`);
+
       // 1. Registrarse en la cola
       console.log('📝 [SYNC] Registrándose en cola de sincronización...');
       const registration = await this.request<SyncRegistrationResponse>(
@@ -384,6 +388,7 @@ class OfflineSyncService {
           method: 'POST',
           body: JSON.stringify({
             cashRegisterId,
+            sessionId: firstSaleSessionId,
             pendingSalesCount: pendingSales.length,
           }),
         },
