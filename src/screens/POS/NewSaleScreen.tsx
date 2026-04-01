@@ -27,7 +27,13 @@ import { useOfflineStore } from '@/store/offline';
 import { posService } from '@/services/POSService';
 import { networkMonitor } from '@/services/NetworkMonitor';
 import { OfflineModeSwitch } from '@/components/offline';
-import type { Product, Customer, CreateSaleResponse, ActiveSalesResponse } from '@/types/pos';
+import type {
+  Product,
+  Customer,
+  CreateSaleResponse,
+  ActiveSalesResponse,
+  CreateCustomerRequest,
+} from '@/types/pos';
 import type {
   OfflineProduct,
   OfflineSale,
@@ -96,6 +102,35 @@ export default function NewSaleScreen() {
   const [customerSearchResults, setCustomerSearchResults] = useState<Customer[]>([]);
   const [searchingCustomers, setSearchingCustomers] = useState(false);
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+
+  // Add Customer Modal states
+  const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+  const [addCustomerLoading, setAddCustomerLoading] = useState(false);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [newCustomerData, setNewCustomerData] = useState<{
+    customerType: 'PERSONA' | 'EMPRESA';
+    documentType: 'DNI' | 'RUC';
+    documentNumber: string;
+    nombres: string;
+    apellidoPaterno: string;
+    apellidoMaterno: string;
+    razonSocial: string;
+    email: string;
+    phone: string;
+    address: string;
+  }>({
+    customerType: 'PERSONA',
+    documentType: 'DNI',
+    documentNumber: '',
+    nombres: '',
+    apellidoPaterno: '',
+    apellidoMaterno: '',
+    razonSocial: '',
+    email: '',
+    phone: '',
+    address: '',
+  });
+
   const [activeSalesData, setActiveSalesData] = useState<ActiveSalesResponse | null>(null);
   const [loadingSales, setLoadingSales] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -426,13 +461,161 @@ export default function NewSaleScreen() {
       setSearchingCustomers(true);
       const response = await posService.autocompleteCustomers(query, 10);
       setCustomerSearchResults(response.data);
-      setShowCustomerDropdown(response.data.length > 0);
+      // Mostrar dropdown si hay resultados O si es un DNI/RUC válido para agregar
+      const isValidDNI = /^\d{8}$/.test(query.trim());
+      const isValidRUC = /^\d{11}$/.test(query.trim());
+      setShowCustomerDropdown(response.data.length > 0 || isValidDNI || isValidRUC);
     } catch (error) {
       console.error('❌ Error searching customers:', error);
       setCustomerSearchResults([]);
-      setShowCustomerDropdown(false);
+      // Aún mostrar dropdown si es DNI/RUC válido para permitir agregar
+      const isValidDNI = /^\d{8}$/.test(query.trim());
+      const isValidRUC = /^\d{11}$/.test(query.trim());
+      setShowCustomerDropdown(isValidDNI || isValidRUC);
     } finally {
       setSearchingCustomers(false);
+    }
+  };
+
+  // Verificar si el query es un DNI o RUC válido
+  const isValidDocumentQuery = () => {
+    const query = customerSearchQuery.trim();
+    const isValidDNI = /^\d{8}$/.test(query);
+    const isValidRUC = /^\d{11}$/.test(query);
+    return isValidDNI || isValidRUC;
+  };
+
+  // Abrir modal para agregar cliente con consulta a ApiPeru
+  const handleOpenAddCustomerModal = async () => {
+    const query = customerSearchQuery.trim();
+    const isValidDNI = /^\d{8}$/.test(query);
+    const isValidRUC = /^\d{11}$/.test(query);
+
+    if (!isValidDNI && !isValidRUC) {
+      Alert.alert('Error', 'Ingrese un DNI (8 dígitos) o RUC (11 dígitos) válido');
+      return;
+    }
+
+    // Resetear datos del formulario
+    setNewCustomerData({
+      customerType: isValidRUC ? 'EMPRESA' : 'PERSONA',
+      documentType: isValidRUC ? 'RUC' : 'DNI',
+      documentNumber: query,
+      nombres: '',
+      apellidoPaterno: '',
+      apellidoMaterno: '',
+      razonSocial: '',
+      email: '',
+      phone: '',
+      address: '',
+    });
+
+    setShowCustomerDropdown(false);
+    setShowAddCustomerModal(true);
+
+    // Consultar datos a ApiPeru
+    setLookupLoading(true);
+    try {
+      if (isValidDNI) {
+        const response = await posService.lookupDNI(query);
+        if (response.success && response.data) {
+          setNewCustomerData((prev) => ({
+            ...prev,
+            nombres: response.data!.nombres || '',
+            apellidoPaterno: response.data!.apellidoPaterno || '',
+            apellidoMaterno: response.data!.apellidoMaterno || '',
+          }));
+        }
+      } else if (isValidRUC) {
+        const response = await posService.lookupRUC(query);
+        if (response.success && response.data) {
+          setNewCustomerData((prev) => ({
+            ...prev,
+            razonSocial: response.data!.razonSocial || '',
+            address: response.data!.direccion || '',
+          }));
+        }
+      }
+    } catch (error) {
+      console.error('⚠️ Error consultando datos:', error);
+      // No mostrar error, el usuario puede llenar manualmente
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
+  // Crear nuevo cliente
+  const handleAddCustomer = async () => {
+    const {
+      customerType,
+      documentType,
+      documentNumber,
+      nombres,
+      apellidoPaterno,
+      apellidoMaterno,
+      razonSocial,
+      email,
+      phone,
+      address,
+    } = newCustomerData;
+
+    // Validaciones
+    if (customerType === 'PERSONA') {
+      if (!nombres.trim() || !apellidoPaterno.trim()) {
+        Alert.alert('Error', 'Debe ingresar nombres y apellido paterno');
+        return;
+      }
+    } else {
+      if (!razonSocial.trim()) {
+        Alert.alert('Error', 'Debe ingresar la razón social');
+        return;
+      }
+    }
+
+    setAddCustomerLoading(true);
+    try {
+      const requestData: CreateCustomerRequest = {
+        customerType,
+        documentType,
+        documentNumber,
+        ...(customerType === 'PERSONA'
+          ? {
+              nombres: nombres.trim(),
+              apellidoPaterno: apellidoPaterno.trim(),
+              apellidoMaterno: apellidoMaterno.trim() || undefined,
+            }
+          : {
+              razonSocial: razonSocial.trim(),
+            }),
+        ...(email.trim() && { email: email.trim() }),
+        ...(phone.trim() && { phone: phone.trim() }),
+        ...(address.trim() && { address: address.trim() }),
+      };
+
+      const newCustomer = await posService.createCustomer(requestData);
+
+      // Seleccionar automáticamente el cliente creado
+      const customerToSelect: Customer = {
+        id: newCustomer.id,
+        name: newCustomer.fullName || newCustomer.name,
+        fullName: newCustomer.fullName,
+        documentType: newCustomer.documentType,
+        documentNumber: newCustomer.documentNumber,
+        email: newCustomer.email,
+        phone: newCustomer.phone,
+        address: newCustomer.address,
+        customerType: newCustomer.customerType,
+      };
+
+      handleSelectCustomer(customerToSelect);
+      setShowAddCustomerModal(false);
+
+      Alert.alert('✅ Éxito', 'Cliente agregado correctamente');
+    } catch (error: any) {
+      console.error('❌ Error creando cliente:', error);
+      Alert.alert('Error', error.message || 'No se pudo crear el cliente');
+    } finally {
+      setAddCustomerLoading(false);
     }
   };
 
@@ -1549,7 +1732,7 @@ export default function NewSaleScreen() {
                 </View>
 
                 {/* Autocomplete Dropdown */}
-                {showCustomerDropdown && customerSearchResults.length > 0 && (
+                {showCustomerDropdown && (
                   <View style={styles.customerDropdown}>
                     <ScrollView style={styles.customerDropdownScroll} nestedScrollEnabled>
                       {customerSearchResults.map((customer) => (
@@ -1592,6 +1775,26 @@ export default function NewSaleScreen() {
                           </View>
                         </TouchableOpacity>
                       ))}
+
+                      {/* Opción Agregar Cliente - solo si es DNI/RUC válido */}
+                      {isValidDocumentQuery() && (
+                        <TouchableOpacity
+                          style={styles.addCustomerDropdownItem}
+                          onPress={handleOpenAddCustomerModal}
+                        >
+                          <View style={styles.addCustomerDropdownContent}>
+                            <Text style={styles.addCustomerIcon}>➕</Text>
+                            <View style={styles.addCustomerTextContainer}>
+                              <Text style={styles.addCustomerTitle}>Agregar Cliente</Text>
+                              <Text style={styles.addCustomerSubtitle}>
+                                {/^\d{8}$/.test(customerSearchQuery.trim())
+                                  ? `DNI: ${customerSearchQuery.trim()}`
+                                  : `RUC: ${customerSearchQuery.trim()}`}
+                              </Text>
+                            </View>
+                          </View>
+                        </TouchableOpacity>
+                      )}
                     </ScrollView>
                   </View>
                 )}
@@ -2808,6 +3011,205 @@ export default function NewSaleScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Add Customer Modal */}
+      <Modal
+        visible={showAddCustomerModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowAddCustomerModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.addCustomerModalContent}>
+            <View style={styles.addCustomerModalHeader}>
+              <Text style={styles.addCustomerModalTitle}>
+                {newCustomerData.customerType === 'EMPRESA'
+                  ? '🏢 Nueva Empresa'
+                  : '👤 Nuevo Cliente'}
+              </Text>
+              <TouchableOpacity
+                style={styles.addCustomerCloseButton}
+                onPress={() => setShowAddCustomerModal(false)}
+              >
+                <Text style={styles.addCustomerCloseButtonText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {lookupLoading ? (
+              <View style={styles.addCustomerLoading}>
+                <ActivityIndicator size="large" color="#4CAF50" />
+                <Text style={styles.addCustomerLoadingText}>Consultando datos...</Text>
+              </View>
+            ) : (
+              <ScrollView style={styles.addCustomerForm} showsVerticalScrollIndicator={false}>
+                {/* Documento */}
+                <View style={styles.addCustomerFormGroup}>
+                  <Text style={styles.addCustomerLabel}>
+                    {newCustomerData.documentType === 'RUC' ? 'RUC' : 'DNI'}
+                  </Text>
+                  <View style={styles.addCustomerDocumentBox}>
+                    <Text style={styles.addCustomerDocumentText}>
+                      {newCustomerData.documentNumber}
+                    </Text>
+                    <View
+                      style={[
+                        styles.addCustomerTypeBadge,
+                        newCustomerData.customerType === 'EMPRESA'
+                          ? styles.addCustomerTypeBadgeEmpresa
+                          : styles.addCustomerTypeBadgePersona,
+                      ]}
+                    >
+                      <Text style={styles.addCustomerTypeBadgeText}>
+                        {newCustomerData.customerType === 'EMPRESA' ? 'Empresa' : 'Persona'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Campos para PERSONA */}
+                {newCustomerData.customerType === 'PERSONA' && (
+                  <>
+                    <View style={styles.addCustomerFormGroup}>
+                      <Text style={styles.addCustomerLabel}>Nombres *</Text>
+                      <TextInput
+                        style={styles.addCustomerInput}
+                        value={newCustomerData.nombres}
+                        onChangeText={(text) =>
+                          setNewCustomerData((prev) => ({ ...prev, nombres: text }))
+                        }
+                        placeholder="Ingrese nombres"
+                        placeholderTextColor="#999"
+                        autoCapitalize="words"
+                      />
+                    </View>
+
+                    <View style={styles.addCustomerFormRow}>
+                      <View style={[styles.addCustomerFormGroup, { flex: 1, marginRight: 8 }]}>
+                        <Text style={styles.addCustomerLabel}>Apellido Paterno *</Text>
+                        <TextInput
+                          style={styles.addCustomerInput}
+                          value={newCustomerData.apellidoPaterno}
+                          onChangeText={(text) =>
+                            setNewCustomerData((prev) => ({ ...prev, apellidoPaterno: text }))
+                          }
+                          placeholder="Apellido paterno"
+                          placeholderTextColor="#999"
+                          autoCapitalize="words"
+                        />
+                      </View>
+
+                      <View style={[styles.addCustomerFormGroup, { flex: 1, marginLeft: 8 }]}>
+                        <Text style={styles.addCustomerLabel}>Apellido Materno</Text>
+                        <TextInput
+                          style={styles.addCustomerInput}
+                          value={newCustomerData.apellidoMaterno}
+                          onChangeText={(text) =>
+                            setNewCustomerData((prev) => ({ ...prev, apellidoMaterno: text }))
+                          }
+                          placeholder="Apellido materno"
+                          placeholderTextColor="#999"
+                          autoCapitalize="words"
+                        />
+                      </View>
+                    </View>
+                  </>
+                )}
+
+                {/* Campos para EMPRESA */}
+                {newCustomerData.customerType === 'EMPRESA' && (
+                  <>
+                    <View style={styles.addCustomerFormGroup}>
+                      <Text style={styles.addCustomerLabel}>Razón Social *</Text>
+                      <TextInput
+                        style={styles.addCustomerInput}
+                        value={newCustomerData.razonSocial}
+                        onChangeText={(text) =>
+                          setNewCustomerData((prev) => ({ ...prev, razonSocial: text }))
+                        }
+                        placeholder="Ingrese razón social"
+                        placeholderTextColor="#999"
+                        autoCapitalize="characters"
+                      />
+                    </View>
+
+                    <View style={styles.addCustomerFormGroup}>
+                      <Text style={styles.addCustomerLabel}>Dirección</Text>
+                      <TextInput
+                        style={styles.addCustomerInput}
+                        value={newCustomerData.address}
+                        onChangeText={(text) =>
+                          setNewCustomerData((prev) => ({ ...prev, address: text }))
+                        }
+                        placeholder="Ingrese dirección"
+                        placeholderTextColor="#999"
+                      />
+                    </View>
+                  </>
+                )}
+
+                {/* Campos opcionales (Email y Teléfono) */}
+                <View style={styles.addCustomerFormRow}>
+                  <View style={[styles.addCustomerFormGroup, { flex: 1, marginRight: 8 }]}>
+                    <Text style={styles.addCustomerLabel}>Email (opcional)</Text>
+                    <TextInput
+                      style={styles.addCustomerInput}
+                      value={newCustomerData.email}
+                      onChangeText={(text) =>
+                        setNewCustomerData((prev) => ({ ...prev, email: text }))
+                      }
+                      placeholder="correo@ejemplo.com"
+                      placeholderTextColor="#999"
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                    />
+                  </View>
+
+                  <View style={[styles.addCustomerFormGroup, { flex: 1, marginLeft: 8 }]}>
+                    <Text style={styles.addCustomerLabel}>Teléfono (opcional)</Text>
+                    <TextInput
+                      style={styles.addCustomerInput}
+                      value={newCustomerData.phone}
+                      onChangeText={(text) =>
+                        setNewCustomerData((prev) => ({ ...prev, phone: text }))
+                      }
+                      placeholder="999 999 999"
+                      placeholderTextColor="#999"
+                      keyboardType="phone-pad"
+                    />
+                  </View>
+                </View>
+              </ScrollView>
+            )}
+
+            {/* Botones de acción */}
+            <View style={styles.addCustomerButtons}>
+              <TouchableOpacity
+                style={[styles.addCustomerButton, styles.addCustomerCancelButton]}
+                onPress={() => setShowAddCustomerModal(false)}
+                disabled={addCustomerLoading}
+              >
+                <Text style={styles.addCustomerCancelButtonText}>Cancelar</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.addCustomerButton,
+                  styles.addCustomerSaveButton,
+                  (addCustomerLoading || lookupLoading) && styles.buttonDisabled,
+                ]}
+                onPress={handleAddCustomer}
+                disabled={addCustomerLoading || lookupLoading}
+              >
+                {addCustomerLoading ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.addCustomerSaveButtonText}>➕ Agregar Cliente</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -3167,6 +3569,168 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
     color: '#F44336',
+  },
+  // Add Customer Dropdown Item Styles
+  addCustomerDropdownItem: {
+    padding: 14,
+    backgroundColor: '#E8F5E9',
+    borderTopWidth: 2,
+    borderTopColor: '#4CAF50',
+  },
+  addCustomerDropdownContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  addCustomerIcon: {
+    fontSize: 24,
+  },
+  addCustomerTextContainer: {
+    flex: 1,
+  },
+  addCustomerTitle: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#2E7D32',
+  },
+  addCustomerSubtitle: {
+    fontSize: 12,
+    color: '#4CAF50',
+    marginTop: 2,
+  },
+  // Add Customer Modal Styles
+  addCustomerModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 24,
+    width: '90%',
+    maxWidth: 600,
+    maxHeight: '85%',
+  },
+  addCustomerModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  addCustomerModalTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  addCustomerCloseButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F5F5F5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addCustomerCloseButtonText: {
+    fontSize: 20,
+    color: '#666',
+    fontWeight: 'bold',
+  },
+  addCustomerLoading: {
+    padding: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addCustomerLoadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#666',
+  },
+  addCustomerForm: {
+    flex: 1,
+    marginBottom: 16,
+  },
+  addCustomerFormGroup: {
+    marginBottom: 16,
+  },
+  addCustomerFormRow: {
+    flexDirection: 'row',
+    marginBottom: 16,
+  },
+  addCustomerLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  addCustomerInput: {
+    backgroundColor: '#F9F9F9',
+    borderRadius: 10,
+    padding: 14,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    color: '#333',
+  },
+  addCustomerDocumentBox: {
+    backgroundColor: '#F5F5F5',
+    borderRadius: 10,
+    padding: 14,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  addCustomerDocumentText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    fontFamily: 'monospace',
+  },
+  addCustomerTypeBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  addCustomerTypeBadgeEmpresa: {
+    backgroundColor: '#E3F2FD',
+  },
+  addCustomerTypeBadgePersona: {
+    backgroundColor: '#F3E5F5',
+  },
+  addCustomerTypeBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
+  },
+  addCustomerButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  addCustomerButton: {
+    flex: 1,
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addCustomerCancelButton: {
+    backgroundColor: '#F5F5F5',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  addCustomerCancelButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#666',
+  },
+  addCustomerSaveButton: {
+    backgroundColor: '#4CAF50',
+  },
+  addCustomerSaveButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   cartList: {
     flex: 1,

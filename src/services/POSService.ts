@@ -25,6 +25,9 @@ import type {
   CreateCashRegisterRequest,
   ActiveSalesResponse,
   CreditNoteResponse,
+  ApiPeruDNIResponse,
+  ApiPeruRUCResponse,
+  CreateCustomerRequest,
 } from '@/types/pos';
 
 class POSService {
@@ -416,6 +419,47 @@ class POSService {
 
   async getCustomer(id: string): Promise<Customer> {
     return this.request<Customer>(`/customers/${id}`);
+  }
+
+  // ApiPeru - Consulta DNI/RUC
+  async lookupDNI(dni: string): Promise<ApiPeruDNIResponse> {
+    console.log('🔍 [API] lookupDNI - Consultando DNI:', dni);
+    try {
+      const response = await this.request<ApiPeruDNIResponse>(`/customers/apiperu/dni/${dni}`);
+      console.log('✅ [API] lookupDNI - Response:', JSON.stringify(response, null, 2));
+      return response;
+    } catch (error) {
+      console.error('❌ [API] lookupDNI - Error:', error);
+      throw error;
+    }
+  }
+
+  async lookupRUC(ruc: string): Promise<ApiPeruRUCResponse> {
+    console.log('🔍 [API] lookupRUC - Consultando RUC:', ruc);
+    try {
+      const response = await this.request<ApiPeruRUCResponse>(`/customers/apiperu/ruc/${ruc}`);
+      console.log('✅ [API] lookupRUC - Response:', JSON.stringify(response, null, 2));
+      return response;
+    } catch (error) {
+      console.error('❌ [API] lookupRUC - Error:', error);
+      throw error;
+    }
+  }
+
+  // Create Customer
+  async createCustomer(data: CreateCustomerRequest): Promise<Customer> {
+    console.log('➕ [API] createCustomer - Creando cliente:', JSON.stringify(data, null, 2));
+    try {
+      const response = await this.request<Customer>('/customers', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+      console.log('✅ [API] createCustomer - Cliente creado:', JSON.stringify(response, null, 2));
+      return response;
+    } catch (error) {
+      console.error('❌ [API] createCustomer - Error:', error);
+      throw error;
+    }
   }
 
   // Regenerate ticket

@@ -265,6 +265,54 @@ export interface Customer {
   label?: string;
 }
 
+// ApiPeru Response Types
+export interface ApiPeruDNIResponse {
+  success: boolean;
+  data?: {
+    dni: string;
+    nombres: string;
+    apellidoPaterno: string;
+    apellidoMaterno: string;
+    codVerifica?: string;
+  };
+  message?: string;
+}
+
+export interface ApiPeruRUCResponse {
+  success: boolean;
+  data?: {
+    ruc: string;
+    razonSocial: string;
+    nombreComercial?: string;
+    direccion?: string;
+    estado?: string;
+    condicion?: string;
+    departamento?: string;
+    provincia?: string;
+    distrito?: string;
+    ubigeo?: string;
+    tipo?: string;
+  };
+  message?: string;
+}
+
+// Create Customer Request
+export interface CreateCustomerRequest {
+  customerType: 'PERSONA' | 'EMPRESA';
+  documentType: 'DNI' | 'RUC' | 'CE' | 'PASSPORT';
+  documentNumber: string;
+  // Para PERSONA
+  nombres?: string;
+  apellidoPaterno?: string;
+  apellidoMaterno?: string;
+  // Para EMPRESA
+  razonSocial?: string;
+  // Opcionales
+  email?: string;
+  phone?: string;
+  address?: string;
+}
+
 // Request types
 export interface OpenSessionRequest {
   cashRegisterId: string;
