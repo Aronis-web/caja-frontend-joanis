@@ -203,9 +203,15 @@ function createWindow(port) {
       const requestHeaders = { ...details.requestHeaders };
 
       // Si es una petición al backend, agregar headers necesarios
-      if (details.url.includes('api.app-joanis-backend.com')) {
-        console.log('[ELECTRON] 🌐 Interceptando petición al backend:', details.url);
-        requestHeaders['Origin'] = 'https://app.app-joanis-backend.com';
+      // Solo interceptar si la URL BASE es del backend, no si contiene el string en parámetros
+      try {
+        const urlObj = new URL(details.url);
+        if (urlObj.hostname === 'api.app-joanis-backend.com') {
+          console.log('[ELECTRON] 🌐 Interceptando petición al backend:', details.url);
+          requestHeaders['Origin'] = 'https://app.app-joanis-backend.com';
+        }
+      } catch (e) {
+        // URL inválida, ignorar
       }
 
       callback({ requestHeaders });
@@ -406,6 +412,157 @@ ipcMain.handle('print-pdf', async (event, { base64Data, filename }) => {
     }
   } catch (error) {
     console.error('[ELECTRON] ❌ Error en print-pdf:', error);
+    return {
+      success: false,
+      error: error.message,
+      details: error.toString()
+    };
+  }
+});
+
+// ===== HANDLER PARA IMPRIMIR HTML (TICKETS OFFLINE) =====
+
+ipcMain.handle('print-html', async (event, { htmlContent, filename }) => {
+  try {
+    console.log('[ELECTRON] 🖨️ Iniciando impresión de HTML:', filename);
+
+    // Guardar HTML a archivo temporal (más confiable que data URL)
+    const tempDir = app.getPath('temp');
+    const htmlFilePath = path.join(tempDir, `ticket_${Date.now()}.html`);
+    fs.writeFileSync(htmlFilePath, htmlContent, 'utf8');
+    console.log('[ELECTRON] 📄 HTML guardado temporalmente en:', htmlFilePath);
+
+    // Crear una ventana para renderizar el HTML
+    const printWindow = new BrowserWindow({
+      width: 400,
+      height: 1200,
+      show: false, // Cambiar a true para debug visual
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        webSecurity: false,
+        allowRunningInsecureContent: true,
+      }
+    });
+
+    // Cargar el HTML desde archivo
+    console.log('[ELECTRON] 📄 Cargando HTML en ventana...');
+    await printWindow.loadFile(htmlFilePath);
+
+    // Esperar a que las imágenes se carguen
+    console.log('[ELECTRON] ⏳ Esperando que las imágenes se carguen...');
+    const imageInfo = await printWindow.webContents.executeJavaScript(`
+      new Promise((resolve) => {
+        const images = document.querySelectorAll('img');
+        const bodyText = document.body ? document.body.innerText.substring(0, 200) : 'NO BODY';
+
+        if (images.length === 0) {
+          resolve({ count: 0, loaded: 0, bodyPreview: bodyText });
+          return;
+        }
+
+        let loaded = 0;
+        let errors = 0;
+        const checkComplete = (isError) => {
+          if (isError) errors++;
+          loaded++;
+          if (loaded >= images.length) {
+            resolve({ count: images.length, loaded: loaded - errors, errors, bodyPreview: bodyText });
+          }
+        };
+
+        images.forEach(img => {
+          if (img.complete && img.naturalHeight !== 0) {
+            checkComplete(false);
+          } else if (img.complete) {
+            checkComplete(true); // Loaded but broken
+          } else {
+            img.onload = () => checkComplete(false);
+            img.onerror = () => checkComplete(true);
+          }
+        });
+
+        // Timeout de seguridad
+        setTimeout(() => resolve({ count: images.length, loaded, errors, timeout: true, bodyPreview: bodyText }), 5000);
+      });
+    `);
+
+    console.log('[ELECTRON] 📊 Info de contenido:', JSON.stringify(imageInfo));
+
+    // Pequeña pausa adicional para renderizado completo
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    console.log('[ELECTRON] 📄 HTML y recursos cargados, imprimiendo...');
+
+    // Obtener lista de impresoras para encontrar la térmica
+    const printers = printWindow.webContents.getPrintersAsync
+      ? await printWindow.webContents.getPrintersAsync()
+      : printWindow.webContents.getPrinters();
+
+    console.log('[ELECTRON] 🖨️ Impresoras disponibles:', printers.map(p => p.name).join(', '));
+
+    // Buscar impresora térmica
+    const thermalPrinter = printers.find(p =>
+      p.name.toLowerCase().includes('80') ||
+      p.name.toLowerCase().includes('thermal') ||
+      p.name.toLowerCase().includes('pos') ||
+      p.name.toLowerCase().includes('ticket')
+    );
+
+    const printerName = thermalPrinter ? thermalPrinter.name : '';
+
+    if (thermalPrinter) {
+      console.log('[ELECTRON] 🎯 Impresora térmica detectada:', thermalPrinter.name);
+    } else {
+      console.log('[ELECTRON] ⚠️ No se detectó impresora térmica específica, usando predeterminada');
+    }
+
+    // Imprimir directamente usando webContents.print()
+    console.log('[ELECTRON] 🖨️ Enviando a impresora...');
+
+    const printResult = await new Promise((resolve) => {
+      printWindow.webContents.print({
+        silent: true, // Imprimir sin diálogo
+        printBackground: true,
+        deviceName: printerName,
+        margins: {
+          marginType: 'none'
+        },
+        pageSize: {
+          width: 80000, // 80mm en microns
+          height: 297000 // Altura automática
+        }
+      }, (success, failureReason) => {
+        resolve({ success, failureReason });
+      });
+    });
+
+    // Cerrar la ventana oculta
+    printWindow.close();
+
+    // Limpiar archivo temporal
+    try {
+      fs.unlinkSync(htmlFilePath);
+      console.log('[ELECTRON] 🗑️ Archivo temporal eliminado');
+    } catch (cleanupError) {
+      console.log('[ELECTRON] ⚠️ No se pudo eliminar archivo temporal:', cleanupError.message);
+    }
+
+    if (printResult.success) {
+      console.log('[ELECTRON] ✅ Ticket offline impreso exitosamente');
+      return {
+        success: true,
+        printed: true
+      };
+    } else {
+      console.error('[ELECTRON] ❌ Error al imprimir:', printResult.failureReason);
+      return {
+        success: false,
+        error: printResult.failureReason || 'Error desconocido al imprimir'
+      };
+    }
+  } catch (error) {
+    console.error('[ELECTRON] ❌ Error en print-html:', error);
     return {
       success: false,
       error: error.message,

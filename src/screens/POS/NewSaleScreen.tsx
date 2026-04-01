@@ -28,7 +28,12 @@ import { posService } from '@/services/POSService';
 import { networkMonitor } from '@/services/NetworkMonitor';
 import { OfflineModeSwitch } from '@/components/offline';
 import type { Product, Customer, CreateSaleResponse, ActiveSalesResponse } from '@/types/pos';
-import type { OfflineProduct, OfflineSaleItem, OfflineSalePayment } from '@/types/offline';
+import type {
+  OfflineProduct,
+  OfflineSale,
+  OfflineSaleItem,
+  OfflineSalePayment,
+} from '@/types/offline';
 import { ROUTES } from '@/constants/routes';
 
 export default function NewSaleScreen() {
@@ -98,6 +103,11 @@ export default function NewSaleScreen() {
   const [showSaleSuccessModal, setShowSaleSuccessModal] = useState(false);
   const [saleResponse, setSaleResponse] = useState<CreateSaleResponse | null>(null);
   const [saleChange, setSaleChange] = useState(0); // Vuelto de la venta
+
+  // Estados para venta offline
+  const [showOfflineSaleSuccessModal, setShowOfflineSaleSuccessModal] = useState(false);
+  const [offlineSaleResponse, setOfflineSaleResponse] = useState<OfflineSale | null>(null);
+  const [offlineSaleChange, setOfflineSaleChange] = useState(0);
   const [showImageModal, setShowImageModal] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
@@ -591,22 +601,15 @@ export default function NewSaleScreen() {
         // Cerrar modal de pago
         setShowPaymentModal(false);
 
-        // Mostrar alerta de éxito con información del ticket offline
-        Alert.alert(
-          '✅ Venta Offline Registrada',
-          `Código: ${offlineSale.offlineTicketCode}\n\nTotal: S/ ${(offlineSale.totalCents / 100).toFixed(2)}\nVuelto: S/ ${change.toFixed(2)}\n\n⚠️ Este ticket NO es un comprobante válido ante SUNAT.\n\nEl cliente podrá obtener su comprobante escaneando el QR cuando se restablezca la conexión.`,
-          [
-            {
-              text: 'Nueva Venta',
-              onPress: () => {
-                handleNewSale();
-              },
-            },
-          ]
-        );
+        // Guardar la respuesta de venta offline y mostrar modal de éxito
+        setOfflineSaleResponse(offlineSale);
+        setOfflineSaleChange(change);
+        setShowOfflineSaleSuccessModal(true);
 
-        // TODO: Imprimir ticket offline con QR
-        // Esto se implementará cuando tengamos el generador de tickets offline
+        // Imprimir ticket offline automáticamente
+        setTimeout(() => {
+          handlePrintOfflineTicket(offlineSale);
+        }, 500);
       } catch (error) {
         console.error('❌ Error al procesar venta offline:', error);
         Alert.alert(
@@ -957,6 +960,318 @@ export default function NewSaleScreen() {
     setCustomerSearchResults([]);
     setShowCustomerDropdown(false);
     setDocumentType('03');
+  };
+
+  // Nueva venta desde modal offline
+  const handleNewSaleFromOffline = () => {
+    setShowOfflineSaleSuccessModal(false);
+    setOfflineSaleResponse(null);
+    setOfflineSaleChange(0);
+    clearCart();
+    clearPayments();
+    setSelectedCustomer(null);
+    setCustomerSearchQuery('');
+    setCustomerSearchResults([]);
+    setShowCustomerDropdown(false);
+    setDocumentType('03');
+  };
+
+  // Imprimir ticket offline con QR
+  const handlePrintOfflineTicket = async (sale?: OfflineSale) => {
+    const saleData = sale || offlineSaleResponse;
+    if (!saleData) {
+      Alert.alert('Error', 'No hay datos de venta para imprimir');
+      return;
+    }
+
+    try {
+      console.log('🖨️ [OFFLINE] Generando ticket offline...');
+
+      // Obtener información de la empresa desde localStorage
+      const companyInfoStr = localStorage.getItem('@offline:company_info');
+      const companyInfo = companyInfoStr
+        ? JSON.parse(companyInfoStr)
+        : {
+            ruc: '00000000000',
+            razonSocial: 'Empresa',
+            nombreComercial: 'Tienda',
+            direccion: 'Dirección',
+          };
+
+      // Generar URL del QR para validación posterior
+      const qrUrl = `https://api.app-joanis-backend.com/public/receipt/${saleData.token}`;
+
+      // Generar contenido HTML del ticket
+      const ticketHtml = generateOfflineTicketHtml(saleData, companyInfo, qrUrl);
+
+      // Verificar si estamos en Electron
+      const isElectron = !!(window as any).electronAPI?.printHTML;
+
+      if (isElectron) {
+        // Usar API de Electron para imprimir directamente a la térmica
+        console.log('🖨️ [OFFLINE] Usando Electron para impresión directa...');
+        const filename = `ticket_offline_${saleData.offlineTicketCode.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+        const result = await (window as any).electronAPI.printHTML(ticketHtml, filename);
+
+        if (result.success) {
+          console.log('✅ [OFFLINE] Ticket impreso exitosamente en impresora térmica');
+        } else {
+          console.error('❌ [OFFLINE] Error al imprimir:', result.error);
+          Alert.alert('Error de impresión', result.error || 'No se pudo imprimir el ticket');
+        }
+      } else {
+        // Fallback para navegador web: abrir ventana de impresión
+        console.log('🖨️ [OFFLINE] Usando ventana de impresión del navegador...');
+        const printWindow = window.open('', '_blank', 'width=400,height=600');
+        if (printWindow) {
+          printWindow.document.write(ticketHtml);
+          printWindow.document.close();
+          printWindow.focus();
+          setTimeout(() => {
+            printWindow.print();
+          }, 250);
+        } else {
+          Alert.alert('Error', 'No se pudo abrir la ventana de impresión');
+        }
+      }
+
+      console.log('✅ [OFFLINE] Ticket enviado a impresión');
+    } catch (error) {
+      console.error('❌ [OFFLINE] Error al imprimir ticket:', error);
+      Alert.alert('Error', 'No se pudo imprimir el ticket offline');
+    }
+  };
+
+  // Generar HTML del ticket offline
+  const generateOfflineTicketHtml = (
+    sale: OfflineSale,
+    companyInfo: { ruc: string; razonSocial: string; nombreComercial?: string; direccion: string },
+    qrUrl: string
+  ): string => {
+    const fechaVenta = new Date(sale.createdAt).toLocaleString('es-PE', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    const itemsHtml = sale.items
+      .map(
+        (item) => `
+        <tr>
+          <td style="text-align:left;padding:2px 0;">${item.productName}</td>
+          <td style="text-align:center;">${item.quantity}</td>
+          <td style="text-align:right;">S/ ${(item.unitPriceCents / 100).toFixed(2)}</td>
+          <td style="text-align:right;">S/ ${((item.quantity * item.unitPriceCents - item.discountCents) / 100).toFixed(2)}</td>
+        </tr>
+      `
+      )
+      .join('');
+
+    const paymentsHtml = sale.payments
+      .map(
+        (payment) => `
+        <div style="display:flex;justify-content:space-between;">
+          <span>${payment.paymentMethodName}:</span>
+          <span>S/ ${(payment.amountCents / 100).toFixed(2)}</span>
+        </div>
+      `
+      )
+      .join('');
+
+    // Generar QR como imagen usando API de QR (tamaño grande para impresoras térmicas)
+    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=0&data=${encodeURIComponent(qrUrl)}`;
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Ticket Offline - ${sale.offlineTicketCode}</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body {
+            font-family: 'Lucida Console', 'Courier New', monospace;
+            font-size: 14px;
+            width: 72mm;
+            max-width: 72mm;
+            padding: 4mm;
+            background: white;
+            color: #000;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+            line-height: 1.3;
+          }
+          .header { text-align: center; margin-bottom: 12px; }
+          .company-name { font-size: 18px; font-weight: bold; letter-spacing: 0.5px; }
+          .company-info { font-size: 13px; color: #000; margin-top: 2px; }
+          .divider { border-top: 2px dashed #000; margin: 10px 0; }
+          .warning-box {
+            border: 2px solid #000;
+            padding: 10px;
+            margin: 12px 0;
+            text-align: center;
+          }
+          .warning-title { font-weight: bold; font-size: 15px; color: #000; }
+          .warning-text { font-size: 12px; color: #000; margin-top: 4px; }
+          .ticket-code { font-size: 18px; font-weight: bold; text-align: center; margin: 12px 0; letter-spacing: 1px; }
+          .info-row { display: flex; justify-content: space-between; margin: 5px 0; font-size: 13px; }
+          table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+          th { text-align: left; border-bottom: 2px solid #000; padding: 5px 0; font-size: 12px; font-weight: bold; }
+          td { font-size: 12px; padding: 4px 0; vertical-align: top; }
+          .totals { margin-top: 12px; }
+          .total-row { display: flex; justify-content: space-between; margin: 5px 0; font-size: 14px; }
+          .total-final { font-size: 20px; font-weight: bold; }
+          .qr-section { text-align: center; margin: 16px 0; }
+          .qr-title { font-weight: bold; font-size: 14px; margin-bottom: 8px; }
+          .qr-instructions { font-size: 11px; color: #000; margin-top: 8px; line-height: 1.4; }
+          .footer { text-align: center; font-size: 11px; color: #000; margin-top: 16px; }
+          .qr-notice-box {
+            border: 2px solid #000;
+            padding: 10px;
+            margin-bottom: 14px;
+            text-align: center;
+          }
+          .qr-notice-title { font-weight: bold; font-size: 14px; margin-bottom: 6px; }
+          .qr-notice-text { font-size: 11px; line-height: 1.5; }
+          @media print {
+            @page {
+              size: 80mm auto;
+              margin: 0;
+            }
+            html, body {
+              width: 72mm;
+              max-width: 72mm;
+              margin: 0;
+              padding: 4mm;
+            }
+            .no-print { display: none; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div class="company-name">${companyInfo.nombreComercial || companyInfo.razonSocial}</div>
+          <div class="company-info">RUC: ${companyInfo.ruc}</div>
+          <div class="company-info">${companyInfo.direccion}</div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="warning-box">
+          <div class="warning-title">⚠️ TICKET DE CONTINGENCIA</div>
+          <div class="warning-text">Este documento NO es un comprobante válido ante SUNAT</div>
+        </div>
+
+        <div class="ticket-code">📋 ${sale.offlineTicketCode}</div>
+
+        <div class="info-row">
+          <span>Fecha:</span>
+          <span>${fechaVenta}</span>
+        </div>
+        <div class="info-row">
+          <span>Tipo Doc:</span>
+          <span>${sale.documentType === '01' ? 'Factura' : 'Boleta'}</span>
+        </div>
+        ${
+          sale.customerSnapshot
+            ? `
+        <div class="info-row">
+          <span>Cliente:</span>
+          <span>${sale.customerSnapshot.name}</span>
+        </div>
+        <div class="info-row">
+          <span>Doc:</span>
+          <span>${sale.customerSnapshot.documentNumber}</span>
+        </div>
+        `
+            : ''
+        }
+
+        <div class="divider"></div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th style="text-align:center;">Cant</th>
+              <th style="text-align:right;">P.Unit</th>
+              <th style="text-align:right;">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemsHtml}
+          </tbody>
+        </table>
+
+        <div class="divider"></div>
+
+        <div class="totals">
+          <div class="total-row">
+            <span>Subtotal:</span>
+            <span>S/ ${(sale.subtotalCents / 100).toFixed(2)}</span>
+          </div>
+          <div class="total-row">
+            <span>IGV (18%):</span>
+            <span>S/ ${(sale.taxCents / 100).toFixed(2)}</span>
+          </div>
+          ${
+            sale.discountCents > 0
+              ? `
+          <div class="total-row">
+            <span>Descuento:</span>
+            <span>-S/ ${(sale.discountCents / 100).toFixed(2)}</span>
+          </div>
+          `
+              : ''
+          }
+          <div class="divider"></div>
+          <div class="total-row total-final">
+            <span>TOTAL:</span>
+            <span>S/ ${(sale.totalCents / 100).toFixed(2)}</span>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div style="margin: 10px 0;">
+          <strong>Pagos:</strong>
+          ${paymentsHtml}
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="qr-section">
+          <div class="qr-notice-box">
+            <div class="qr-notice-title">*** AVISO IMPORTANTE ***</div>
+            <div class="qr-notice-text">
+              Nuestro sistema de facturacion<br>
+              electronica no esta disponible<br>
+              temporalmente.<br><br>
+              Con este codigo QR podras descargar<br>
+              tu comprobante electronico valido<br>
+              <strong>EN UN MAXIMO DE 24 HORAS</strong><br>
+              una vez restablecido el servicio.
+            </div>
+          </div>
+          <div class="qr-title">ESCANEA PARA TU COMPROBANTE</div>
+          <img src="${qrImageUrl}" alt="QR Code" style="width:45mm;height:45mm;margin:10px auto;display:block;image-rendering:pixelated;">
+          <div class="qr-instructions">
+            Guarda este ticket.<br>
+            El codigo QR te permitira descargar<br>
+            tu comprobante electronico oficial.
+          </div>
+        </div>
+
+        <div class="footer">
+          <p>Gracias por su compra</p>
+          <p>Ticket generado en modo contingencia</p>
+        </div>
+      </body>
+      </html>
+    `;
   };
 
   const formatCurrency = (amount: number) => `S/ ${amount.toFixed(2)}`;
@@ -2388,6 +2703,111 @@ export default function NewSaleScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Offline Sale Success Modal */}
+      <Modal
+        visible={showOfflineSaleSuccessModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={handleNewSaleFromOffline}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.offlineSuccessModalContent}>
+            <View style={styles.offlineSuccessHeader}>
+              <Text style={styles.offlineSuccessIcon}>📴</Text>
+              <Text style={styles.offlineSuccessTitle}>Venta Offline Registrada</Text>
+            </View>
+
+            {/* Warning banner */}
+            <View style={styles.offlineWarningBanner}>
+              <Text style={styles.offlineWarningIcon}>⚠️</Text>
+              <Text style={styles.offlineWarningText}>
+                Este ticket NO es un comprobante válido ante SUNAT.{'\n'}
+                El cliente podrá obtener su comprobante escaneando el QR.
+              </Text>
+            </View>
+
+            {offlineSaleResponse && (
+              <View style={styles.successDetails}>
+                {/* Total a Pagar - Grande y Destacado */}
+                <View style={styles.offlineSuccessTotalBox}>
+                  <Text style={styles.successTotalLabel}>TOTAL</Text>
+                  <Text style={styles.successTotalValue}>
+                    {formatCurrency(offlineSaleResponse.totalCents / 100)}
+                  </Text>
+                </View>
+
+                {/* Vuelto - Grande y Destacado */}
+                {offlineSaleChange > 0 && (
+                  <View style={styles.successChangeBox}>
+                    <Text style={styles.successChangeLabel}>💰 VUELTO</Text>
+                    <Text style={styles.successChangeValue}>
+                      {formatCurrency(offlineSaleChange)}
+                    </Text>
+                  </View>
+                )}
+
+                <View style={styles.divider} />
+
+                <View style={styles.successRow}>
+                  <Text style={styles.successLabel}>Código Offline:</Text>
+                  <Text style={styles.offlineTicketCode}>
+                    {offlineSaleResponse.offlineTicketCode}
+                  </Text>
+                </View>
+
+                <View style={styles.successRow}>
+                  <Text style={styles.successLabel}>Tipo de Documento:</Text>
+                  <Text style={styles.successValue}>
+                    {offlineSaleResponse.documentType === '01' ? 'Factura' : 'Boleta'}
+                  </Text>
+                </View>
+
+                <View style={styles.successRow}>
+                  <Text style={styles.successLabel}>Fecha:</Text>
+                  <Text style={styles.successValue}>
+                    {new Date(offlineSaleResponse.createdAt).toLocaleString('es-PE', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </Text>
+                </View>
+
+                <View style={styles.successRow}>
+                  <Text style={styles.successLabel}>Productos:</Text>
+                  <Text style={styles.successValue}>{offlineSaleResponse.items.length} items</Text>
+                </View>
+
+                <View style={styles.successRow}>
+                  <Text style={styles.successLabel}>Estado:</Text>
+                  <View style={styles.offlinePendingBadge}>
+                    <Text style={styles.offlinePendingText}>⏳ Pendiente de sincronizar</Text>
+                  </View>
+                </View>
+              </View>
+            )}
+
+            <View style={styles.successButtons}>
+              <TouchableOpacity
+                style={[styles.button, styles.offlinePrintButton]}
+                onPress={() => handlePrintOfflineTicket()}
+              >
+                <Text style={styles.printButtonText}>🖨️ Reimprimir Ticket</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.button, styles.newSaleButton]}
+                onPress={handleNewSaleFromOffline}
+              >
+                <Text style={styles.newSaleButtonText}>Nueva Venta</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -3749,6 +4169,93 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: 'bold',
     color: '#FFFFFF',
+  },
+  // Offline Success Modal Styles
+  offlineSuccessModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 32,
+    width: '90%',
+    maxWidth: 700,
+    maxHeight: '95%',
+    borderWidth: 3,
+    borderColor: '#FF9800',
+  },
+  offlineSuccessHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    gap: 12,
+  },
+  offlineSuccessIcon: {
+    fontSize: 48,
+  },
+  offlineSuccessTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#FF9800',
+  },
+  offlineWarningBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF3CD',
+    borderWidth: 2,
+    borderColor: '#FFC107',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    gap: 12,
+  },
+  offlineWarningIcon: {
+    fontSize: 32,
+  },
+  offlineWarningText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#856404',
+    fontWeight: '600',
+    lineHeight: 20,
+  },
+  offlineSuccessTotalBox: {
+    backgroundColor: '#FFF8E1',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    marginBottom: 20,
+    borderWidth: 3,
+    borderColor: '#FF9800',
+  },
+  offlineTicketCode: {
+    fontSize: 18,
+    color: '#FF9800',
+    fontWeight: 'bold',
+    fontFamily: 'monospace',
+    textAlign: 'right',
+    flex: 1,
+    marginLeft: 16,
+  },
+  offlinePendingBadge: {
+    backgroundColor: '#FFF3CD',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#FFC107',
+  },
+  offlinePendingText: {
+    fontSize: 14,
+    color: '#856404',
+    fontWeight: '600',
+  },
+  offlinePrintButton: {
+    flex: 1,
+    backgroundColor: '#FF9800',
+    paddingVertical: 52,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   // Image Modal Styles
   imageModalOverlay: {

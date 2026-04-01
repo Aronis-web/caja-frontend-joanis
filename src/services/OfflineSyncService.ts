@@ -91,11 +91,10 @@ class OfflineSyncService {
       console.log('🎫 [SYNC] Verificando pool de tokens...');
       await this.ensureTokenPool(cashRegisterId);
 
-      // 3. Sincronizar ventas pendientes si las hay
+      // NOTA: Las ventas pendientes se sincronizan MANUALMENTE desde configuración
       const pendingCount = await offlineDatabase.getPendingSalesCount();
       if (pendingCount > 0) {
-        console.log(`📤 [SYNC] Sincronizando ${pendingCount} ventas pendientes...`);
-        await this.syncPendingSales(cashRegisterId);
+        console.log(`📋 [SYNC] Hay ${pendingCount} ventas pendientes (sincronizar manualmente)`);
       }
 
       this.emit('sync:complete', { type: 'initial' });
@@ -120,18 +119,17 @@ class OfflineSyncService {
     this.emit('sync:start', { type: 'reconnect' });
 
     try {
-      // 1. Sincronizar ventas pendientes
+      // NOTA: Las ventas pendientes se sincronizan MANUALMENTE desde configuración
       const pendingCount = await offlineDatabase.getPendingSalesCount();
       if (pendingCount > 0) {
-        console.log(`📤 [SYNC] Sincronizando ${pendingCount} ventas pendientes...`);
-        await this.syncPendingSales(cashRegisterId);
+        console.log(`📋 [SYNC] Hay ${pendingCount} ventas pendientes (sincronizar manualmente)`);
       }
 
-      // 2. Reponer tokens hasta 1000
+      // 1. Reponer tokens hasta 1000
       console.log('🎫 [SYNC] Reponiendo tokens...');
       await this.ensureTokenPool(cashRegisterId);
 
-      // 3. Actualizar catálogo (delta)
+      // 2. Actualizar catálogo (delta)
       console.log('📦 [SYNC] Actualizando catálogo...');
       await this.syncProducts(cashRegisterId, 'delta');
 
@@ -202,7 +200,9 @@ class OfflineSyncService {
       // Guardar companyInfo si viene en la respuesta
       if (response.companyInfo) {
         localStorage.setItem('@offline:company_info', JSON.stringify(response.companyInfo));
-        console.log(`🏢 [SYNC] Información de empresa guardada: ${response.companyInfo.razonSocial}`);
+        console.log(
+          `🏢 [SYNC] Información de empresa guardada: ${response.companyInfo.razonSocial}`
+        );
       }
 
       // Mapear productos al formato local con validación
@@ -214,10 +214,7 @@ class OfflineSyncService {
         const stock = p.availableStock ?? p.serverStock ?? 0;
         // Normalizar taxType a mayúsculas para consistencia interna
         const rawTaxType = p.taxType || 'gravado';
-        const normalizedTaxType = rawTaxType.toUpperCase() as
-          | 'GRAVADO'
-          | 'EXONERADO'
-          | 'INAFECTO';
+        const normalizedTaxType = rawTaxType.toUpperCase() as 'GRAVADO' | 'EXONERADO' | 'INAFECTO';
 
         // Validar campos requeridos
         if (!p.id) {

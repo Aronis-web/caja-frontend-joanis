@@ -151,6 +151,14 @@ class OfflineDatabaseService {
       )
     `);
 
+    // Migración: agregar columna codigoAfectacionIgv si no existe
+    try {
+      this.db.run(`ALTER TABLE products ADD COLUMN codigoAfectacionIgv TEXT`);
+      console.log('🔄 [OFFLINE_DB] Columna codigoAfectacionIgv agregada');
+    } catch (e) {
+      // La columna ya existe, ignorar el error
+    }
+
     // Índices para búsqueda rápida
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)`);

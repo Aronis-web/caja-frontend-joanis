@@ -15,6 +15,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   printPDF: (base64Data, filename) => {
     return ipcRenderer.invoke('print-pdf', { base64Data, filename });
   },
+  // Función para imprimir HTML (tickets offline)
+  printHTML: (htmlContent, filename) => {
+    return ipcRenderer.invoke('print-html', { htmlContent, filename });
+  },
   // Funciones para actualizaciones
   getAppVersion: () => {
     return ipcRenderer.invoke('get-app-version');

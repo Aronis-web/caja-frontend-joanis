@@ -74,6 +74,7 @@ export default function POSDashboardScreen() {
   const [syncing, setSyncing] = useState(false);
   const [syncingStock, setSyncingStock] = useState(false);
   const [syncingTokens, setSyncingTokens] = useState(false);
+  const [syncingSales, setSyncingSales] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
@@ -290,6 +291,35 @@ export default function POSDashboardScreen() {
       setSyncingTokens(false);
     }
   }, [selectedCashRegister?.id, refreshStats]);
+
+  // Sincronizar ventas pendientes (MANUAL)
+  const handleSyncPendingSales = useCallback(async () => {
+    if (!selectedCashRegister?.id) {
+      setSyncError('No hay caja registradora seleccionada');
+      return;
+    }
+
+    if (pendingSales === 0) {
+      setSyncSuccess('No hay ventas pendientes para sincronizar');
+      return;
+    }
+
+    setSyncingSales(true);
+    setSyncError(null);
+    setSyncSuccess(null);
+
+    try {
+      console.log('📤 [SETTINGS] Sincronizando ventas pendientes...');
+      await offlineSyncService.syncPendingSales(selectedCashRegister.id);
+      await refreshStats();
+      setSyncSuccess('Ventas pendientes sincronizadas correctamente');
+    } catch (error) {
+      console.error('❌ [SETTINGS] Error sincronizando ventas:', error);
+      setSyncError(error instanceof Error ? error.message : 'Error sincronizando ventas pendientes');
+    } finally {
+      setSyncingSales(false);
+    }
+  }, [selectedCashRegister?.id, pendingSales, refreshStats]);
 
   // Limpiar base de datos offline
   const handleClearOfflineData = useCallback(async () => {
@@ -562,7 +592,7 @@ export default function POSDashboardScreen() {
                     <TouchableOpacity
                       style={[styles.syncActionButton, styles.syncActionPrimary]}
                       onPress={handleFullSync}
-                      disabled={syncing || syncingStock || syncingTokens}
+                      disabled={syncing || syncingStock || syncingTokens || syncingSales}
                     >
                       {syncing ? (
                         <ActivityIndicator size="small" color="#fff" />
@@ -581,7 +611,7 @@ export default function POSDashboardScreen() {
                     <TouchableOpacity
                       style={[styles.syncActionButton, styles.syncActionSecondary]}
                       onPress={handleSyncProducts}
-                      disabled={syncing || syncingStock || syncingTokens}
+                      disabled={syncing || syncingStock || syncingTokens || syncingSales}
                     >
                       {syncing ? (
                         <ActivityIndicator size="small" color="#fff" />
@@ -598,7 +628,7 @@ export default function POSDashboardScreen() {
                     <TouchableOpacity
                       style={[styles.syncActionButton, styles.syncActionSecondary]}
                       onPress={handleSyncStock}
-                      disabled={syncing || syncingStock || syncingTokens}
+                      disabled={syncing || syncingStock || syncingTokens || syncingSales}
                     >
                       {syncingStock ? (
                         <ActivityIndicator size="small" color="#fff" />
@@ -615,7 +645,7 @@ export default function POSDashboardScreen() {
                     <TouchableOpacity
                       style={[styles.syncActionButton, styles.syncActionTokens]}
                       onPress={handleReplenishTokens}
-                      disabled={syncing || syncingStock || syncingTokens}
+                      disabled={syncing || syncingStock || syncingTokens || syncingSales}
                     >
                       {syncingTokens ? (
                         <ActivityIndicator size="small" color="#fff" />
@@ -628,11 +658,38 @@ export default function POSDashboardScreen() {
                       </View>
                     </TouchableOpacity>
 
+                    {/* Sincronizar ventas pendientes (MANUAL) */}
+                    <TouchableOpacity
+                      style={[
+                        styles.syncActionButton,
+                        pendingSales > 0 ? styles.syncActionWarning : styles.syncActionSecondary,
+                      ]}
+                      onPress={handleSyncPendingSales}
+                      disabled={syncing || syncingStock || syncingTokens || syncingSales || pendingSales === 0}
+                    >
+                      {syncingSales ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={styles.syncActionIcon}>📤</Text>
+                      )}
+                      <View style={styles.syncActionTextContainer}>
+                        <Text style={styles.syncActionTitle}>
+                          Sincronizar Ventas Pendientes
+                          {pendingSales > 0 && ` (${pendingSales})`}
+                        </Text>
+                        <Text style={styles.syncActionDesc}>
+                          {pendingSales > 0
+                            ? 'Enviar ventas offline al servidor'
+                            : 'No hay ventas pendientes'}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+
                     {/* Limpiar datos */}
                     <TouchableOpacity
                       style={[styles.syncActionButton, styles.syncActionDanger]}
                       onPress={handleClearOfflineData}
-                      disabled={syncing || syncingStock || syncingTokens}
+                      disabled={syncing || syncingStock || syncingTokens || syncingSales}
                     >
                       <Text style={styles.syncActionIcon}>🗑️</Text>
                       <View style={styles.syncActionTextContainer}>
@@ -1325,6 +1382,9 @@ const styles = StyleSheet.create({
   },
   syncActionTokens: {
     backgroundColor: '#FF9800',
+  },
+  syncActionWarning: {
+    backgroundColor: '#E65100',
   },
   syncActionDanger: {
     backgroundColor: '#9E9E9E',
