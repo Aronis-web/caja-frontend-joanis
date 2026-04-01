@@ -68,6 +68,10 @@ export interface OfflineSale {
   taxCents: number;
   discountCents: number;
   customerId?: string;
+  // Campos principales para búsqueda/creación de cliente
+  customerDocumentType?: string;
+  customerDocumentNumber?: string;
+  // Snapshot como fallback
   customerSnapshot?: {
     name: string;
     documentNumber: string;

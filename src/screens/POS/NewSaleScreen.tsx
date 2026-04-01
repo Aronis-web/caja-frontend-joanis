@@ -134,6 +134,18 @@ export default function NewSaleScreen() {
     aceptaPublicidad: true,
   });
 
+  // Offline Customer Modal states
+  const [showOfflineCustomerModal, setShowOfflineCustomerModal] = useState(false);
+  const [offlineCustomerData, setOfflineCustomerData] = useState<{
+    documentType: 'DNI' | 'RUC';
+    documentNumber: string;
+    fullName: string;
+  }>({
+    documentType: 'DNI',
+    documentNumber: '',
+    fullName: '',
+  });
+
   const [activeSalesData, setActiveSalesData] = useState<ActiveSalesResponse | null>(null);
   const [loadingSales, setLoadingSales] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -647,6 +659,54 @@ export default function NewSaleScreen() {
     setDocumentType('03'); // Volver a boleta por defecto
   };
 
+  // Offline Customer handlers
+  const handleOpenOfflineCustomerModal = () => {
+    setOfflineCustomerData({
+      documentType: 'DNI',
+      documentNumber: '',
+      fullName: '',
+    });
+    setShowOfflineCustomerModal(true);
+  };
+
+  const handleSaveOfflineCustomer = () => {
+    const { documentType: docType, documentNumber, fullName } = offlineCustomerData;
+
+    // Validar documento
+    if (docType === 'DNI' && !/^\d{8}$/.test(documentNumber)) {
+      Alert.alert('Error', 'El DNI debe tener 8 dígitos');
+      return;
+    }
+    if (docType === 'RUC' && !/^\d{11}$/.test(documentNumber)) {
+      Alert.alert('Error', 'El RUC debe tener 11 dígitos');
+      return;
+    }
+
+    // Validar nombre/razón social
+    if (!fullName.trim()) {
+      Alert.alert('Error', docType === 'RUC' ? 'Ingrese la razón social' : 'Ingrese el nombre');
+      return;
+    }
+
+    // Determinar tipo de documento fiscal
+    if (docType === 'RUC') {
+      setDocumentType('01'); // Factura para RUC
+    } else {
+      setDocumentType('03'); // Boleta para DNI
+    }
+
+    setShowOfflineCustomerModal(false);
+  };
+
+  const handleClearOfflineCustomer = () => {
+    setOfflineCustomerData({
+      documentType: 'DNI',
+      documentNumber: '',
+      fullName: '',
+    });
+    setDocumentType('03');
+  };
+
   const handleProcessSale = () => {
     if (cartItems.length === 0) {
       Alert.alert('Error', 'El carrito está vacío');
@@ -765,16 +825,22 @@ export default function NewSaleScreen() {
           amountCents: Math.round(payment.amount * 100),
         }));
 
-        // Crear venta offline
+        // Crear venta offline con datos del cliente offline
+        const hasOfflineCustomer = offlineCustomerData.documentNumber.trim() !== '';
         const offlineSale = await createOfflineSale({
           items: offlineItems,
           payments: offlinePayments,
-          customerId: selectedCustomer?.id,
-          customerSnapshot: selectedCustomer
+          // Campos principales para búsqueda/creación de cliente
+          customerDocumentType: hasOfflineCustomer ? offlineCustomerData.documentType : undefined,
+          customerDocumentNumber: hasOfflineCustomer
+            ? offlineCustomerData.documentNumber
+            : undefined,
+          // Snapshot como fallback
+          customerSnapshot: hasOfflineCustomer
             ? {
-                name: selectedCustomer.fullName || selectedCustomer.name,
-                documentNumber: selectedCustomer.documentNumber,
-                documentType: selectedCustomer.documentType,
+                name: offlineCustomerData.fullName.trim(),
+                documentNumber: offlineCustomerData.documentNumber,
+                documentType: offlineCustomerData.documentType,
               }
             : undefined,
           documentType,
@@ -1686,122 +1752,178 @@ export default function NewSaleScreen() {
             <View style={styles.customerSearchHeader}>
               <Text style={styles.customerSearchLabel}>
                 {documentType === '01' ? '📄 Factura' : '🧾 Boleta'}
-                {selectedCustomer &&
+                {!isOfflineModeEnabled &&
+                  selectedCustomer &&
                   ` - ${selectedCustomer.customerType === 'EMPRESA' ? 'Empresa' : 'Persona'}`}
+                {isOfflineModeEnabled &&
+                  offlineCustomerData.documentNumber &&
+                  ` - ${offlineCustomerData.documentType === 'RUC' ? 'Empresa' : 'Persona'}`}
               </Text>
             </View>
 
-            {/* Selected Customer Card */}
-            {selectedCustomer ? (
-              <View style={styles.selectedCustomerCard}>
-                <View style={styles.selectedCustomerInfo}>
-                  <Text style={styles.selectedCustomerName}>
-                    {selectedCustomer.fullName || selectedCustomer.name}
-                  </Text>
-                  <Text style={styles.selectedCustomerDoc}>
-                    {selectedCustomer.documentType}: {selectedCustomer.documentNumber}
-                  </Text>
-                  {selectedCustomer.email && (
-                    <Text style={styles.selectedCustomerEmail}>📧 {selectedCustomer.email}</Text>
-                  )}
-                  {selectedCustomer.phone && (
-                    <Text style={styles.selectedCustomerPhone}>📱 {selectedCustomer.phone}</Text>
-                  )}
-                </View>
-                <TouchableOpacity onPress={handleClearCustomer} style={styles.removeCustomerButton}>
-                  <Text style={styles.removeCustomerButtonText}>🗑️ Borrar</Text>
-                </TouchableOpacity>
-              </View>
+            {/* ============ MODO OFFLINE ============ */}
+            {isOfflineModeEnabled ? (
+              <>
+                {/* Cliente Offline seleccionado */}
+                {offlineCustomerData.documentNumber ? (
+                  <View style={styles.selectedCustomerCard}>
+                    <View style={styles.selectedCustomerInfo}>
+                      <Text style={styles.selectedCustomerName}>
+                        {offlineCustomerData.fullName}
+                      </Text>
+                      <Text style={styles.selectedCustomerDoc}>
+                        {offlineCustomerData.documentType}: {offlineCustomerData.documentNumber}
+                      </Text>
+                      <View
+                        style={[
+                          styles.offlineCustomerBadge,
+                          { backgroundColor: '#FFF3E0', marginTop: 4 },
+                        ]}
+                      >
+                        <Text style={{ fontSize: 11, color: '#E65100' }}>📴 Cliente Offline</Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      onPress={handleClearOfflineCustomer}
+                      style={styles.removeCustomerButton}
+                    >
+                      <Text style={styles.removeCustomerButtonText}>🗑️ Borrar</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.offlineAddCustomerButton}
+                    onPress={handleOpenOfflineCustomerModal}
+                  >
+                    <Text style={styles.offlineAddCustomerIcon}>👤</Text>
+                    <Text style={styles.offlineAddCustomerText}>Agregar Cliente</Text>
+                    <Text style={styles.offlineAddCustomerSubtext}>(Opcional)</Text>
+                  </TouchableOpacity>
+                )}
+              </>
             ) : (
               <>
-                <View style={styles.customerInputContainer}>
-                  <TextInput
-                    style={styles.customerSearchInput}
-                    value={customerSearchQuery}
-                    onChangeText={handleSearchCustomers}
-                    placeholder="Buscar cliente por DNI, RUC o nombre..."
-                    placeholderTextColor="#999"
-                    onFocus={() => {
-                      if (customerSearchResults.length > 0) {
-                        setShowCustomerDropdown(true);
-                      }
-                    }}
-                  />
-                  {searchingCustomers && (
-                    <ActivityIndicator
-                      style={styles.customerSearchLoader}
-                      size="small"
-                      color="#007AFF"
-                    />
-                  )}
-                </View>
-
-                {/* Autocomplete Dropdown */}
-                {showCustomerDropdown && (
-                  <View style={styles.customerDropdown}>
-                    <ScrollView style={styles.customerDropdownScroll} nestedScrollEnabled>
-                      {customerSearchResults.map((customer) => (
-                        <TouchableOpacity
-                          key={customer.id}
-                          style={styles.customerDropdownItem}
-                          onPress={() => handleSelectCustomer(customer)}
-                        >
-                          <View style={styles.customerDropdownItemContent}>
-                            <View style={styles.customerDropdownItemHeader}>
-                              <Text style={styles.customerDropdownItemName}>
-                                {customer.fullName || customer.name}
-                              </Text>
-                              <View
-                                style={[
-                                  styles.customerTypeBadge,
-                                  customer.customerType === 'EMPRESA'
-                                    ? styles.customerTypeBadgeEmpresa
-                                    : styles.customerTypeBadgePersona,
-                                ]}
-                              >
-                                <Text style={styles.customerTypeBadgeText}>
-                                  {customer.customerType === 'EMPRESA' ? 'Empresa' : 'Persona'}
-                                </Text>
-                              </View>
-                            </View>
-                            <Text style={styles.customerDropdownItemDoc}>
-                              {customer.documentType}: {customer.documentNumber}
-                            </Text>
-                            {customer.email && (
-                              <Text style={styles.customerDropdownItemEmail}>
-                                📧 {customer.email}
-                              </Text>
-                            )}
-                            {customer.phone && (
-                              <Text style={styles.customerDropdownItemPhone}>
-                                📱 {customer.phone}
-                              </Text>
-                            )}
-                          </View>
-                        </TouchableOpacity>
-                      ))}
-
-                      {/* Opción Agregar Cliente - solo si es DNI/RUC válido */}
-                      {isValidDocumentQuery() && (
-                        <TouchableOpacity
-                          style={styles.addCustomerDropdownItem}
-                          onPress={handleOpenAddCustomerModal}
-                        >
-                          <View style={styles.addCustomerDropdownContent}>
-                            <Text style={styles.addCustomerIcon}>➕</Text>
-                            <View style={styles.addCustomerTextContainer}>
-                              <Text style={styles.addCustomerTitle}>Agregar Cliente</Text>
-                              <Text style={styles.addCustomerSubtitle}>
-                                {/^\d{8}$/.test(customerSearchQuery.trim())
-                                  ? `DNI: ${customerSearchQuery.trim()}`
-                                  : `RUC: ${customerSearchQuery.trim()}`}
-                              </Text>
-                            </View>
-                          </View>
-                        </TouchableOpacity>
+                {/* ============ MODO ONLINE ============ */}
+                {/* Selected Customer Card */}
+                {selectedCustomer ? (
+                  <View style={styles.selectedCustomerCard}>
+                    <View style={styles.selectedCustomerInfo}>
+                      <Text style={styles.selectedCustomerName}>
+                        {selectedCustomer.fullName || selectedCustomer.name}
+                      </Text>
+                      <Text style={styles.selectedCustomerDoc}>
+                        {selectedCustomer.documentType}: {selectedCustomer.documentNumber}
+                      </Text>
+                      {selectedCustomer.email && (
+                        <Text style={styles.selectedCustomerEmail}>
+                          📧 {selectedCustomer.email}
+                        </Text>
                       )}
-                    </ScrollView>
+                      {selectedCustomer.phone && (
+                        <Text style={styles.selectedCustomerPhone}>
+                          📱 {selectedCustomer.phone}
+                        </Text>
+                      )}
+                    </View>
+                    <TouchableOpacity
+                      onPress={handleClearCustomer}
+                      style={styles.removeCustomerButton}
+                    >
+                      <Text style={styles.removeCustomerButtonText}>🗑️ Borrar</Text>
+                    </TouchableOpacity>
                   </View>
+                ) : (
+                  <>
+                    <View style={styles.customerInputContainer}>
+                      <TextInput
+                        style={styles.customerSearchInput}
+                        value={customerSearchQuery}
+                        onChangeText={handleSearchCustomers}
+                        placeholder="Buscar cliente por DNI, RUC o nombre..."
+                        placeholderTextColor="#999"
+                        onFocus={() => {
+                          if (customerSearchResults.length > 0) {
+                            setShowCustomerDropdown(true);
+                          }
+                        }}
+                      />
+                      {searchingCustomers && (
+                        <ActivityIndicator
+                          style={styles.customerSearchLoader}
+                          size="small"
+                          color="#007AFF"
+                        />
+                      )}
+                    </View>
+
+                    {/* Autocomplete Dropdown */}
+                    {showCustomerDropdown && (
+                      <View style={styles.customerDropdown}>
+                        <ScrollView style={styles.customerDropdownScroll} nestedScrollEnabled>
+                          {customerSearchResults.map((customer) => (
+                            <TouchableOpacity
+                              key={customer.id}
+                              style={styles.customerDropdownItem}
+                              onPress={() => handleSelectCustomer(customer)}
+                            >
+                              <View style={styles.customerDropdownItemContent}>
+                                <View style={styles.customerDropdownItemHeader}>
+                                  <Text style={styles.customerDropdownItemName}>
+                                    {customer.fullName || customer.name}
+                                  </Text>
+                                  <View
+                                    style={[
+                                      styles.customerTypeBadge,
+                                      customer.customerType === 'EMPRESA'
+                                        ? styles.customerTypeBadgeEmpresa
+                                        : styles.customerTypeBadgePersona,
+                                    ]}
+                                  >
+                                    <Text style={styles.customerTypeBadgeText}>
+                                      {customer.customerType === 'EMPRESA' ? 'Empresa' : 'Persona'}
+                                    </Text>
+                                  </View>
+                                </View>
+                                <Text style={styles.customerDropdownItemDoc}>
+                                  {customer.documentType}: {customer.documentNumber}
+                                </Text>
+                                {customer.email && (
+                                  <Text style={styles.customerDropdownItemEmail}>
+                                    📧 {customer.email}
+                                  </Text>
+                                )}
+                                {customer.phone && (
+                                  <Text style={styles.customerDropdownItemPhone}>
+                                    📱 {customer.phone}
+                                  </Text>
+                                )}
+                              </View>
+                            </TouchableOpacity>
+                          ))}
+
+                          {/* Opción Agregar Cliente - solo si es DNI/RUC válido */}
+                          {isValidDocumentQuery() && (
+                            <TouchableOpacity
+                              style={styles.addCustomerDropdownItem}
+                              onPress={handleOpenAddCustomerModal}
+                            >
+                              <View style={styles.addCustomerDropdownContent}>
+                                <Text style={styles.addCustomerIcon}>➕</Text>
+                                <View style={styles.addCustomerTextContainer}>
+                                  <Text style={styles.addCustomerTitle}>Agregar Cliente</Text>
+                                  <Text style={styles.addCustomerSubtitle}>
+                                    {/^\d{8}$/.test(customerSearchQuery.trim())
+                                      ? `DNI: ${customerSearchQuery.trim()}`
+                                      : `RUC: ${customerSearchQuery.trim()}`}
+                                  </Text>
+                                </View>
+                              </View>
+                            </TouchableOpacity>
+                          )}
+                        </ScrollView>
+                      </View>
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -3228,6 +3350,149 @@ export default function NewSaleScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Offline Customer Modal */}
+      <Modal
+        visible={showOfflineCustomerModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowOfflineCustomerModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.offlineCustomerModalContent}>
+            <View style={styles.offlineCustomerModalHeader}>
+              <Text style={styles.offlineCustomerModalTitle}>👤 Cliente Offline</Text>
+              <TouchableOpacity
+                style={styles.offlineCustomerCloseButton}
+                onPress={() => setShowOfflineCustomerModal(false)}
+              >
+                <Text style={styles.offlineCustomerCloseButtonText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.offlineCustomerForm}>
+              {/* Tipo de documento */}
+              <View style={styles.offlineCustomerFormGroup}>
+                <Text style={styles.offlineCustomerLabel}>Tipo de Documento</Text>
+                <View style={styles.offlineCustomerDocTypeRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.offlineCustomerDocTypeButton,
+                      offlineCustomerData.documentType === 'DNI' &&
+                        styles.offlineCustomerDocTypeButtonActive,
+                    ]}
+                    onPress={() =>
+                      setOfflineCustomerData((prev) => ({ ...prev, documentType: 'DNI' }))
+                    }
+                  >
+                    <Text
+                      style={[
+                        styles.offlineCustomerDocTypeText,
+                        offlineCustomerData.documentType === 'DNI' &&
+                          styles.offlineCustomerDocTypeTextActive,
+                      ]}
+                    >
+                      DNI
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.offlineCustomerDocTypeButton,
+                      offlineCustomerData.documentType === 'RUC' &&
+                        styles.offlineCustomerDocTypeButtonActive,
+                    ]}
+                    onPress={() =>
+                      setOfflineCustomerData((prev) => ({ ...prev, documentType: 'RUC' }))
+                    }
+                  >
+                    <Text
+                      style={[
+                        styles.offlineCustomerDocTypeText,
+                        offlineCustomerData.documentType === 'RUC' &&
+                          styles.offlineCustomerDocTypeTextActive,
+                      ]}
+                    >
+                      RUC
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Número de documento */}
+              <View style={styles.offlineCustomerFormGroup}>
+                <Text style={styles.offlineCustomerLabel}>
+                  Número de {offlineCustomerData.documentType}
+                </Text>
+                <TextInput
+                  style={styles.offlineCustomerInput}
+                  value={offlineCustomerData.documentNumber}
+                  onChangeText={(text) =>
+                    setOfflineCustomerData((prev) => ({
+                      ...prev,
+                      documentNumber: text.replace(/\D/g, ''),
+                    }))
+                  }
+                  placeholder={
+                    offlineCustomerData.documentType === 'DNI' ? '12345678' : '20123456789'
+                  }
+                  placeholderTextColor="#999"
+                  keyboardType="numeric"
+                  maxLength={offlineCustomerData.documentType === 'DNI' ? 8 : 11}
+                />
+              </View>
+
+              {/* Nombre o Razón Social */}
+              <View style={styles.offlineCustomerFormGroup}>
+                <Text style={styles.offlineCustomerLabel}>
+                  {offlineCustomerData.documentType === 'RUC' ? 'Razón Social' : 'Nombre Completo'}
+                </Text>
+                <TextInput
+                  style={styles.offlineCustomerInput}
+                  value={offlineCustomerData.fullName}
+                  onChangeText={(text) =>
+                    setOfflineCustomerData((prev) => ({ ...prev, fullName: text }))
+                  }
+                  placeholder={
+                    offlineCustomerData.documentType === 'RUC' ? 'EMPRESA SAC' : 'Juan Pérez García'
+                  }
+                  placeholderTextColor="#999"
+                  autoCapitalize="characters"
+                />
+              </View>
+
+              {/* Info box */}
+              <View style={styles.offlineCustomerInfoBox}>
+                <Text style={styles.offlineCustomerInfoText}>
+                  📴 Este cliente se guardará localmente y se sincronizará cuando vuelva la
+                  conexión.
+                </Text>
+                <Text style={styles.offlineCustomerInfoSubtext}>
+                  {offlineCustomerData.documentType === 'RUC'
+                    ? '→ Se generará FACTURA'
+                    : '→ Se generará BOLETA'}
+                </Text>
+              </View>
+            </View>
+
+            {/* Botones */}
+            <View style={styles.offlineCustomerButtons}>
+              <TouchableOpacity
+                style={[styles.offlineCustomerButton, styles.offlineCustomerCancelButton]}
+                onPress={() => setShowOfflineCustomerModal(false)}
+              >
+                <Text style={styles.offlineCustomerCancelButtonText}>Cancelar</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.offlineCustomerButton, styles.offlineCustomerSaveButton]}
+                onPress={handleSaveOfflineCustomer}
+              >
+                <Text style={styles.offlineCustomerSaveButtonText}>✓ Guardar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -3762,6 +4027,162 @@ const styles = StyleSheet.create({
     backgroundColor: '#4CAF50',
   },
   addCustomerSaveButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  // Offline Customer Styles
+  offlineAddCustomerButton: {
+    backgroundColor: '#FFF3E0',
+    borderRadius: 12,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    borderWidth: 2,
+    borderColor: '#FF9800',
+    borderStyle: 'dashed',
+  },
+  offlineAddCustomerIcon: {
+    fontSize: 24,
+  },
+  offlineAddCustomerText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#E65100',
+  },
+  offlineAddCustomerSubtext: {
+    fontSize: 13,
+    color: '#FF9800',
+  },
+  offlineCustomerBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    alignSelf: 'flex-start',
+  },
+  offlineCustomerModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 24,
+    width: '90%',
+    maxWidth: 450,
+  },
+  offlineCustomerModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  offlineCustomerModalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  offlineCustomerCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F5F5F5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  offlineCustomerCloseButtonText: {
+    fontSize: 18,
+    color: '#666',
+  },
+  offlineCustomerForm: {
+    marginBottom: 20,
+  },
+  offlineCustomerFormGroup: {
+    marginBottom: 18,
+  },
+  offlineCustomerLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  offlineCustomerDocTypeRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  offlineCustomerDocTypeButton: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#E0E0E0',
+    backgroundColor: '#F9F9F9',
+    alignItems: 'center',
+  },
+  offlineCustomerDocTypeButtonActive: {
+    borderColor: '#FF9800',
+    backgroundColor: '#FFF3E0',
+  },
+  offlineCustomerDocTypeText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#666',
+  },
+  offlineCustomerDocTypeTextActive: {
+    color: '#E65100',
+  },
+  offlineCustomerInput: {
+    backgroundColor: '#F9F9F9',
+    borderRadius: 10,
+    padding: 14,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    color: '#333',
+  },
+  offlineCustomerInfoBox: {
+    backgroundColor: '#FFF8E1',
+    borderRadius: 10,
+    padding: 14,
+    borderLeftWidth: 4,
+    borderLeftColor: '#FF9800',
+  },
+  offlineCustomerInfoText: {
+    fontSize: 13,
+    color: '#E65100',
+    lineHeight: 18,
+  },
+  offlineCustomerInfoSubtext: {
+    fontSize: 12,
+    color: '#FF9800',
+    marginTop: 6,
+    fontWeight: '600',
+  },
+  offlineCustomerButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  offlineCustomerButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  offlineCustomerCancelButton: {
+    backgroundColor: '#F5F5F5',
+  },
+  offlineCustomerCancelButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#666',
+  },
+  offlineCustomerSaveButton: {
+    backgroundColor: '#FF9800',
+  },
+  offlineCustomerSaveButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',

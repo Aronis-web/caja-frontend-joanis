@@ -48,6 +48,8 @@ interface OfflineStoreState extends OfflineSystemState {
     items: OfflineSaleItem[];
     payments: OfflineSalePayment[];
     customerId?: string;
+    customerDocumentType?: string;
+    customerDocumentNumber?: string;
     customerSnapshot?: { name: string; documentNumber: string; documentType: string };
     documentType: '01' | '03';
     cashRegisterId: string;
@@ -352,6 +354,8 @@ export const useOfflineStore = create<OfflineStoreState>((set, get) => ({
       taxCents,
       discountCents,
       customerId: params.customerId,
+      customerDocumentType: params.customerDocumentType,
+      customerDocumentNumber: params.customerDocumentNumber,
       customerSnapshot: params.customerSnapshot,
       payments: params.payments,
       documentType: params.documentType,
