@@ -526,8 +526,8 @@ export default function NewSaleScreen() {
           setNewCustomerData((prev) => ({
             ...prev,
             nombres: response.data!.nombres || '',
-            apellidoPaterno: response.data!.apellidoPaterno || '',
-            apellidoMaterno: response.data!.apellidoMaterno || '',
+            apellidoPaterno: response.data!.apellido_paterno || '',
+            apellidoMaterno: response.data!.apellido_materno || '',
           }));
         }
       } else if (isValidRUC) {
@@ -535,8 +535,8 @@ export default function NewSaleScreen() {
         if (response.success && response.data) {
           setNewCustomerData((prev) => ({
             ...prev,
-            razonSocial: response.data!.razonSocial || '',
-            address: response.data!.direccion || '',
+            razonSocial: response.data!.nombre_o_razon_social || '',
+            address: response.data!.direccion_completa || '',
           }));
         }
       }

@@ -271,8 +271,8 @@ export interface ApiPeruDNIResponse {
   data?: {
     dni: string;
     nombres: string;
-    apellidoPaterno: string;
-    apellidoMaterno: string;
+    apellido_paterno: string;
+    apellido_materno: string;
     codVerifica?: string;
   };
   message?: string;
@@ -282,9 +282,9 @@ export interface ApiPeruRUCResponse {
   success: boolean;
   data?: {
     ruc: string;
-    razonSocial: string;
+    nombre_o_razon_social: string;
     nombreComercial?: string;
-    direccion?: string;
+    direccion_completa?: string;
     estado?: string;
     condicion?: string;
     departamento?: string;
