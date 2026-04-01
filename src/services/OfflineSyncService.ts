@@ -421,12 +421,28 @@ class OfflineSyncService {
         const batch = pendingSales.slice(i, i + this.config.salesBatchSize);
         const batchId = `batch-${Date.now()}-${i}`;
 
+        // Log de debug para ver los sessionIds de las ventas
+        console.log(
+          '🔍 [SYNC] Ventas en batch:',
+          batch.map((s) => ({
+            localId: s.localId,
+            sessionId: s.sessionId,
+            cashRegisterId: s.cashRegisterId,
+          }))
+        );
+
         // Marcar como sincronizando
         for (const sale of batch) {
           await offlineDatabase.updateSaleSyncStatus(sale.localId, 'SYNCING');
         }
 
         try {
+          // Obtener sessionId del primer elemento del batch
+          const batchSessionId = batch[0].sessionId;
+          console.log(
+            `📋 [SYNC] Enviando batch con sessionId: "${batchSessionId}" (tipo: ${typeof batchSessionId})`
+          );
+
           const response = await this.request<SyncSalesResponse>(
             '/pos/sync/sales',
             {
@@ -436,7 +452,7 @@ class OfflineSyncService {
               },
               body: JSON.stringify({
                 cashRegisterId,
-                sessionId: batch[0].sessionId,
+                sessionId: batchSessionId,
                 batchId,
                 syncToken: status.syncToken,
                 sales: batch,
