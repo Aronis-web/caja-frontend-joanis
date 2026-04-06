@@ -1326,7 +1326,7 @@ export default function NewSaleScreen() {
     const paymentsHtml = sale.payments
       .map(
         (payment) => `
-        <div style="display:flex;justify-content:space-between;">
+        <div style="display:flex;justify-content:space-between;font-size:10px;">
           <span>${payment.paymentMethodName}:</span>
           <span>S/ ${(payment.amountCents / 100).toFixed(2)}</span>
         </div>
@@ -1348,48 +1348,48 @@ export default function NewSaleScreen() {
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body {
             font-family: 'Lucida Console', 'Courier New', monospace;
-            font-size: 14px;
+            font-size: 12px;
             width: 72mm;
             max-width: 72mm;
-            padding: 4mm;
+            padding: 3mm;
             background: white;
             color: #000;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
-            line-height: 1.3;
+            line-height: 1.15;
           }
-          .header { text-align: center; margin-bottom: 12px; }
-          .company-name { font-size: 18px; font-weight: bold; letter-spacing: 0.5px; }
-          .company-info { font-size: 13px; color: #000; margin-top: 2px; }
-          .divider { border-top: 2px dashed #000; margin: 10px 0; }
+          .header { text-align: center; margin-bottom: 4px; }
+          .company-name { font-size: 14px; font-weight: bold; }
+          .company-info { font-size: 11px; color: #000; }
+          .divider { border-top: 1px dashed #000; margin: 4px 0; }
           .warning-box {
-            border: 2px solid #000;
-            padding: 10px;
-            margin: 12px 0;
+            border: 1px solid #000;
+            padding: 4px;
+            margin: 4px 0;
             text-align: center;
           }
-          .warning-title { font-weight: bold; font-size: 15px; color: #000; }
-          .warning-text { font-size: 12px; color: #000; margin-top: 4px; }
-          .ticket-code { font-size: 18px; font-weight: bold; text-align: center; margin: 12px 0; letter-spacing: 1px; }
-          .info-row { display: flex; justify-content: space-between; margin: 5px 0; font-size: 13px; }
-          table { width: 100%; border-collapse: collapse; margin: 12px 0; }
-          th { text-align: left; border-bottom: 2px solid #000; padding: 5px 0; font-size: 12px; font-weight: bold; }
-          td { font-size: 12px; padding: 4px 0; vertical-align: top; }
-          .totals { margin-top: 12px; }
-          .total-row { display: flex; justify-content: space-between; margin: 5px 0; font-size: 14px; }
-          .total-final { font-size: 20px; font-weight: bold; }
-          .qr-section { text-align: center; margin: 16px 0; }
-          .qr-title { font-weight: bold; font-size: 14px; margin-bottom: 8px; }
-          .qr-instructions { font-size: 11px; color: #000; margin-top: 8px; line-height: 1.4; }
-          .footer { text-align: center; font-size: 11px; color: #000; margin-top: 16px; }
+          .warning-title { font-weight: bold; font-size: 12px; color: #000; }
+          .warning-text { font-size: 10px; color: #000; margin-top: 2px; }
+          .ticket-code { font-size: 14px; font-weight: bold; text-align: center; margin: 4px 0; letter-spacing: 1px; }
+          .info-row { display: flex; justify-content: space-between; margin: 2px 0; font-size: 11px; }
+          table { width: 100%; border-collapse: collapse; margin: 4px 0; }
+          th { text-align: left; border-bottom: 1px solid #000; padding: 2px 0; font-size: 10px; font-weight: bold; }
+          td { font-size: 10px; padding: 2px 0; vertical-align: top; }
+          .totals { margin-top: 4px; }
+          .total-row { display: flex; justify-content: space-between; margin: 2px 0; font-size: 12px; }
+          .total-final { font-size: 16px; font-weight: bold; }
+          .qr-section { text-align: center; margin: 6px 0; }
+          .qr-title { font-weight: bold; font-size: 11px; margin-bottom: 3px; }
+          .qr-instructions { font-size: 9px; color: #000; margin-top: 3px; line-height: 1.2; }
+          .footer { text-align: center; font-size: 10px; color: #000; margin-top: 6px; }
           .qr-notice-box {
-            border: 2px solid #000;
-            padding: 10px;
-            margin-bottom: 14px;
+            border: 1px solid #000;
+            padding: 4px;
+            margin-bottom: 4px;
             text-align: center;
           }
-          .qr-notice-title { font-weight: bold; font-size: 14px; margin-bottom: 6px; }
-          .qr-notice-text { font-size: 11px; line-height: 1.5; }
+          .qr-notice-title { font-weight: bold; font-size: 11px; margin-bottom: 2px; }
+          .qr-notice-text { font-size: 9px; line-height: 1.2; }
           @media print {
             @page {
               size: 80mm auto;
@@ -1399,7 +1399,7 @@ export default function NewSaleScreen() {
               width: 72mm;
               max-width: 72mm;
               margin: 0;
-              padding: 4mm;
+              padding: 3mm;
             }
             .no-print { display: none; }
           }
@@ -1490,8 +1490,8 @@ export default function NewSaleScreen() {
 
         <div class="divider"></div>
 
-        <div style="margin: 10px 0;">
-          <strong>Pagos:</strong>
+        <div style="margin: 4px 0;">
+          <strong style="font-size:11px;">Pagos:</strong>
           ${paymentsHtml}
         </div>
 
@@ -1499,29 +1499,21 @@ export default function NewSaleScreen() {
 
         <div class="qr-section">
           <div class="qr-notice-box">
-            <div class="qr-notice-title">*** AVISO IMPORTANTE ***</div>
+            <div class="qr-notice-title">AVISO IMPORTANTE</div>
             <div class="qr-notice-text">
-              Nuestro sistema de facturacion<br>
-              electronica no esta disponible<br>
-              temporalmente.<br><br>
-              Con este codigo QR podras descargar<br>
-              tu comprobante electronico valido<br>
-              <strong>EN UN MAXIMO DE 24 HORAS</strong><br>
-              una vez restablecido el servicio.
+              Sistema no disponible temporalmente.<br>
+              Escanea el QR para tu comprobante<br>
+              <strong>en maximo 24 horas.</strong>
             </div>
           </div>
-          <div class="qr-title">ESCANEA PARA TU COMPROBANTE</div>
-          <img src="${qrImageUrl}" alt="QR Code" style="width:45mm;height:45mm;margin:10px auto;display:block;image-rendering:pixelated;">
+          <img src="${qrImageUrl}" alt="QR Code" style="width:32mm;height:32mm;margin:4px auto;display:block;image-rendering:pixelated;">
           <div class="qr-instructions">
-            Guarda este ticket.<br>
-            El codigo QR te permitira descargar<br>
-            tu comprobante electronico oficial.
+            Guarda este ticket para descargar tu comprobante.
           </div>
         </div>
 
         <div class="footer">
           <p>Gracias por su compra</p>
-          <p>Ticket generado en modo contingencia</p>
         </div>
       </body>
       </html>
