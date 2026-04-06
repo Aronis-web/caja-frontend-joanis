@@ -1253,7 +1253,7 @@ export default function NewSaleScreen() {
           };
 
       // Generar URL del QR para validación posterior
-      const qrUrl = `https://erp-aio-offline-documents.com/api/public/receipt/${saleData.token}`;
+      const qrUrl = `https://erp-aio-offline-documents.com/public/receipt/${saleData.token}`;
 
       // Generar contenido HTML del ticket
       const ticketHtml = generateOfflineTicketHtml(saleData, companyInfo, qrUrl);
