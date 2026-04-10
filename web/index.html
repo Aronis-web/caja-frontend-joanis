@@ -39,10 +39,9 @@
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
     <script>
-      // Polyfill para import.meta en entornos que no lo soportan
-      if (typeof import.meta === 'undefined') {
-        window.import = { meta: { url: window.location.href } };
-      }
+      // Polyfill global para import.meta en entornos que no lo soportan
+      // Se define de forma incondicional ya que no podemos verificar import.meta sin causar SyntaxError
+      window.__importMeta = { url: window.location.href, env: {} };
     </script>
   </body>
 </html>

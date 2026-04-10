@@ -205,16 +205,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: async () => {
+    console.log('🔓 [AUTH STORE] logout() llamado');
     try {
       await authService.logout();
+      console.log('🔓 [AUTH STORE] authService.logout() completado');
       await get().clearInvalidAuth();
+      console.log('🔓 [AUTH STORE] clearInvalidAuth() completado');
     } catch (_error) {
+      console.log('🔓 [AUTH STORE] Error en logout, ejecutando clearInvalidAuth');
       await get().clearInvalidAuth();
     }
     // Clear company and site selection
     set({ currentCompany: null, currentSite: null });
     await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_COMPANY);
     await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_SITE);
+    console.log('🔓 [AUTH STORE] logout() completado - isAuthenticated debería ser false');
   },
 
   setLoading: (isLoading) => set({ isLoading }),

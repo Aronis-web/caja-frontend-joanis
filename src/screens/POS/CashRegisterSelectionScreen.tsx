@@ -23,10 +23,16 @@ export default function CashRegisterSelectionScreen() {
   const navigation = useNavigation();
   const currentSite = useAuthStore((state) => state.currentSite);
   const currentCompany = useAuthStore((state) => state.currentCompany);
+  const user = useAuthStore((state) => state.user);
   const [cashRegisters, setCashRegisters] = useState<CashRegister[]>([]);
   const [loading, setLoading] = useState(true);
 
   const { loadCashRegistersBySite, setSelectedCashRegister, loadPaymentMethods } = usePOSStore();
+
+  // Verificar si el usuario ya tiene una caja activa
+  const userActiveCashRegister = cashRegisters.find(
+    (cr) => cr.currentSessionId && cr.currentUserId === user?.id
+  );
 
   useEffect(() => {
     loadCashRegisters();
@@ -51,7 +57,39 @@ export default function CashRegisterSelectionScreen() {
     }
   };
 
+  // Verifica si la caja está abierta por otra persona
+  const isOpenByOtherUser = (cashRegister: CashRegister): boolean => {
+    return !!(
+      cashRegister.currentSessionId &&
+      cashRegister.currentUserId &&
+      cashRegister.currentUserId !== user?.id
+    );
+  };
+
+  // Verifica si el usuario tiene otra caja activa (diferente a esta)
+  const userHasAnotherActiveCashRegister = (cashRegister: CashRegister): boolean => {
+    return !!(userActiveCashRegister && userActiveCashRegister.id !== cashRegister.id);
+  };
+
   const handleSelectCashRegister = async (cashRegister: CashRegister) => {
+    // Validar si la caja está abierta por otra persona
+    if (isOpenByOtherUser(cashRegister)) {
+      Alert.alert(
+        'Caja no disponible',
+        'Esta caja está siendo utilizada por otro usuario. Solo puedes acceder a cajas cerradas o que hayas abierto tú mismo.'
+      );
+      return;
+    }
+
+    // Validar si el usuario ya tiene otra caja activa
+    if (userHasAnotherActiveCashRegister(cashRegister)) {
+      Alert.alert(
+        'Ya tienes una caja activa',
+        `Debes cerrar tu sesión en "${userActiveCashRegister?.name}" antes de poder acceder a otra caja.`
+      );
+      return;
+    }
+
     try {
       await setSelectedCashRegister(cashRegister);
       // No navegamos manualmente - el Navigation component detectará el cambio
@@ -61,27 +99,58 @@ export default function CashRegisterSelectionScreen() {
     }
   };
 
-  const renderCashRegister = ({ item }: { item: CashRegister }) => (
-    <TouchableOpacity style={styles.card} onPress={() => handleSelectCashRegister(item)}>
-      <View style={styles.cardHeader}>
-        <Text style={styles.cardTitle}>{item.name}</Text>
-        <View
-          style={[
-            styles.statusBadge,
-            item.currentSessionId ? styles.statusOpen : styles.statusClosed,
-          ]}
-        >
-          <Text style={styles.statusText}>{item.currentSessionId ? 'ABIERTA' : 'CERRADA'}</Text>
+  const renderCashRegister = ({ item }: { item: CashRegister }) => {
+    const blockedByOther = isOpenByOtherUser(item);
+    const blockedByActiveSession = userHasAnotherActiveCashRegister(item);
+    const isOpenByMe = item.currentSessionId && item.currentUserId === user?.id;
+    const isBlocked = blockedByOther || blockedByActiveSession;
+
+    // Determinar el estado visual de la caja
+    const getStatusStyle = () => {
+      if (blockedByOther) return styles.statusBlocked;
+      if (blockedByActiveSession) return styles.statusBlocked;
+      if (isOpenByMe) return styles.statusOpenByMe;
+      if (item.currentSessionId) return styles.statusOpen;
+      return styles.statusClosed;
+    };
+
+    const getStatusText = () => {
+      if (blockedByOther) return 'OCUPADA';
+      if (isOpenByMe) return 'MI CAJA';
+      if (item.currentSessionId) return 'ABIERTA';
+      return 'CERRADA';
+    };
+
+    const getBlockedMessage = () => {
+      if (blockedByOther) return '🔒 En uso por otro usuario';
+      if (blockedByActiveSession) return '⚠️ Ya tienes otra caja activa';
+      return null;
+    };
+
+    return (
+      <TouchableOpacity
+        style={[styles.card, isBlocked && styles.cardBlocked]}
+        onPress={() => handleSelectCashRegister(item)}
+        disabled={isBlocked}
+      >
+        <View style={styles.cardHeader}>
+          <Text style={[styles.cardTitle, isBlocked && styles.cardTitleBlocked]}>{item.name}</Text>
+          <View style={[styles.statusBadge, getStatusStyle()]}>
+            <Text style={styles.statusText}>{getStatusText()}</Text>
+          </View>
         </View>
-      </View>
-      <Text style={styles.cardCode}>Código: {item.code}</Text>
-      {item.emissionPoint && (
-        <Text style={styles.cardDetail}>
-          Punto de Emisión: {item.emissionPoint.code} - {item.emissionPoint.description}
+        <Text style={[styles.cardCode, isBlocked && styles.cardTextBlocked]}>
+          Código: {item.code}
         </Text>
-      )}
-    </TouchableOpacity>
-  );
+        {item.emissionPoint && (
+          <Text style={[styles.cardDetail, isBlocked && styles.cardTextBlocked]}>
+            Punto de Emisión: {item.emissionPoint.code} - {item.emissionPoint.description}
+          </Text>
+        )}
+        {getBlockedMessage() && <Text style={styles.blockedMessage}>{getBlockedMessage()}</Text>}
+      </TouchableOpacity>
+    );
+  };
 
   if (loading) {
     return (
@@ -186,6 +255,12 @@ const styles = StyleSheet.create({
   statusOpen: {
     backgroundColor: '#4CAF50',
   },
+  statusOpenByMe: {
+    backgroundColor: '#2196F3',
+  },
+  statusBlocked: {
+    backgroundColor: '#F44336',
+  },
   statusClosed: {
     backgroundColor: '#9E9E9E',
   },
@@ -202,6 +277,24 @@ const styles = StyleSheet.create({
   cardDetail: {
     fontSize: 13,
     color: '#888',
+  },
+  cardBlocked: {
+    backgroundColor: '#F5F5F5',
+    opacity: 0.8,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  cardTitleBlocked: {
+    color: '#999',
+  },
+  cardTextBlocked: {
+    color: '#AAA',
+  },
+  blockedMessage: {
+    marginTop: 8,
+    fontSize: 13,
+    color: '#F44336',
+    fontWeight: '500',
   },
   emptyContainer: {
     flex: 1,

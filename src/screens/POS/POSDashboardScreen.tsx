@@ -53,8 +53,15 @@ declare global {
 export default function POSDashboardScreen() {
   const navigation = useNavigation();
   const user = useAuthStore((state) => state.user);
-  const { selectedCashRegister, currentSession, refreshSession, loadActiveSession, isLoading } =
-    usePOSStore();
+  const logout = useAuthStore((state) => state.logout);
+  const {
+    selectedCashRegister,
+    currentSession,
+    refreshSession,
+    loadActiveSession,
+    isLoading,
+    reset: resetPOSStore,
+  } = usePOSStore();
 
   const [refreshing, setRefreshing] = useState(false);
 
@@ -315,7 +322,9 @@ export default function POSDashboardScreen() {
       setSyncSuccess('Ventas pendientes sincronizadas correctamente');
     } catch (error) {
       console.error('❌ [SETTINGS] Error sincronizando ventas:', error);
-      setSyncError(error instanceof Error ? error.message : 'Error sincronizando ventas pendientes');
+      setSyncError(
+        error instanceof Error ? error.message : 'Error sincronizando ventas pendientes'
+      );
     } finally {
       setSyncingSales(false);
     }
@@ -439,6 +448,64 @@ export default function POSDashboardScreen() {
     navigation.navigate(ROUTES.CLOSE_SESSION as never);
   };
 
+  const handleLogout = async () => {
+    console.log('🔘 handleLogout presionado');
+    console.log('🔘 currentSession:', currentSession);
+
+    if (currentSession) {
+      console.log('⚠️ Hay sesión activa, mostrando alerta');
+      // Usar window.confirm para web/Electron
+      if (typeof window !== 'undefined') {
+        window.alert('Debes cerrar la caja antes de cerrar sesión.');
+      } else {
+        Alert.alert('Sesión de caja activa', 'Debes cerrar la caja antes de cerrar sesión.');
+      }
+      return;
+    }
+
+    console.log('📋 Mostrando confirmación de logout');
+
+    // Usar window.confirm para web/Electron
+    let confirmed = false;
+    if (typeof window !== 'undefined' && window.confirm) {
+      confirmed = window.confirm('¿Estás seguro que deseas cerrar sesión?');
+    } else {
+      // Fallback para móvil
+      Alert.alert('Cerrar Sesión', '¿Estás seguro que deseas cerrar sesión?', [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Cerrar Sesión',
+          style: 'destructive',
+          onPress: () => {
+            confirmed = true;
+          },
+        },
+      ]);
+    }
+
+    if (!confirmed) {
+      console.log('❌ Usuario canceló el logout');
+      return;
+    }
+
+    try {
+      console.log('🚪 Iniciando cierre de sesión...');
+      console.log('🔄 Reseteando POS store...');
+      resetPOSStore();
+      console.log('✅ POS store reseteado');
+      console.log('🔄 Llamando logout de auth...');
+      await logout();
+      console.log('✅ Logout completado - debería redirigir al login');
+    } catch (error) {
+      console.error('❌ Error al cerrar sesión:', error);
+      if (typeof window !== 'undefined') {
+        window.alert('No se pudo cerrar la sesión');
+      } else {
+        Alert.alert('Error', 'No se pudo cerrar la sesión');
+      }
+    }
+  };
+
   const formatCurrency = (amountInCents: number) => {
     // Convertir de centavos a soles
     const amountInSoles = amountInCents / 100;
@@ -476,6 +543,13 @@ export default function POSDashboardScreen() {
             onPress={() => setSettingsModalVisible(true)}
           >
             <Text style={styles.settingsButtonIcon}>⚙️</Text>
+          </TouchableOpacity>
+          {/* Botón de cerrar sesión */}
+          <TouchableOpacity
+            style={[styles.settingsButton, styles.logoutButton]}
+            onPress={handleLogout}
+          >
+            <Text style={styles.logoutButtonIcon}>🚪</Text>
           </TouchableOpacity>
           <View
             style={[styles.statusBadge, currentSession ? styles.statusOpen : styles.statusClosed]}
@@ -665,7 +739,13 @@ export default function POSDashboardScreen() {
                         pendingSales > 0 ? styles.syncActionWarning : styles.syncActionSecondary,
                       ]}
                       onPress={handleSyncPendingSales}
-                      disabled={syncing || syncingStock || syncingTokens || syncingSales || pendingSales === 0}
+                      disabled={
+                        syncing ||
+                        syncingStock ||
+                        syncingTokens ||
+                        syncingSales ||
+                        pendingSales === 0
+                      }
                     >
                       {syncingSales ? (
                         <ActivityIndicator size="small" color="#fff" />
@@ -1059,6 +1139,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   settingsButtonIcon: {
+    fontSize: 20,
+  },
+  logoutButton: {
+    backgroundColor: '#FFEBEE',
+  },
+  logoutButtonIcon: {
     fontSize: 20,
   },
   statusBadge: {

@@ -116,8 +116,14 @@ export const Navigation = () => {
   const { isAuthenticated, currentCompany, currentSite } = useAuthStore();
   const { selectedCashRegister } = usePOSStore();
 
+  console.log('🧭 Navigation render - isAuthenticated:', isAuthenticated);
+  console.log('🧭 Navigation render - currentCompany:', currentCompany?.name);
+  console.log('🧭 Navigation render - currentSite:', currentSite?.name);
+  console.log('🧭 Navigation render - selectedCashRegister:', selectedCashRegister?.name);
+
   // Not authenticated -> Login
   if (!isAuthenticated) {
+    console.log('🔐 Mostrando AuthStack (Login)');
     return (
       <NavigationContainer>
         <AuthStack />

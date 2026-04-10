@@ -192,18 +192,138 @@ function createWindow(port) {
     mainWindow.show();
   });
 
-  // En desarrollo, carga desde el servidor de Expo
+  // En desarrollo, carga desde el servidor de Expo a través de un proxy
   // En producción, carga desde el servidor HTTP local
   if (isDev) {
-    // Interceptar y modificar el HTML antes de que se cargue
+    const zlib = require('zlib');
+
+    // Crear servidor proxy que modifica los bundles para reemplazar import.meta
+    const METRO_PORT = 8081;
+    const proxyServer = http.createServer((req, res) => {
+      const targetUrl = `http://localhost:${METRO_PORT}${req.url}`;
+
+      // Log de peticiones
+      const isBundle = req.url && req.url.includes('.bundle');
+      if (isBundle) {
+        console.log('[PROXY] 📦 Interceptando bundle:', req.url);
+      }
+
+      // Copiar headers pero remover Accept-Encoding para bundles (evitar compresión)
+      const requestHeaders = { ...req.headers };
+      if (isBundle) {
+        delete requestHeaders['accept-encoding'];
+        requestHeaders['accept-encoding'] = 'identity'; // Sin compresión
+      }
+
+      // Hacer petición a Metro
+      const proxyReq = http.request(targetUrl, {
+        method: req.method,
+        headers: requestHeaders,
+      }, (proxyRes) => {
+        // Si es un bundle, acumular el contenido y modificarlo
+        if (isBundle) {
+          const chunks = [];
+          const contentEncoding = proxyRes.headers['content-encoding'];
+
+          proxyRes.on('data', (chunk) => chunks.push(chunk));
+          proxyRes.on('end', () => {
+            let buffer = Buffer.concat(chunks);
+
+            // Descomprimir si es necesario
+            const decompress = () => {
+              return new Promise((resolve, reject) => {
+                if (contentEncoding === 'gzip') {
+                  console.log('[PROXY] 📦 Descomprimiendo gzip...');
+                  zlib.gunzip(buffer, (err, result) => {
+                    if (err) reject(err);
+                    else resolve(result);
+                  });
+                } else if (contentEncoding === 'deflate') {
+                  console.log('[PROXY] 📦 Descomprimiendo deflate...');
+                  zlib.inflate(buffer, (err, result) => {
+                    if (err) reject(err);
+                    else resolve(result);
+                  });
+                } else if (contentEncoding === 'br') {
+                  console.log('[PROXY] 📦 Descomprimiendo brotli...');
+                  zlib.brotliDecompress(buffer, (err, result) => {
+                    if (err) reject(err);
+                    else resolve(result);
+                  });
+                } else {
+                  resolve(buffer);
+                }
+              });
+            };
+
+            decompress()
+              .then((decompressedBuffer) => {
+                let body = decompressedBuffer.toString('utf8');
+
+                // Si Metro devuelve un error (status 500), mostrar el error
+                if (proxyRes.statusCode >= 400) {
+                  console.error('[PROXY] ❌ Metro devolvió error:', proxyRes.statusCode);
+                  try {
+                    const errorJson = JSON.parse(body);
+                    console.error('[PROXY] ❌ Error de Metro:', JSON.stringify(errorJson, null, 2));
+                  } catch (e) {
+                    console.error('[PROXY] ❌ Respuesta de error:', body.substring(0, 500));
+                  }
+                }
+
+                // Reemplazar import.meta con polyfill
+                if (body.includes('import.meta')) {
+                  console.log('[PROXY] ⚠️ Reemplazando import.meta en bundle...');
+                  body = body.replace(/import\.meta/g, '(window.__importMeta||{url:window.location.href,env:{},hot:null})');
+                  console.log('[PROXY] ✅ import.meta reemplazado');
+                }
+
+                // Copiar headers pero remover Content-Encoding (enviamos sin comprimir)
+                const headers = { ...proxyRes.headers };
+                delete headers['content-encoding'];
+                delete headers['content-length'];
+                headers['content-length'] = Buffer.byteLength(body);
+
+                res.writeHead(proxyRes.statusCode, headers);
+                res.end(body);
+              })
+              .catch((err) => {
+                console.error('[PROXY] ❌ Error descomprimiendo:', err.message);
+                // Intentar enviar sin modificar
+                res.writeHead(proxyRes.statusCode, proxyRes.headers);
+                res.end(buffer);
+              });
+          });
+        } else {
+          // Para otros archivos, hacer streaming directo
+          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          proxyRes.pipe(res);
+        }
+      });
+
+      proxyReq.on('error', (err) => {
+        console.error('[PROXY] ❌ Error:', err.message);
+        res.writeHead(502);
+        res.end('Proxy error: ' + err.message);
+      });
+
+      // Si hay body en la petición, enviarlo
+      req.pipe(proxyReq);
+    });
+
+    // Iniciar el proxy en un puerto diferente
+    const PROXY_PORT = 8082;
+    proxyServer.listen(PROXY_PORT, 'localhost', () => {
+      console.log(`[PROXY] 🚀 Proxy server running on http://localhost:${PROXY_PORT}`);
+      console.log(`[PROXY] 🔄 Proxying requests to Metro on port ${METRO_PORT}`);
+    });
+
+    // Interceptar y modificar headers
     const { session } = mainWindow.webContents;
 
     session.webRequest.onBeforeSendHeaders((details, callback) => {
-      // Agregar headers CORS a todas las peticiones
       const requestHeaders = { ...details.requestHeaders };
 
-      // Si es una petición al backend, agregar headers necesarios
-      // Solo interceptar si la URL BASE es del backend, no si contiene el string en parámetros
       try {
         const urlObj = new URL(details.url);
         if (urlObj.hostname === 'api.app-joanis-backend.com') {
@@ -220,13 +340,11 @@ function createWindow(port) {
     session.webRequest.onHeadersReceived((details, callback) => {
       const responseHeaders = details.responseHeaders || {};
 
-      // Permitir CORS para todas las respuestas
       responseHeaders['Access-Control-Allow-Origin'] = ['*'];
       responseHeaders['Access-Control-Allow-Methods'] = ['GET, POST, PUT, DELETE, OPTIONS'];
       responseHeaders['Access-Control-Allow-Headers'] = ['*'];
       responseHeaders['Access-Control-Allow-Credentials'] = ['true'];
 
-      // Permitir módulos ES
       if (!details.url.includes('api.app-joanis-backend.com')) {
         responseHeaders['Content-Security-Policy'] = ["default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval';"];
       }
@@ -234,35 +352,22 @@ function createWindow(port) {
       callback({ responseHeaders });
     });
 
-    mainWindow.loadURL('http://localhost:8081');
+    // Cargar desde el proxy en lugar de Metro directamente
+    mainWindow.loadURL(`http://localhost:${PROXY_PORT}`);
     mainWindow.webContents.openDevTools();
 
-    // Log de todas las solicitudes de red
-    mainWindow.webContents.session.webRequest.onBeforeRequest((details, callback) => {
-      console.log('[ELECTRON] 🌐 Request:', details.url);
-      callback({});
-    });
-
-    // Log de errores de consola con más detalle
+    // Log de errores de consola
     mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
-      const levelStr = ['verbose', 'info', 'warning', 'error'][level] || 'log';
       const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
-
-      // Colorear según el nivel
       const prefix = level === 3 ? '❌' : level === 2 ? '⚠️' : level === 1 ? 'ℹ️' : '📝';
 
       console.log(`[${timestamp}] ${prefix} [BROWSER] ${message}`);
-      if (sourceId && line) {
-        console.log(`           └─ ${sourceId}:${line}`);
-      }
     });
 
-    // Log cuando se carga un script
     mainWindow.webContents.on('did-finish-load', () => {
       console.log('[ELECTRON] ✅ Página cargada completamente');
     });
 
-    // Log de errores de carga
     mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
       console.error('[ELECTRON] ❌ Error cargando:', errorCode, errorDescription, validatedURL);
     });
