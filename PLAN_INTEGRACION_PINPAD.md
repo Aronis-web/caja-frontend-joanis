@@ -66,9 +66,18 @@ Get-Service -Name "HGATEWAY", "HGATEWAY_API_REST"
 1. ✅ ~~Registrar comercio en QA con Izipay~~ (COMPLETADO)
 2. ✅ ~~Probar `/API_PPAD/test` exitosamente~~ (COMPLETADO)
 3. ⏳ Probar compra con `/API_PPAD/procesarTransaccion`
-4. ⏳ Integrar en flujo de pagos de CajaGrit
+4. ✅ ~~Integrar en flujo de pagos de CajaGrit~~ (COMPLETADO)
 5. ⏳ Configurar Electron IPC handlers
 6. ⏳ Actualizar instalador NSIS
+
+### ✅ Integración en Flujo de Pagos (11/04/2026)
+- **El método de pago IZIPAY ahora usa el PinPad Verifone P400**
+- Cuando el usuario selecciona Izipay, se activa automáticamente el flujo del PinPad
+- Archivos modificados:
+  - `src/screens/POS/NewSaleScreen.tsx` - Flujo de pago con PinPad
+  - `src/types/pos.ts` - `isIzipay` indica pago con tarjeta via PinPad
+- El PinPad muestra modal con estado de la transacción
+- Soporta: conexión automática, proceso de venta, manejo de errores
 
 ---
 

@@ -45,9 +45,8 @@ export interface PaymentMethod {
   submethods?: PaymentMethod[];
   createdAt?: string;
   // Campos para identificar tipos de pago
-  isIzipay?: boolean;
+  isIzipay?: boolean; // Pago con tarjeta via PinPad Verifone P400
   isCash?: boolean;
-  isPinPad?: boolean; // Pago con PinPad Verifone P400
 }
 
 export interface Session {

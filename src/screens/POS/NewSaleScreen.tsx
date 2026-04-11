@@ -93,7 +93,7 @@ export default function NewSaleScreen() {
     status: pinPadStatus,
     isProcessing: isPinPadProcessing,
     lastTransaction: lastPinPadTransaction,
-    error: pinPadError,
+    lastError: pinPadError,
     connect: connectPinPad,
     processSale: processPinPadSale,
   } = usePinPadStore();
@@ -2183,7 +2183,7 @@ export default function NewSaleScreen() {
                       return null;
                     })(),
                   ]}
-                  onPress={() => {
+                  onPress={async () => {
                     const amount = parseFloat(paymentAmount);
                     if (isNaN(amount) || amount <= 0) {
                       Alert.alert('Error', 'Ingrese un monto válido');
@@ -2215,8 +2215,6 @@ export default function NewSaleScreen() {
                     // Validar monto según tipo de método de pago
                     const isIzipay =
                       selectedMethod?.code?.includes('IZIPAY') || selectedMethod?.isIzipay;
-                    const isPinPad =
-                      selectedMethod?.code?.includes('PINPAD') || selectedMethod?.isPinPad;
                     const isCash = selectedMethod?.code === 'CASH' || selectedMethod?.isCash;
                     const total = getCartTotal();
 
@@ -2224,14 +2222,13 @@ export default function NewSaleScreen() {
                       method: selectedMethod?.name,
                       code: selectedMethod?.code,
                       isIzipay,
-                      isPinPad,
                       isCash,
                       amount,
                       total,
                     });
 
-                    // Si es IZIPAY o PINPAD, validar que no exceda el total de la venta
-                    if ((isIzipay || isPinPad) && amount > total) {
+                    // Si es IZIPAY (tarjeta), validar que no exceda el total de la venta
+                    if (isIzipay && amount > total) {
                       Alert.alert(
                         'Error',
                         `El monto con tarjeta no puede exceder el total de la venta (S/ ${total.toFixed(
@@ -2241,8 +2238,8 @@ export default function NewSaleScreen() {
                       return;
                     }
 
-                    // Si es PinPad, procesar con el dispositivo físico
-                    if (isPinPad) {
+                    // Si es Izipay, procesar con el PinPad Verifone P400
+                    if (isIzipay) {
                       const methodName =
                         parentMethod.submethods && parentMethod.submethods.length > 0
                           ? `${parentMethod.name} - ${
