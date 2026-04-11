@@ -79,6 +79,27 @@ Get-Service -Name "HGATEWAY", "HGATEWAY_API_REST"
 - El PinPad muestra modal con estado de la transacción
 - Soporta: conexión automática, proceso de venta, manejo de errores
 
+### ⚠️ Pendiente: Configuración Host Izipay (11/04/2026)
+**Estado**: La integración técnica está completa, pero las transacciones de prueba son rechazadas por el host.
+
+**Respuesta del Host:**
+```json
+{
+  "resp_host": "77",
+  "response_code": "89",
+  "message": "RESERVADO",
+  "merchant_id": "29999979",
+  "card": "529206******7935"
+}
+```
+
+**Código 89** = Error de seguridad (según documentación Izipay)
+
+**Acción requerida**: Contactar a Izipay para:
+1. Verificar que el merchant `29999979` esté habilitado para pruebas
+2. Confirmar que la tarjeta de prueba `529206******7935` esté vinculada
+3. Solicitar información sobre `resp_host: 77`
+
 ---
 
 ## 📋 Resumen Ejecutivo

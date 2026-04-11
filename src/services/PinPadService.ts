@@ -236,6 +236,7 @@ class PinPadService {
 
       this.setStatus('PROCESSING');
       console.log('💳 [PINPAD] Procesando transacción:', request.ecr_transaccion);
+      console.log('📤 [PINPAD] Request completo:', JSON.stringify(request, null, 2));
 
       const response = await this.request<PinPadTransactionResponse>(
         '/API_PPAD/procesarTransaccion',
@@ -245,6 +246,7 @@ class PinPadService {
         }
       );
 
+      console.log('📥 [PINPAD] Response completo:', JSON.stringify(response, null, 2));
       this.setStatus('CONNECTED');
 
       if (response.response_code === '00') {
