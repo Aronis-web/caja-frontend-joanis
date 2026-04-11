@@ -1,5 +1,77 @@
 # 🏧 PLAN DE INTEGRACIÓN - PinPad Verifone P400
 
+---
+
+## ✅ ESTADO ACTUAL (Actualizado: 11/04/2026)
+
+### Infraestructura Completada
+| Componente | Estado | Detalles |
+|------------|--------|----------|
+| Gateway Instalado | ✅ | `C:\Program Files (x86)\Caja Windows APIREST - PinPad - 6.4\` |
+| Servicio HGATEWAY | ✅ | Puerto 4137 escuchando |
+| Servicio HGATEWAY_API_REST | ✅ | Puerto 9090 funcionando |
+| Java (Temurin 25) | ✅ | Instalado y configurado en PATH |
+| Drivers Verifone | ✅ | PinPad detectado en COM9 |
+| Login API | ✅ | `POST /API_PPAD/login` funciona |
+| Test Conexión | ✅ | `POST /API_PPAD/test` → `response_code: "00"` |
+| TypeScript Types | ✅ | `src/types/pinpad.ts` creado |
+| PinPadService | ✅ | `src/services/PinPadService.ts` creado |
+| Zustand Store | ✅ | `src/store/pinpad.ts` creado |
+
+### 🎉 Comunicación Verificada
+```
+✅ API REST (9090) → Gateway (4137) → COM9 → PinPad P400
+   ¡CONEXIÓN EXITOSA! El PinPad responde correctamente.
+```
+
+### ✅ RESUELTO: Comercio Registrado
+El PinPad **ya responde a comandos** correctamente.
+- Test de conexión: `response_code: "00"` (APROBADO)
+
+### Configuración Corregida
+- ✅ Archivo `ptotcpsch001.xml`: Corregido `Tipo="TCP"` → `tipo="TCP"`
+- ✅ Conflicto COM9 Bluetooth: Resuelto (dispositivo deshabilitado)
+- ✅ Java instalado: Temurin JDK 25.0.2 en PATH
+
+### Credenciales API REST
+```json
+{
+  "ecr_usuario": "izipay",
+  "ecr_password": "izipay"
+}
+```
+- **IMPORTANTE**: Los campos son `ecr_usuario` y `ecr_password` (no `usuario`/`password`)
+- Token JWT: Se obtiene con `POST /API_PPAD/login`
+- Token válido por 12 horas (43200 segundos)
+
+### Endpoints Disponibles
+| Endpoint | Método | Descripción |
+|----------|--------|-------------|
+| `/API_PPAD/login` | POST | Obtener token JWT |
+| `/API_PPAD/test` | POST | Probar conexión con PinPad |
+| `/API_PPAD/procesarTransaccion` | POST | Procesar transacciones |
+| `/v2/api-docs` | GET | Documentación Swagger |
+
+### Comandos para Iniciar Servicios
+```powershell
+# Iniciar servicios (requiere Admin)
+net start HGATEWAY
+net start HGATEWAY_API_REST
+
+# Verificar estado
+Get-Service -Name "HGATEWAY", "HGATEWAY_API_REST"
+```
+
+### Próximos Pasos
+1. ✅ ~~Registrar comercio en QA con Izipay~~ (COMPLETADO)
+2. ✅ ~~Probar `/API_PPAD/test` exitosamente~~ (COMPLETADO)
+3. ⏳ Probar compra con `/API_PPAD/procesarTransaccion`
+4. ⏳ Integrar en flujo de pagos de CajaGrit
+5. ⏳ Configurar Electron IPC handlers
+6. ⏳ Actualizar instalador NSIS
+
+---
+
 ## 📋 Resumen Ejecutivo
 
 Este documento detalla el plan completo para integrar el PinPad Verifone P400 con la aplicación CajaGrit, siguiendo el modelo ya implementado con Izipay pero con comunicación directa al dispositivo físico.
