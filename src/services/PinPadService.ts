@@ -266,11 +266,40 @@ class PinPadService {
   // ============ OPERACIONES DE COMPRA ============
 
   /**
-   * Procesa una compra con tarjeta
+   * Procesa una compra con tarjeta Y opción QR
    * @param amountCents Monto en centavos (ej: 1050 = S/ 10.50)
    * @param currencyCode Moneda ('604' = Soles, '840' = Dólares)
+   * @param enableQR Si true, habilita también la opción de pagar con QR (default: true)
+   *
+   * IMPORTANTE: ecr_data_adicional: '0' habilita QR en el PinPad
+   * Sin este parámetro, solo se permite tarjeta (chip/contactless/banda)
    */
   async processSale(
+    amountCents: number,
+    currencyCode: '604' | '840' = '604',
+    enableQR: boolean = true
+  ): Promise<PinPadTransactionResponse> {
+    const request: any = {
+      ecr_aplicacion: 'POS',
+      ecr_transaccion: '01',
+      ecr_amount: amountCents.toString(),
+      ecr_currency_code: currencyCode,
+    };
+
+    // Habilitar QR si está activo (por defecto sí)
+    if (enableQR) {
+      request.ecr_data_adicional = '0';
+    }
+
+    return this.processTransaction(request);
+  }
+
+  /**
+   * Procesa una compra SOLO con tarjeta (sin opción QR)
+   * @param amountCents Monto en centavos
+   * @param currencyCode Moneda
+   */
+  async processSaleCardOnly(
     amountCents: number,
     currencyCode: '604' | '840' = '604'
   ): Promise<PinPadTransactionResponse> {
@@ -279,27 +308,24 @@ class PinPadService {
       ecr_transaccion: '01',
       ecr_amount: amountCents.toString(),
       ecr_currency_code: currencyCode,
+      // Sin ecr_data_adicional = solo tarjeta
     });
   }
 
   /**
-   * Procesa una compra con opción de pago QR
+   * Procesa una compra con opción de pago QR (alias para compatibilidad)
+   * @deprecated Usar processSale() que ya incluye QR por defecto
    */
   async processSaleWithQR(
     amountCents: number,
     currencyCode: '604' | '840' = '604'
   ): Promise<PinPadTransactionResponse> {
-    return this.processTransaction({
-      ecr_aplicacion: 'POS',
-      ecr_transaccion: '01',
-      ecr_amount: amountCents.toString(),
-      ecr_currency_code: currencyCode,
-      ecr_data_adicional: '0', // Habilita QR
-    });
+    return this.processSale(amountCents, currencyCode, true);
   }
 
   /**
-   * Procesa una compra directa con QR
+   * Procesa una compra directa con QR (sin opción de tarjeta)
+   * Usa ecr_transaccion: '67' para QR directo
    */
   async processSaleQRDirect(
     amountCents: number,

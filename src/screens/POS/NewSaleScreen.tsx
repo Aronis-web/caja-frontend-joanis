@@ -2266,7 +2266,7 @@ export default function NewSaleScreen() {
                         // Procesar la venta (monto en centavos)
                         const amountCents = Math.round(amount * 100);
                         setPinPadMessage(
-                          'Esperando tarjeta en el PinPad...\n\nInserte, deslice o acerque la tarjeta'
+                          'Esperando pago en el PinPad...\n\n📱 Escanee QR o\n💳 Inserte, deslice o acerque la tarjeta'
                         );
 
                         const response = await processPinPadSale(amountCents);
