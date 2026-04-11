@@ -25,9 +25,11 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { usePOSStore } from '@/store/pos';
 import { useOfflineStore } from '@/store/offline';
+import { usePinPadStore } from '@/store/pinpad';
 import { posService } from '@/services/POSService';
 import { networkMonitor } from '@/services/NetworkMonitor';
 import { OfflineModeSwitch } from '@/components/offline';
+import type { PinPadTransactionResponse } from '@/types/pinpad';
 import type {
   Product,
   Customer,
@@ -85,6 +87,16 @@ export default function NewSaleScreen() {
     createOfflineSale,
     setConnectionStatus,
   } = useOfflineStore();
+
+  // PinPad store
+  const {
+    status: pinPadStatus,
+    isProcessing: isPinPadProcessing,
+    lastTransaction: lastPinPadTransaction,
+    error: pinPadError,
+    connect: connectPinPad,
+    processSale: processPinPadSale,
+  } = usePinPadStore();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Product[]>([]);
@@ -173,6 +185,14 @@ export default function NewSaleScreen() {
   const [selectedParentMethod, setSelectedParentMethod] = useState<string | null>(null);
   const [selectedSubmethod, setSelectedSubmethod] = useState<string | null>(null);
   const [paymentAmount, setPaymentAmount] = useState('');
+
+  // PinPad states
+  const [showPinPadModal, setShowPinPadModal] = useState(false);
+  const [pinPadProcessing, setPinPadProcessing] = useState(false);
+  const [pinPadMessage, setPinPadMessage] = useState('');
+  const [pinPadAmountPending, setPinPadAmountPending] = useState(0);
+  const [pinPadMethodPending, setPinPadMethodPending] = useState<string | null>(null);
+  const [pinPadMethodNamePending, setPinPadMethodNamePending] = useState<string>('');
 
   // Initialize store from AsyncStorage on mount
   useEffect(() => {
@@ -2195,6 +2215,8 @@ export default function NewSaleScreen() {
                     // Validar monto según tipo de método de pago
                     const isIzipay =
                       selectedMethod?.code?.includes('IZIPAY') || selectedMethod?.isIzipay;
+                    const isPinPad =
+                      selectedMethod?.code?.includes('PINPAD') || selectedMethod?.isPinPad;
                     const isCash = selectedMethod?.code === 'CASH' || selectedMethod?.isCash;
                     const total = getCartTotal();
 
@@ -2202,19 +2224,100 @@ export default function NewSaleScreen() {
                       method: selectedMethod?.name,
                       code: selectedMethod?.code,
                       isIzipay,
+                      isPinPad,
                       isCash,
                       amount,
                       total,
                     });
 
-                    // Si es IZIPAY, validar que no exceda el total de la venta
-                    if (isIzipay && amount > total) {
+                    // Si es IZIPAY o PINPAD, validar que no exceda el total de la venta
+                    if ((isIzipay || isPinPad) && amount > total) {
                       Alert.alert(
                         'Error',
                         `El monto con tarjeta no puede exceder el total de la venta (S/ ${total.toFixed(
                           2
                         )})`
                       );
+                      return;
+                    }
+
+                    // Si es PinPad, procesar con el dispositivo físico
+                    if (isPinPad) {
+                      const methodName =
+                        parentMethod.submethods && parentMethod.submethods.length > 0
+                          ? `${parentMethod.name} - ${
+                              parentMethod.submethods.find((sm) => sm.id === selectedSubmethod)
+                                ?.name
+                            }`
+                          : parentMethod.name;
+
+                      // Guardar datos pendientes y mostrar modal
+                      setPinPadAmountPending(amount);
+                      setPinPadMethodPending(methodToUse);
+                      setPinPadMethodNamePending(methodName);
+                      setPinPadMessage('Conectando con PinPad...');
+                      setShowPinPadModal(true);
+                      setPinPadProcessing(true);
+
+                      try {
+                        // Conectar si no está conectado
+                        if (pinPadStatus !== 'CONNECTED' && pinPadStatus !== 'AUTHENTICATED') {
+                          setPinPadMessage('Conectando con PinPad...');
+                          await connectPinPad();
+                        }
+
+                        // Procesar la venta (monto en centavos)
+                        const amountCents = Math.round(amount * 100);
+                        setPinPadMessage(
+                          'Esperando tarjeta en el PinPad...\n\nInserte, deslice o acerque la tarjeta'
+                        );
+
+                        const response = await processPinPadSale(amountCents);
+
+                        if (response.response_code === '00') {
+                          // Transacción aprobada
+                          setPinPadMessage('✅ Transacción Aprobada');
+
+                          // Agregar el pago al carrito con info de la transacción
+                          addPaymentToCart(methodToUse, amount);
+
+                          // Limpiar estados
+                          setPaymentAmount('');
+                          setSelectedParentMethod(null);
+                          setSelectedSubmethod(null);
+
+                          // Mostrar éxito brevemente y cerrar
+                          setTimeout(() => {
+                            setShowPinPadModal(false);
+                            setPinPadProcessing(false);
+                            Alert.alert(
+                              '✅ Pago Aprobado',
+                              `Tarjeta: ${response.card || '****'}\nAutorización: ${response.approval_code || 'N/A'}\nMonto: S/ ${amount.toFixed(2)}`,
+                              [{ text: 'OK' }]
+                            );
+                          }, 1500);
+                        } else {
+                          // Transacción rechazada
+                          setPinPadProcessing(false);
+                          setPinPadMessage(
+                            `❌ Transacción Rechazada\n\n${response.message || 'Error desconocido'}\nCódigo: ${response.response_code}`
+                          );
+
+                          setTimeout(() => {
+                            setShowPinPadModal(false);
+                          }, 3000);
+                        }
+                      } catch (error: any) {
+                        console.error('❌ Error PinPad:', error);
+                        setPinPadProcessing(false);
+                        setPinPadMessage(
+                          `❌ Error\n\n${error.message || 'Error de comunicación con el PinPad'}`
+                        );
+
+                        setTimeout(() => {
+                          setShowPinPadModal(false);
+                        }, 3000);
+                      }
                       return;
                     }
 
@@ -3482,6 +3585,46 @@ export default function NewSaleScreen() {
                 <Text style={styles.offlineCustomerSaveButtonText}>✓ Guardar</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* PinPad Processing Modal */}
+      <Modal
+        visible={showPinPadModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => {
+          if (!pinPadProcessing) {
+            setShowPinPadModal(false);
+          }
+        }}
+      >
+        <View style={styles.pinPadModalOverlay}>
+          <View style={styles.pinPadModalContent}>
+            <View style={styles.pinPadModalHeader}>
+              <Text style={styles.pinPadModalIcon}>💳</Text>
+              <Text style={styles.pinPadModalTitle}>PinPad Verifone P400</Text>
+            </View>
+
+            <View style={styles.pinPadModalBody}>
+              <Text style={styles.pinPadModalAmount}>S/ {pinPadAmountPending.toFixed(2)}</Text>
+
+              {pinPadProcessing && (
+                <ActivityIndicator size="large" color="#2196F3" style={{ marginVertical: 20 }} />
+              )}
+
+              <Text style={styles.pinPadModalMessage}>{pinPadMessage}</Text>
+            </View>
+
+            {!pinPadProcessing && (
+              <TouchableOpacity
+                style={styles.pinPadModalCloseButton}
+                onPress={() => setShowPinPadModal(false)}
+              >
+                <Text style={styles.pinPadModalCloseButtonText}>Cerrar</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </Modal>
@@ -5544,5 +5687,68 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  // PinPad Modal Styles
+  pinPadModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pinPadModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    width: '90%',
+    maxWidth: 400,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  pinPadModalHeader: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  pinPadModalIcon: {
+    fontSize: 48,
+    marginBottom: 12,
+  },
+  pinPadModalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  pinPadModalBody: {
+    alignItems: 'center',
+    width: '100%',
+    paddingVertical: 16,
+  },
+  pinPadModalAmount: {
+    fontSize: 36,
+    fontWeight: 'bold',
+    color: '#2196F3',
+    marginBottom: 16,
+  },
+  pinPadModalMessage: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 24,
+    paddingHorizontal: 16,
+  },
+  pinPadModalCloseButton: {
+    marginTop: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    backgroundColor: '#E0E0E0',
+    borderRadius: 8,
+  },
+  pinPadModalCloseButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
   },
 });
