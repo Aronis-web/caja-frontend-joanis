@@ -24,3 +24,7 @@ web-build/
 # Temporary files
 *.log
 *.tmp
+
+# PinPad Gateway (binarios grandes ~220MB)
+pinpad-gateway/
+temp_integracion/
