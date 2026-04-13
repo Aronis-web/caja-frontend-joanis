@@ -332,32 +332,46 @@ export default function POSDashboardScreen() {
 
   // Limpiar base de datos offline
   const handleClearOfflineData = useCallback(async () => {
-    Alert.alert(
-      'Confirmar limpieza',
-      '¿Está seguro de eliminar todos los datos offline? Esto eliminará productos y tokens almacenados localmente. Las ventas pendientes NO serán eliminadas.',
-      [
+    const confirmMessage =
+      '¿Está seguro de eliminar todos los datos offline? Esto eliminará productos y tokens almacenados localmente. Las ventas pendientes NO serán eliminadas.';
+
+    // En web/Electron, Alert.alert no funciona, usar window.confirm
+    const isWeb = Platform.OS === 'web';
+
+    const executeCleanup = async () => {
+      try {
+        setSyncing(true);
+        setSyncError(null);
+        // Limpiar productos y tokens pero mantener ventas pendientes
+        await offlineDatabase.clearProducts();
+        await offlineDatabase.clearTokens();
+        await refreshStats();
+        setSyncSuccess('Datos offline eliminados. Realice una nueva sincronización.');
+      } catch (error) {
+        console.error('Error al limpiar datos offline:', error);
+        setSyncError('Error al limpiar datos offline');
+      } finally {
+        setSyncing(false);
+      }
+    };
+
+    if (isWeb) {
+      // Usar window.confirm para web/Electron
+      const confirmed = window.confirm(confirmMessage);
+      if (confirmed) {
+        await executeCleanup();
+      }
+    } else {
+      // Usar Alert.alert para móviles
+      Alert.alert('Confirmar limpieza', confirmMessage, [
         { text: 'Cancelar', style: 'cancel' },
         {
           text: 'Eliminar',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              setSyncing(true);
-              setSyncError(null);
-              // Limpiar productos y tokens pero mantener ventas pendientes
-              await offlineDatabase.clearProducts();
-              await offlineDatabase.clearTokens();
-              await refreshStats();
-              setSyncSuccess('Datos offline eliminados. Realice una nueva sincronización.');
-            } catch (error) {
-              setSyncError('Error al limpiar datos offline');
-            } finally {
-              setSyncing(false);
-            }
-          },
+          onPress: executeCleanup,
         },
-      ]
-    );
+      ]);
+    }
   }, [refreshStats]);
 
   // Formatear fecha de última sincronización
