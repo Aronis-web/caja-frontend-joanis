@@ -24,6 +24,7 @@ import CloseSessionScreen from '@/screens/POS/CloseSessionScreen';
 import NewSaleScreen from '@/screens/POS/NewSaleScreen';
 import SaleDetailScreen from '@/screens/POS/SaleDetailScreen';
 import CashTransactionScreen from '@/screens/POS/CashTransactionScreen';
+import CashCollectionScreen from '@/screens/POS/CashCollectionScreen';
 import HomeScreen from '@/screens/Home/HomeScreen';
 
 const AuthStackNavigator = createNativeStackNavigator<AuthStackParamList>();
@@ -99,6 +100,11 @@ const POSStack = React.memo(function POSStack() {
         name={POS_ROUTES.CASH_TRANSACTION}
         component={CashTransactionScreen}
         options={{ title: 'Transacción de Efectivo' }}
+      />
+      <POSStackNavigator.Screen
+        name={POS_ROUTES.CASH_COLLECTION}
+        component={CashCollectionScreen}
+        options={{ title: 'Recaudación de Efectivo', headerShown: false }}
       />
     </POSStackNavigator.Navigator>
   );

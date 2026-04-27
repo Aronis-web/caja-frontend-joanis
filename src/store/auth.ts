@@ -160,7 +160,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (siteData) savedSite = JSON.parse(siteData);
         console.log('📦 Empresa guardada cargada:', savedCompany?.name);
         console.log('🏪 Sede guardada cargada:', savedSite?.name);
-      } catch (error) {
+      } catch {
         console.log('ℹ️ No hay empresa/sede guardada');
       }
 
@@ -206,19 +206,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   logout: async () => {
     console.log('🔓 [AUTH STORE] logout() llamado');
-    try {
-      await authService.logout();
-      console.log('🔓 [AUTH STORE] authService.logout() completado');
-      await get().clearInvalidAuth();
-      console.log('🔓 [AUTH STORE] clearInvalidAuth() completado');
-    } catch (_error) {
-      console.log('🔓 [AUTH STORE] Error en logout, ejecutando clearInvalidAuth');
-      await get().clearInvalidAuth();
-    }
-    // Clear company and site selection
+
+    // Siempre limpiar estado local primero para evitar bloqueos por red/API
+    await get().clearInvalidAuth();
+
+    // Intentar notificar al backend sin bloquear la UI
+    authService.logout().catch((error) => {
+      console.log('🔓 [AUTH STORE] Logout remoto falló (no bloqueante):', error);
+    });
+
+    // Refuerzo de estado local
     set({ currentCompany: null, currentSite: null });
     await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_COMPANY);
     await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_SITE);
+
     console.log('🔓 [AUTH STORE] logout() completado - isAuthenticated debería ser false');
   },
 

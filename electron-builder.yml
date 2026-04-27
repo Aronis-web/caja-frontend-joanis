@@ -1,0 +1,54 @@
+appId: e28208b8-89b4-4682-80dc-925059424b1f
+productName: CajaGrit
+directories:
+  buildResources: build
+  output: dist
+extraMetadata:
+  main: electron.js
+files:
+  - from: web-build
+    to: web-build
+  - electron.js
+  - preload.js
+  - package.json
+  - node_modules/**/*
+
+extraResources:
+  - from: web-build
+    to: web-build
+
+win:
+  artifactName: '${productName}-${version}-installer.${ext}'
+  target:
+    - nsis
+    - portable
+  icon: assets/icon.ico
+
+nsis:
+  include: installer.nsh
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: CajaGrit
+  installerIcon: assets/icon.ico
+  uninstallerIcon: assets/icon.ico
+  installerHeaderIcon: assets/icon.ico
+  displayLanguageSelector: false
+  language: 1034
+  installerLanguages:
+    - es_ES
+    - en_US
+  artifactName: '${productName}-${version}-setup.${ext}'
+
+portable:
+  artifactName: '${productName}-${version}-portable.${ext}'
+
+publish:
+  provider: github
+  owner: aronis-web # Cambiar al propietario del repo
+  repo: caja-frontend-joanis # Cambiar al nombre del repo
+  releaseType: release
+
+# Delta updates (reduce tamaño de descarga)
+# Solo disponible con GitHub como proveedor

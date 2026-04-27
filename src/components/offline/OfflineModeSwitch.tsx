@@ -1,10 +1,10 @@
 /**
- * Offline Mode Switch Component
- * Switch to enable/disable offline mode when there's no connection
+ * Offline Mode Indicator Component
+ * Shows current offline/online mode status
  */
 
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { useOfflineStore } from '@/store/offline';
 
 interface OfflineModeSwitchProps {
@@ -23,11 +23,6 @@ export default function OfflineModeSwitch({
     availableTokens,
     pendingSales,
     totalProducts,
-    isInitialized,
-    enableOfflineMode,
-    disableOfflineMode,
-    canEnableOfflineMode,
-    isGracePeriodOver,
     disconnectedSince,
     gracePeriodMs,
   } = useOfflineStore();
@@ -37,12 +32,11 @@ export default function OfflineModeSwitch({
 
   const isOnline = connectionStatus === 'ONLINE';
   const isSyncing = connectionStatus === 'SYNCING' || connectionStatus === 'RECONNECTING';
-  const canEnable = canEnableOfflineMode();
-  const showOfflineSwitch = isGracePeriodOver() || isOfflineModeEnabled;
+  const showOfflineIndicator = isOfflineModeEnabled;
 
   // Timer para actualizar el componente cuando pase el período de gracia
   useEffect(() => {
-    if (!disconnectedSince || isOnline || showOfflineSwitch) {
+    if (!disconnectedSince || isOnline || showOfflineIndicator) {
       return;
     }
 
@@ -57,66 +51,45 @@ export default function OfflineModeSwitch({
 
       return () => clearTimeout(timer);
     }
-  }, [disconnectedSince, isOnline, showOfflineSwitch, gracePeriodMs]);
+  }, [disconnectedSince, isOnline, showOfflineIndicator, gracePeriodMs]);
 
-  const handleToggle = async () => {
-    if (isOfflineModeEnabled) {
-      disableOfflineMode();
-    } else if (canEnable) {
-      await enableOfflineMode();
-    }
-  };
-
-  // Vista mini para el header - muy discreta
+  // Vista mini para el header - solo indicador de estado
   if (mini) {
-    // TODO: MODO PRUEBAS - Siempre mostrar el switch completo
-    // // Si está online, mostrar solo un pequeño indicador verde
-    // if (isOnline) {
-    //   return (
-    //     <View style={styles.miniContainer}>
-    //       <View style={[styles.miniDot, styles.miniDotOnline]} />
-    //     </View>
-    //   );
-    // }
+    if (isOnline) {
+      return (
+        <View style={styles.miniContainer}>
+          <View style={[styles.miniDot, styles.miniDotOnline]} />
+        </View>
+      );
+    }
 
-    // // Si está offline pero aún en período de gracia (2 min), mostrar indicador amarillo de espera
-    // if (!showOfflineSwitch) {
-    //   return (
-    //     <View style={[styles.miniContainer, styles.miniContainerWaiting]}>
-    //       <View style={[styles.miniDot, styles.miniDotWaiting]} />
-    //       <Text style={styles.miniWaitingText}>⏳</Text>
-    //     </View>
-    //   );
-    // }
+    const isWaitingGracePeriod = !isOfflineModeEnabled && !!disconnectedSince;
 
-    // Siempre mostrar switch para pruebas
+    if (isWaitingGracePeriod) {
+      return (
+        <View style={[styles.miniContainer, styles.miniContainerWaiting]}>
+          <View style={[styles.miniDot, styles.miniDotWaiting]} />
+          <Text style={styles.miniWaitingText}>⏳</Text>
+        </View>
+      );
+    }
+
     return (
-      <TouchableOpacity
+      <View
         style={[
           styles.miniContainer,
           styles.miniContainerOffline,
           isOfflineModeEnabled && styles.miniContainerActive,
         ]}
-        onPress={handleToggle}
-        disabled={false} // TODO: MODO PRUEBAS - Sin restricciones
-        activeOpacity={0.7}
       >
-        <View style={[styles.miniDot, isOnline ? styles.miniDotOnline : styles.miniDotOffline]} />
-        <View
-          style={[
-            styles.miniSwitch,
-            isOfflineModeEnabled && styles.miniSwitchOn,
-          ]}
-        >
-          <View style={[styles.miniThumb, isOfflineModeEnabled && styles.miniThumbOn]} />
-        </View>
+        <View style={[styles.miniDot, styles.miniDotOffline]} />
         {isOfflineModeEnabled && <Text style={styles.miniTokenCount}>{availableTokens}</Text>}
         {pendingSales > 0 && (
           <View style={styles.miniPendingBadge}>
             <Text style={styles.miniPendingText}>{pendingSales}</Text>
           </View>
         )}
-      </TouchableOpacity>
+      </View>
     );
   }
 
@@ -157,44 +130,20 @@ export default function OfflineModeSwitch({
         </View>
       </View>
 
-      {/* Switch de modo offline */}
+      {/* Indicador de modo offline */}
       <View style={styles.switchRow}>
         <View style={styles.switchLabelContainer}>
           <Text style={styles.switchIcon}>⚡</Text>
           <Text style={styles.switchLabel}>Modo Offline</Text>
         </View>
 
-        <TouchableOpacity
-          style={[
-            styles.switch,
-            isOnline && styles.switchDisabled,
-            isOfflineModeEnabled && styles.switchOn,
-          ]}
-          onPress={handleToggle}
-          disabled={false} // TODO: MODO PRUEBAS - Sin restricciones
-          activeOpacity={0.7}
-        >
-          <View style={[styles.switchThumb, isOfflineModeEnabled && styles.switchThumbOn]} />
-        </TouchableOpacity>
-
         <Text style={[styles.switchState, isOfflineModeEnabled && styles.switchStateOn]}>
-          {isOfflineModeEnabled ? 'ON' : 'OFF'}
+          {isOfflineModeEnabled ? 'ACTIVO' : 'INACTIVO'}
         </Text>
       </View>
 
-      {/* Mensaje de estado */}
-      {/* TODO: MODO PRUEBAS - Mensaje oculto */}
-      {/* {isOnline && <Text style={styles.hintText}>🔒 Solo disponible cuando no hay conexión</Text>} */}
-
-      {!isOnline && !isOfflineModeEnabled && !canEnable && (
-        <Text style={styles.warningText}>
-          ⚠️{' '}
-          {availableTokens === 0
-            ? 'Sin tokens disponibles'
-            : totalProducts === 0
-              ? 'Sin productos sincronizados'
-              : 'Sistema no inicializado'}
-        </Text>
+      {!isOnline && !isOfflineModeEnabled && !!disconnectedSince && (
+        <Text style={styles.hintText}>⏳ Se activará automáticamente en 1 minuto</Text>
       )}
 
       {/* Estadísticas cuando está en modo offline */}
@@ -281,41 +230,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
   },
-  switch: {
-    width: 50,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#ccc',
-    padding: 2,
-    justifyContent: 'center',
-  },
-  switchDisabled: {
-    backgroundColor: '#e0e0e0',
-    opacity: 0.6,
-  },
-  switchOn: {
-    backgroundColor: '#ff9800',
-  },
-  switchThumb: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#fff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  switchThumbOn: {
-    alignSelf: 'flex-end',
-  },
+
   switchState: {
     marginLeft: 10,
     fontSize: 13,
     fontWeight: '700',
     color: '#999',
-    width: 30,
   },
   switchStateOn: {
     color: '#ff9800',
@@ -327,12 +247,6 @@ const styles = StyleSheet.create({
     color: '#666',
     marginTop: 6,
     fontStyle: 'italic',
-  },
-  warningText: {
-    fontSize: 12,
-    color: '#dc3545',
-    marginTop: 6,
-    fontWeight: '500',
   },
 
   // Stats
@@ -448,30 +362,7 @@ const styles = StyleSheet.create({
   miniWaitingText: {
     fontSize: 10,
   },
-  miniSwitch: {
-    width: 28,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#ccc',
-    padding: 1,
-    justifyContent: 'center',
-  },
-  miniSwitchOn: {
-    backgroundColor: '#ff9800',
-  },
-  miniSwitchDisabled: {
-    backgroundColor: '#e0e0e0',
-    opacity: 0.5,
-  },
-  miniThumb: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#fff',
-  },
-  miniThumbOn: {
-    alignSelf: 'flex-end',
-  },
+
   miniTokenCount: {
     fontSize: 10,
     fontWeight: '600',

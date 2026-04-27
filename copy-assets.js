@@ -13,6 +13,6 @@ if (fs.existsSync(sourceDir)) {
   fs.copySync(sourceDir, targetDir, { overwrite: true });
   console.log('✓ Assets copiados exitosamente');
 } else {
-  console.error('✗ Directorio de origen no existe:', sourceDir);
-  process.exit(1);
+  console.warn('⚠ Directorio de assets no encontrado, se omite copia:', sourceDir);
+  console.warn('⚠ Continuando porque el build ya incluye web-build completo.');
 }

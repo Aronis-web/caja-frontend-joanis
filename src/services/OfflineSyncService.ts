@@ -5,8 +5,10 @@
 
 import { offlineDatabase } from './OfflineDatabase';
 import { networkMonitor } from './NetworkMonitor';
-import { config } from '@/utils/config';
 import { authService } from './AuthService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { config } from '@/utils/config';
+import type { Session } from '@/types/pos';
 import type {
   OfflineProduct,
   OfflineCatalogResponse,
@@ -83,13 +85,15 @@ class OfflineSyncService {
     this.emit('sync:start', { type: 'initial' });
 
     try {
+      const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
+
       // 1. Descargar catálogo completo
       console.log('📦 [SYNC] Descargando catálogo de productos...');
-      await this.syncProducts(cashRegisterId, 'full');
+      await this.syncProducts(resolvedCashRegisterId, 'full');
 
       // 2. Verificar/reponer tokens hasta llegar a 1000
       console.log('🎫 [SYNC] Verificando pool de tokens...');
-      await this.ensureTokenPool(cashRegisterId);
+      await this.ensureTokenPool(resolvedCashRegisterId);
 
       // NOTA: Las ventas pendientes se sincronizan MANUALMENTE desde configuración
       const pendingCount = await offlineDatabase.getPendingSalesCount();
@@ -119,6 +123,8 @@ class OfflineSyncService {
     this.emit('sync:start', { type: 'reconnect' });
 
     try {
+      const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
+
       // NOTA: Las ventas pendientes se sincronizan MANUALMENTE desde configuración
       const pendingCount = await offlineDatabase.getPendingSalesCount();
       if (pendingCount > 0) {
@@ -127,11 +133,11 @@ class OfflineSyncService {
 
       // 1. Reponer tokens hasta 1000
       console.log('🎫 [SYNC] Reponiendo tokens...');
-      await this.ensureTokenPool(cashRegisterId);
+      await this.ensureTokenPool(resolvedCashRegisterId);
 
       // 2. Actualizar catálogo (delta)
       console.log('📦 [SYNC] Actualizando catálogo...');
-      await this.syncProducts(cashRegisterId, 'delta');
+      await this.syncProducts(resolvedCashRegisterId, 'delta');
 
       this.emit('sync:complete', { type: 'reconnect' });
       console.log('✅ [SYNC] Sincronización post-reconexión completada');
@@ -150,7 +156,8 @@ class OfflineSyncService {
     this.emit('products:sync:start', { mode });
 
     try {
-      let endpoint = `/pos/offline-catalog/${cashRegisterId}`;
+      const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
+      let endpoint = `/pos/offline-catalog/${resolvedCashRegisterId}`;
 
       if (mode === 'delta') {
         const lastSync = await offlineDatabase.getLastSync('FULL');
@@ -166,16 +173,23 @@ class OfflineSyncService {
       let response: OfflineCatalogResponse;
 
       try {
-        response = await this.request<OfflineCatalogResponse>(endpoint, {}, cashRegisterId);
+        response = await this.request<OfflineCatalogResponse>(endpoint, {}, resolvedCashRegisterId);
         console.log(
           '📥 [SYNC] Respuesta recibida:',
           JSON.stringify(response, null, 2).slice(0, 500)
         );
       } catch (apiError) {
         console.error('❌ [SYNC] Error llamando API:', apiError);
+        const errMsg = apiError instanceof Error ? apiError.message : 'Error desconocido';
+
+        if (errMsg.toLowerCase().includes('invalid input syntax for type uuid')) {
+          throw new Error(
+            `Error de identificación: el backend recibió un ID inválido (se esperaba UUID). ${errMsg}`
+          );
+        }
+
         console.log('⚠️ [SYNC] El endpoint de catálogo offline no está disponible en el backend');
         console.log('ℹ️ [SYNC] Se requiere implementar: GET /pos/offline-catalog/:cashRegisterId');
-        const errMsg = apiError instanceof Error ? apiError.message : 'Error desconocido';
         throw new Error(`API no disponible: ${errMsg}`);
       }
 
@@ -263,7 +277,7 @@ class OfflineSyncService {
         expiresAt: response.syncMetadata.expiresAt || defaultExpiry,
         checksum: response.syncMetadata.checksum || undefined,
         totalProducts: response.syncMetadata.totalProducts || products.length,
-        cashRegisterId,
+        cashRegisterId: resolvedCashRegisterId,
       });
 
       this.emit('products:sync:complete', { mode, count: products.length });
@@ -282,13 +296,14 @@ class OfflineSyncService {
     this.emit('stock:sync:start');
 
     try {
+      const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
       const lastSync = await offlineDatabase.getLastSync('STOCK');
       const since = lastSync?.timestamp || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
       const response = await this.request<StockUpdateResponse>(
-        `/pos/stock-updates/${cashRegisterId}?since=${since}`,
+        `/pos/stock-updates/${resolvedCashRegisterId}?since=${since}`,
         {},
-        cashRegisterId
+        resolvedCashRegisterId
       );
 
       // Actualizar stock en productos
@@ -302,7 +317,7 @@ class OfflineSyncService {
         syncType: 'STOCK',
         timestamp: response.timestamp,
         expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-        cashRegisterId,
+        cashRegisterId: resolvedCashRegisterId,
       });
 
       this.emit('stock:sync:complete', { count: response.updates.length });
@@ -317,6 +332,7 @@ class OfflineSyncService {
    * Asegura que haya 1000 tokens disponibles
    */
   async ensureTokenPool(cashRegisterId: string): Promise<void> {
+    const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
     const currentCount = await offlineDatabase.getAvailableTokenCount();
     const needed = this.config.tokenPoolSize - currentCount;
 
@@ -334,7 +350,7 @@ class OfflineSyncService {
       const usedTokens = await offlineDatabase.getUsedTokens();
 
       const response = await this.request<TokenReplenishResponse>(
-        `/pos/offline-catalog/${cashRegisterId}/replenish-tokens`,
+        `/pos/offline-catalog/${resolvedCashRegisterId}/replenish-tokens`,
         {
           method: 'POST',
           body: JSON.stringify({
@@ -342,7 +358,7 @@ class OfflineSyncService {
             usedTokens,
           }),
         },
-        cashRegisterId
+        resolvedCashRegisterId
       );
 
       // Guardar nuevos tokens
@@ -367,6 +383,7 @@ class OfflineSyncService {
    * Sincroniza ventas pendientes con control de avalancha
    */
   async syncPendingSales(cashRegisterId: string): Promise<void> {
+    const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
     const pendingSales = await offlineDatabase.getPendingSales();
     if (pendingSales.length === 0) {
       console.log('✅ [SYNC] No hay ventas pendientes');
@@ -387,12 +404,12 @@ class OfflineSyncService {
         {
           method: 'POST',
           body: JSON.stringify({
-            cashRegisterId,
+            cashRegisterId: resolvedCashRegisterId,
             sessionId: firstSaleSessionId,
             pendingSalesCount: pendingSales.length,
           }),
         },
-        cashRegisterId
+        resolvedCashRegisterId
       );
 
       console.log(`📊 [SYNC] Posición en cola: ${registration.queuePosition}`);
@@ -405,7 +422,7 @@ class OfflineSyncService {
         status = await this.request<SyncStatusResponse>(
           `/pos/sync/status/${registration.registrationId}`,
           {},
-          cashRegisterId
+          resolvedCashRegisterId
         );
 
         if (status.status === 'QUEUED') {
@@ -456,14 +473,14 @@ class OfflineSyncService {
                 'X-Sync-Token': status.syncToken!,
               },
               body: JSON.stringify({
-                cashRegisterId,
+                cashRegisterId: resolvedCashRegisterId,
                 sessionId: batchSessionId,
                 batchId,
                 syncToken: status.syncToken,
                 sales: batch,
               }),
             },
-            cashRegisterId
+            resolvedCashRegisterId
           );
 
           // Actualizar estado de cada venta
@@ -507,7 +524,7 @@ class OfflineSyncService {
           method: 'POST',
           body: JSON.stringify({ registrationId: registration.registrationId }),
         },
-        cashRegisterId
+        resolvedCashRegisterId
       );
 
       this.emit('sales:sync:complete', { synced: syncedCount, total: pendingSales.length });
@@ -534,7 +551,8 @@ class OfflineSyncService {
     this.productSyncInterval = setInterval(async () => {
       if (networkMonitor.getStatus()) {
         try {
-          await this.syncProducts(cashRegisterId, 'delta');
+          const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
+          await this.syncProducts(resolvedCashRegisterId, 'delta');
         } catch (error) {
           console.error('❌ [SYNC] Error en sincronización periódica de productos:', error);
         }
@@ -545,7 +563,8 @@ class OfflineSyncService {
     this.stockSyncInterval = setInterval(async () => {
       if (networkMonitor.getStatus()) {
         try {
-          await this.syncStock(cashRegisterId);
+          const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
+          await this.syncStock(resolvedCashRegisterId);
         } catch (error) {
           console.error('❌ [SYNC] Error en sincronización periódica de stock:', error);
         }
@@ -562,6 +581,11 @@ class OfflineSyncService {
     const currentCompany = authService.getCurrentCompany();
     const currentSite = authService.getCurrentSite();
 
+    let resolvedCashRegisterId: string | undefined;
+    if (cashRegisterId) {
+      resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
+    }
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'x-app-id': config.APP_ID,
@@ -572,18 +596,35 @@ class OfflineSyncService {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    if (currentCompany) {
-      headers['x-company-id'] = currentCompany.id;
+    if (currentCompany?.id) {
+      if (this.isUUID(currentCompany.id)) {
+        headers['x-company-id'] = currentCompany.id;
+      } else {
+        console.warn(`⚠️ [SYNC] x-company-id inválido omitido: "${currentCompany.id}"`);
+      }
     }
 
-    if (currentSite) {
-      headers['x-site-id'] = currentSite.id;
+    if (currentSite?.id) {
+      if (this.isUUID(currentSite.id)) {
+        headers['x-site-id'] = currentSite.id;
+      } else {
+        console.warn(`⚠️ [SYNC] x-site-id inválido omitido: "${currentSite.id}"`);
+      }
     }
 
     // Header requerido por el CashRegisterAuthGuard del backend
-    if (cashRegisterId) {
-      headers['X-Cash-Register-Id'] = cashRegisterId;
+    if (resolvedCashRegisterId) {
+      headers['X-Cash-Register-Id'] = resolvedCashRegisterId;
     }
+
+    console.log('📡 [SYNC][request] Request debug:', {
+      endpoint,
+      cashRegisterIdOriginal: cashRegisterId,
+      cashRegisterIdResolved: resolvedCashRegisterId,
+      headerCashRegisterId: headers['X-Cash-Register-Id'],
+      headerCompanyId: headers['x-company-id'] || null,
+      headerSiteId: headers['x-site-id'] || null,
+    });
 
     const response = await fetch(`${this.baseURL}${endpoint}`, {
       ...options,
@@ -592,7 +633,20 @@ class OfflineSyncService {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+      const backendMessage = errorData.message || `HTTP error! status: ${response.status}`;
+
+      if (backendMessage.includes('invalid input syntax for type uuid')) {
+        throw new Error(
+          `${backendMessage} | headers_debug=${JSON.stringify({
+            appId: headers['x-app-id'] || null,
+            companyId: headers['x-company-id'] || null,
+            siteId: headers['x-site-id'] || null,
+            cashRegisterId: headers['X-Cash-Register-Id'] || null,
+          })}`
+        );
+      }
+
+      throw new Error(backendMessage);
     }
 
     return response.json();
@@ -606,6 +660,72 @@ class OfflineSyncService {
         console.error('❌ [SYNC] Error en listener:', error);
       }
     });
+  }
+
+  private isUUID(value: string): boolean {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    return uuidRegex.test(value);
+  }
+
+  private async resolveCashRegisterId(cashRegisterId: string): Promise<string> {
+    if (this.isUUID(cashRegisterId)) {
+      return cashRegisterId;
+    }
+
+    console.warn(
+      `⚠️ [SYNC] cashRegisterId inválido para backend offline: "${cashRegisterId}". Intentando resolver UUID...`
+    );
+
+    const session = await this.getStoredSession();
+    const sessionCashRegisterId = session?.cashRegisterId;
+
+    if (sessionCashRegisterId && this.isUUID(sessionCashRegisterId)) {
+      console.log(`✅ [SYNC] UUID de caja resuelto desde sesión activa: ${sessionCashRegisterId}`);
+      return sessionCashRegisterId;
+    }
+
+    const selectedCashRegister = await this.getSelectedCashRegisterFromStorage();
+    const candidateId = selectedCashRegister?.id;
+
+    if (candidateId && this.isUUID(candidateId)) {
+      console.log(`✅ [SYNC] UUID de caja resuelto desde caja seleccionada: ${candidateId}`);
+      return candidateId;
+    }
+
+    throw new Error(
+      `Cash register ID inválido para sincronización offline: "${cashRegisterId}". Se esperaba UUID.`
+    );
+  }
+
+  private async getStoredSession(): Promise<Session | null> {
+    try {
+      const sessionData = await AsyncStorage.getItem('@pos_current_session');
+      if (!sessionData) {
+        return null;
+      }
+
+      return JSON.parse(sessionData) as Session;
+    } catch (error) {
+      console.warn(
+        '⚠️ [SYNC] No se pudo leer sesión almacenada para resolver cashRegisterId:',
+        error
+      );
+      return null;
+    }
+  }
+
+  private async getSelectedCashRegisterFromStorage(): Promise<{ id?: string } | null> {
+    try {
+      const registerData = await AsyncStorage.getItem(config.STORAGE_KEYS.SELECTED_CASH_REGISTER);
+      if (!registerData) {
+        return null;
+      }
+
+      return JSON.parse(registerData) as { id?: string };
+    } catch (error) {
+      console.warn('⚠️ [SYNC] No se pudo leer caja seleccionada desde storage:', error);
+      return null;
+    }
   }
 
   private delay(ms: number): Promise<void> {

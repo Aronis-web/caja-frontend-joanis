@@ -26,6 +26,7 @@ import { useNavigation } from '@react-navigation/native';
 import { usePOSStore } from '@/store/pos';
 import { useOfflineStore } from '@/store/offline';
 import { usePinPadStore } from '@/store/pinpad';
+import { useCollectionsStore } from '@/store/collections';
 import { posService } from '@/services/POSService';
 import { networkMonitor } from '@/services/NetworkMonitor';
 import { OfflineModeSwitch } from '@/components/offline';
@@ -44,6 +45,7 @@ import type {
   OfflineSalePayment,
 } from '@/types/offline';
 import { ROUTES } from '@/constants/routes';
+import { CashAlertLevel } from '@/types/collections';
 
 export default function NewSaleScreen() {
   const navigation = useNavigation();
@@ -103,6 +105,9 @@ export default function NewSaleScreen() {
   const [searching, setSearching] = useState(false);
   const [barcodeBuffer, setBarcodeBuffer] = useState('');
   const [lastKeyTime, setLastKeyTime] = useState(0);
+  const [showBarcodeSelectionModal, setShowBarcodeSelectionModal] = useState(false);
+  const [barcodeSelectionProducts, setBarcodeSelectionProducts] = useState<Product[]>([]);
+  const [lastScannedBarcode, setLastScannedBarcode] = useState('');
 
   const [documentType, setDocumentType] = useState<'03' | '01'>('03');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -160,7 +165,6 @@ export default function NewSaleScreen() {
 
   const [activeSalesData, setActiveSalesData] = useState<ActiveSalesResponse | null>(null);
   const [loadingSales, setLoadingSales] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
   const [salesPerPage] = useState(20);
   const [showSaleSuccessModal, setShowSaleSuccessModal] = useState(false);
   const [saleResponse, setSaleResponse] = useState<CreateSaleResponse | null>(null);
@@ -193,6 +197,8 @@ export default function NewSaleScreen() {
   const [pinPadAmountPending, setPinPadAmountPending] = useState(0);
   const [pinPadMethodPending, setPinPadMethodPending] = useState<string | null>(null);
   const [pinPadMethodNamePending, setPinPadMethodNamePending] = useState<string>('');
+
+  const { cashStatus, startCashStatusPolling, stopCashStatusPolling } = useCollectionsStore();
 
   // Initialize store from AsyncStorage on mount
   useEffect(() => {
@@ -247,6 +253,16 @@ export default function NewSaleScreen() {
       navigation.navigate(ROUTES.OPEN_SESSION as never);
     }
   }, [currentSession, isInitializing]);
+
+  useEffect(() => {
+    if (currentSession?.id) {
+      startCashStatusPolling(currentSession.id, 30000);
+    }
+
+    return () => {
+      stopCashStatusPolling();
+    };
+  }, [currentSession?.id, startCashStatusPolling, stopCashStatusPolling]);
 
   // Listener global para capturar escaneo de código de barras
   useEffect(() => {
@@ -444,9 +460,12 @@ export default function NewSaleScreen() {
         setSearchQuery('');
         setSearchResults([]);
       } else {
-        // Si hay múltiples resultados, mostrarlos para que el usuario seleccione
-        console.log(`⚠️ Se encontraron ${results.length} productos, mostrando resultados`);
-        setSearchResults(results);
+        // Si hay múltiples resultados, mostrar modal grande para seleccionar producto
+        console.log(`⚠️ Se encontraron ${results.length} productos con el mismo código`);
+        setLastScannedBarcode(query);
+        setBarcodeSelectionProducts(results);
+        setShowBarcodeSelectionModal(true);
+        setSearchResults([]);
       }
     } catch (error) {
       console.error('❌ Error al procesar código escaneado:', error);
@@ -481,6 +500,19 @@ export default function NewSaleScreen() {
       console.error('❌ Error al agregar producto:', error);
       Alert.alert('Error', 'No se pudo agregar el producto. Intenta nuevamente.');
     }
+  };
+
+  const handleSelectBarcodeProduct = async (product: Product) => {
+    await handleAddProduct(product);
+    setShowBarcodeSelectionModal(false);
+    setBarcodeSelectionProducts([]);
+    setLastScannedBarcode('');
+  };
+
+  const handleCloseBarcodeSelectionModal = () => {
+    setShowBarcodeSelectionModal(false);
+    setBarcodeSelectionProducts([]);
+    setLastScannedBarcode('');
   };
 
   const handleSearchCustomers = async (query: string) => {
@@ -780,7 +812,6 @@ export default function NewSaleScreen() {
       }
 
       setActiveSalesData(salesData);
-      setCurrentPage(validPage);
       setShowRecentSales(true);
     } catch (error) {
       console.error('❌ [VENTAS] Error loading active sales:', error);
@@ -1678,6 +1709,37 @@ export default function NewSaleScreen() {
     );
   };
 
+  const handleOpenCashCollection = () => {
+    if (!currentSession) {
+      Alert.alert('Error', 'No hay sesión activa');
+      return;
+    }
+
+    navigation.navigate(ROUTES.CASH_COLLECTION as never, { autoStart: true } as never);
+  };
+
+  const currentCashCents = cashStatus?.currentCashCents ?? 0;
+  const maxCashCents = cashStatus?.maxCashCents ?? 0;
+  const percentCurrentRaw = maxCashCents > 0 ? (currentCashCents / maxCashCents) * 100 : 0;
+  const percentCurrent = Math.min(100, Math.max(0, percentCurrentRaw));
+  const circleSize = 42;
+  const progressDegrees = (percentCurrent / 100) * 360;
+
+  const getCashCircleColor = () => {
+    switch (cashStatus?.alertLevel) {
+      case CashAlertLevel.BLOCKED:
+        return '#F44336';
+      case CashAlertLevel.CRITICAL:
+        return '#FF9800';
+      case CashAlertLevel.WARNING:
+        return '#FFC107';
+      default:
+        return '#4CAF50';
+    }
+  };
+
+  const cashCircleColor = getCashCircleColor();
+
   return (
     <View style={styles.container}>
       {/* Offline Status Bar */}
@@ -1708,8 +1770,38 @@ export default function NewSaleScreen() {
 
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Nueva Venta</Text>
+        <Text style={styles.title} numberOfLines={1}>
+          Nueva Venta
+        </Text>
         <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.cashCircularButton}
+            onPress={handleOpenCashCollection}
+            activeOpacity={0.8}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <View
+              style={[
+                styles.cashCircularVisible,
+                Platform.OS === 'web'
+                  ? ({
+                      background: `conic-gradient(${cashCircleColor} 0deg ${progressDegrees}deg, #D9D9D9 ${progressDegrees}deg 360deg)`,
+                      borderColor: '#1F2937',
+                    } as any)
+                  : {
+                      backgroundColor: '#111827',
+                      borderColor: '#111827',
+                    },
+              ]}
+            >
+              <View style={styles.cashCircularInnerVisible}>
+                <Text style={[styles.cashCircularText, { color: cashCircleColor }]}>
+                  {Math.round(percentCurrent)}%
+                </Text>
+              </View>
+            </View>
+          </TouchableOpacity>
+
           {/* Offline Mode Switch - discreto al lado de Últimas Ventas */}
           <OfflineModeSwitch mini />
           <TouchableOpacity
@@ -2213,22 +2305,25 @@ export default function NewSaleScreen() {
                         : parentMethod;
 
                     // Validar monto según tipo de método de pago
-                    const isIzipay =
+                    const isIzipayMethod =
                       selectedMethod?.code?.includes('IZIPAY') || selectedMethod?.isIzipay;
                     const isCash = selectedMethod?.code === 'CASH' || selectedMethod?.isCash;
+                    const isPinPadTemporarilyDisabled = true; // TODO: reactivar cuando PinPad Izipay vuelva a estar operativo
+                    const usePinPadFlow = isIzipayMethod && !isPinPadTemporarilyDisabled;
                     const total = getCartTotal();
 
                     console.log('💳 Validando pago:', {
                       method: selectedMethod?.name,
                       code: selectedMethod?.code,
-                      isIzipay,
+                      isIzipayMethod,
                       isCash,
+                      usePinPadFlow,
                       amount,
                       total,
                     });
 
                     // Si es IZIPAY (tarjeta), validar que no exceda el total de la venta
-                    if (isIzipay && amount > total) {
+                    if (isIzipayMethod && amount > total) {
                       Alert.alert(
                         'Error',
                         `El monto con tarjeta no puede exceder el total de la venta (S/ ${total.toFixed(
@@ -2238,8 +2333,8 @@ export default function NewSaleScreen() {
                       return;
                     }
 
-                    // Si es Izipay, procesar con el PinPad Verifone P400
-                    if (isIzipay) {
+                    // Si es Izipay y PinPad está habilitado, procesar con el PinPad Verifone P400
+                    if (usePinPadFlow) {
                       const methodName =
                         parentMethod.submethods && parentMethod.submethods.length > 0
                           ? `${parentMethod.name} - ${
@@ -2675,24 +2770,31 @@ export default function NewSaleScreen() {
             </ScrollView>
 
             {/* Paginación */}
-            {activeSalesData &&
-              activeSalesData.pagination &&
-              activeSalesData.pagination.totalPages > 1 && (
+            {activeSalesData && activeSalesData.pagination && (() => {
+              const page = Math.max(1, Number(activeSalesData.pagination.page) || 1);
+              const totalPages = Math.max(1, Number(activeSalesData.pagination.totalPages) || 1);
+              const hasPreviousPage =
+                typeof activeSalesData.pagination.hasPreviousPage === 'boolean'
+                  ? activeSalesData.pagination.hasPreviousPage
+                  : page > 1;
+              const hasNextPage =
+                typeof activeSalesData.pagination.hasNextPage === 'boolean'
+                  ? activeSalesData.pagination.hasNextPage
+                  : page < totalPages;
+
+              if (totalPages <= 1) return null;
+
+              return (
                 <View style={styles.paginationContainer}>
                   <TouchableOpacity
-                    style={[
-                      styles.paginationButton,
-                      !activeSalesData.pagination.hasPreviousPage &&
-                        styles.paginationButtonDisabled,
-                    ]}
-                    onPress={() => handleLoadRecentSales(currentPage - 1)}
-                    disabled={!activeSalesData.pagination.hasPreviousPage || loadingSales}
+                    style={[styles.paginationButton, !hasPreviousPage && styles.paginationButtonDisabled]}
+                    onPress={() => handleLoadRecentSales(page - 1)}
+                    disabled={!hasPreviousPage || loadingSales}
                   >
                     <Text
                       style={[
                         styles.paginationButtonText,
-                        !activeSalesData.pagination.hasPreviousPage &&
-                          styles.paginationButtonTextDisabled,
+                        !hasPreviousPage && styles.paginationButtonTextDisabled,
                       ]}
                     >
                       ← Anterior
@@ -2701,8 +2803,7 @@ export default function NewSaleScreen() {
 
                   <View style={styles.paginationInfo}>
                     <Text style={styles.paginationText}>
-                      Página {activeSalesData.pagination.page} de{' '}
-                      {activeSalesData.pagination.totalPages}
+                      Página {page} de {totalPages}
                     </Text>
                     <Text style={styles.paginationSubtext}>
                       ({activeSalesData.pagination.totalSales} ventas totales)
@@ -2710,25 +2811,22 @@ export default function NewSaleScreen() {
                   </View>
 
                   <TouchableOpacity
-                    style={[
-                      styles.paginationButton,
-                      !activeSalesData.pagination.hasNextPage && styles.paginationButtonDisabled,
-                    ]}
-                    onPress={() => handleLoadRecentSales(currentPage + 1)}
-                    disabled={!activeSalesData.pagination.hasNextPage || loadingSales}
+                    style={[styles.paginationButton, !hasNextPage && styles.paginationButtonDisabled]}
+                    onPress={() => handleLoadRecentSales(page + 1)}
+                    disabled={!hasNextPage || loadingSales}
                   >
                     <Text
                       style={[
                         styles.paginationButtonText,
-                        !activeSalesData.pagination.hasNextPage &&
-                          styles.paginationButtonTextDisabled,
+                        !hasNextPage && styles.paginationButtonTextDisabled,
                       ]}
                     >
                       Siguiente →
                     </Text>
                   </TouchableOpacity>
                 </View>
-              )}
+              );
+            })()}
 
             <TouchableOpacity
               style={styles.closeModalButton}
@@ -2736,6 +2834,66 @@ export default function NewSaleScreen() {
             >
               <Text style={styles.closeModalButtonText}>Cerrar</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Barcode Duplicate Selection Modal */}
+      <Modal
+        visible={showBarcodeSelectionModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={handleCloseBarcodeSelectionModal}
+      >
+        <View style={styles.barcodeSelectionModalOverlay}>
+          <View style={styles.barcodeSelectionModalContent}>
+            <View style={styles.barcodeSelectionModalHeader}>
+              <Text style={styles.barcodeSelectionTitle}>Selecciona un producto</Text>
+              <TouchableOpacity
+                style={styles.barcodeSelectionCloseButton}
+                onPress={handleCloseBarcodeSelectionModal}
+              >
+                <Text style={styles.barcodeSelectionCloseButtonText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.barcodeSelectionSubtitle}>
+              Se encontraron varios productos con el código: {lastScannedBarcode}
+            </Text>
+
+            <FlatList
+              data={barcodeSelectionProducts}
+              keyExtractor={(item) => item.id}
+              numColumns={2}
+              columnWrapperStyle={styles.barcodeSelectionRow}
+              contentContainerStyle={styles.barcodeSelectionListContent}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.barcodeSelectionCard}
+                  onPress={() => handleSelectBarcodeProduct(item)}
+                >
+                  {item.imageUrl ? (
+                    <Image
+                      source={{ uri: item.imageUrl }}
+                      style={styles.barcodeSelectionImage}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <View style={styles.barcodeSelectionImagePlaceholder}>
+                      <Text style={styles.barcodeSelectionImagePlaceholderText}>📦</Text>
+                    </View>
+                  )}
+                  <Text style={styles.barcodeSelectionProductName} numberOfLines={2}>
+                    {item.name}
+                  </Text>
+                  <Text style={styles.barcodeSelectionProductCode}>Código: {item.code || item.barcode}</Text>
+                  <Text style={styles.barcodeSelectionProductPrice}>
+                    {formatCurrency(item.price || 0)}
+                  </Text>
+                  <Text style={styles.barcodeSelectionProductStock}>Stock: {item.stock || 0}</Text>
+                </TouchableOpacity>
+              )}
+            />
           </View>
         </View>
       </Modal>
@@ -3644,14 +3802,59 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E0E0E0',
   },
   title: {
+    flex: 1,
     fontSize: 20,
     fontWeight: 'bold',
     color: '#333',
+    marginRight: 8,
   },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
+    flexShrink: 0,
+    zIndex: 10,
+    elevation: 10,
+  },
+  cashCircularButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 52,
+    height: 52,
+    marginRight: 2,
+    zIndex: 20,
+    elevation: 20,
+  },
+  cashCircularVisible: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#D9D9D9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#1F2937',
+    overflow: 'hidden',
+  },
+  cashCircularInnerVisible: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+  },
+  cashCircularText: {
+    fontSize: 10,
+    fontWeight: '800',
+    lineHeight: 12,
+  },
+  cashCircularDebugText: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#111827',
   },
   recentSalesButton: {
     flexDirection: 'row',
@@ -5407,6 +5610,109 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // Barcode Duplicate Selection Modal Styles
+  barcodeSelectionModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  barcodeSelectionModalContent: {
+    width: '96%',
+    maxWidth: 1400,
+    maxHeight: '92%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 24,
+  },
+  barcodeSelectionModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  barcodeSelectionTitle: {
+    fontSize: 36,
+    fontWeight: '700',
+    color: '#1F2937',
+  },
+  barcodeSelectionSubtitle: {
+    fontSize: 20,
+    color: '#4B5563',
+    marginBottom: 20,
+  },
+  barcodeSelectionCloseButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  barcodeSelectionCloseButtonText: {
+    fontSize: 24,
+    color: '#374151',
+    fontWeight: '700',
+  },
+  barcodeSelectionListContent: {
+    paddingBottom: 16,
+  },
+  barcodeSelectionRow: {
+    gap: 16,
+    marginBottom: 16,
+  },
+  barcodeSelectionCard: {
+    flex: 1,
+    minWidth: 0,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 16,
+  },
+  barcodeSelectionImage: {
+    width: '100%',
+    height: 260,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+    marginBottom: 12,
+  },
+  barcodeSelectionImagePlaceholder: {
+    width: '100%',
+    height: 260,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  barcodeSelectionImagePlaceholderText: {
+    fontSize: 64,
+  },
+  barcodeSelectionProductName: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 8,
+    minHeight: 64,
+  },
+  barcodeSelectionProductCode: {
+    fontSize: 16,
+    color: '#6B7280',
+    marginBottom: 6,
+  },
+  barcodeSelectionProductPrice: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#2563EB',
+    marginBottom: 6,
+  },
+  barcodeSelectionProductStock: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#059669',
   },
   // Image Modal Styles
   imageModalOverlay: {

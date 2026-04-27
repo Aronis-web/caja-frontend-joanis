@@ -19,6 +19,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useAuthStore } from '@/store/auth';
 import { usePOSStore } from '@/store/pos';
 import { useOfflineStore } from '@/store/offline';
+import { useCollectionsStore } from '@/store/collections';
 import { offlineSyncService } from '@/services/OfflineSyncService';
 import { offlineDatabase } from '@/services/OfflineDatabase';
 import { ROUTES } from '@/constants/routes';
@@ -78,6 +79,10 @@ export default function POSDashboardScreen() {
     isInitialized: offlineInitialized,
     refreshStats,
   } = useOfflineStore();
+
+  // Estado de recaudación de efectivo
+  const { clearActiveRequest } = useCollectionsStore();
+
   const [syncing, setSyncing] = useState(false);
   const [syncingStock, setSyncingStock] = useState(false);
   const [syncingTokens, setSyncingTokens] = useState(false);
@@ -202,7 +207,8 @@ export default function POSDashboardScreen() {
 
   // Sincronización completa (productos + tokens)
   const handleFullSync = useCallback(async () => {
-    if (!selectedCashRegister?.id) {
+    const syncCashRegisterId = currentSession?.cashRegisterId || selectedCashRegister?.id;
+    if (!syncCashRegisterId) {
       setSyncError('No hay caja registradora seleccionada');
       return;
     }
@@ -213,7 +219,7 @@ export default function POSDashboardScreen() {
 
     try {
       console.log('🔄 [SETTINGS] Iniciando sincronización completa...');
-      await offlineSyncService.performInitialSync(selectedCashRegister.id);
+      await offlineSyncService.performInitialSync(syncCashRegisterId);
       await refreshStats();
       setLastSyncTime(new Date().toISOString());
       setSyncSuccess('Sincronización completa exitosa');
@@ -224,11 +230,12 @@ export default function POSDashboardScreen() {
     } finally {
       setSyncing(false);
     }
-  }, [selectedCashRegister?.id, refreshStats]);
+  }, [currentSession?.cashRegisterId, selectedCashRegister?.id, refreshStats]);
 
   // Sincronizar solo productos
   const handleSyncProducts = useCallback(async () => {
-    if (!selectedCashRegister?.id) {
+    const syncCashRegisterId = currentSession?.cashRegisterId || selectedCashRegister?.id;
+    if (!syncCashRegisterId) {
       setSyncError('No hay caja registradora seleccionada');
       return;
     }
@@ -239,7 +246,7 @@ export default function POSDashboardScreen() {
 
     try {
       console.log('📦 [SETTINGS] Sincronizando productos...');
-      await offlineSyncService.syncProducts(selectedCashRegister.id, 'full');
+      await offlineSyncService.syncProducts(syncCashRegisterId, 'full');
       await refreshStats();
       setLastSyncTime(new Date().toISOString());
       setSyncSuccess('Productos sincronizados correctamente');
@@ -249,11 +256,12 @@ export default function POSDashboardScreen() {
     } finally {
       setSyncing(false);
     }
-  }, [selectedCashRegister?.id, refreshStats]);
+  }, [currentSession?.cashRegisterId, selectedCashRegister?.id, refreshStats]);
 
   // Sincronizar solo stock (delta)
   const handleSyncStock = useCallback(async () => {
-    if (!selectedCashRegister?.id) {
+    const syncCashRegisterId = currentSession?.cashRegisterId || selectedCashRegister?.id;
+    if (!syncCashRegisterId) {
       setSyncError('No hay caja registradora seleccionada');
       return;
     }
@@ -264,7 +272,7 @@ export default function POSDashboardScreen() {
 
     try {
       console.log('📊 [SETTINGS] Sincronizando stock...');
-      await offlineSyncService.syncStock(selectedCashRegister.id);
+      await offlineSyncService.syncStock(syncCashRegisterId);
       await refreshStats();
       setSyncSuccess('Stock actualizado correctamente');
     } catch (error) {
@@ -273,11 +281,12 @@ export default function POSDashboardScreen() {
     } finally {
       setSyncingStock(false);
     }
-  }, [selectedCashRegister?.id, refreshStats]);
+  }, [currentSession?.cashRegisterId, selectedCashRegister?.id, refreshStats]);
 
   // Reponer tokens
   const handleReplenishTokens = useCallback(async () => {
-    if (!selectedCashRegister?.id) {
+    const syncCashRegisterId = currentSession?.cashRegisterId || selectedCashRegister?.id;
+    if (!syncCashRegisterId) {
       setSyncError('No hay caja registradora seleccionada');
       return;
     }
@@ -288,7 +297,7 @@ export default function POSDashboardScreen() {
 
     try {
       console.log('🎫 [SETTINGS] Reponiendo tokens...');
-      await offlineSyncService.ensureTokenPool(selectedCashRegister.id);
+      await offlineSyncService.ensureTokenPool(syncCashRegisterId);
       await refreshStats();
       setSyncSuccess('Tokens reabastecidos correctamente');
     } catch (error) {
@@ -297,11 +306,12 @@ export default function POSDashboardScreen() {
     } finally {
       setSyncingTokens(false);
     }
-  }, [selectedCashRegister?.id, refreshStats]);
+  }, [currentSession?.cashRegisterId, selectedCashRegister?.id, refreshStats]);
 
   // Sincronizar ventas pendientes (MANUAL)
   const handleSyncPendingSales = useCallback(async () => {
-    if (!selectedCashRegister?.id) {
+    const syncCashRegisterId = currentSession?.cashRegisterId || selectedCashRegister?.id;
+    if (!syncCashRegisterId) {
       setSyncError('No hay caja registradora seleccionada');
       return;
     }
@@ -317,7 +327,7 @@ export default function POSDashboardScreen() {
 
     try {
       console.log('📤 [SETTINGS] Sincronizando ventas pendientes...');
-      await offlineSyncService.syncPendingSales(selectedCashRegister.id);
+      await offlineSyncService.syncPendingSales(syncCashRegisterId);
       await refreshStats();
       setSyncSuccess('Ventas pendientes sincronizadas correctamente');
     } catch (error) {
@@ -328,7 +338,7 @@ export default function POSDashboardScreen() {
     } finally {
       setSyncingSales(false);
     }
-  }, [selectedCashRegister?.id, pendingSales, refreshStats]);
+  }, [currentSession?.cashRegisterId, selectedCashRegister?.id, pendingSales, refreshStats]);
 
   // Limpiar base de datos offline
   const handleClearOfflineData = useCallback(async () => {
@@ -438,28 +448,21 @@ export default function POSDashboardScreen() {
     navigation.navigate(ROUTES.NEW_SALE as never);
   };
 
-  const handleCashIn = () => {
-    if (!currentSession) {
-      Alert.alert('Error', 'No hay sesión activa');
-      return;
-    }
-    navigation.navigate(ROUTES.CASH_TRANSACTION as never, { type: 'cash_in' });
-  };
-
-  const handleCashOut = () => {
-    if (!currentSession) {
-      Alert.alert('Error', 'No hay sesión activa');
-      return;
-    }
-    navigation.navigate(ROUTES.CASH_TRANSACTION as never, { type: 'cash_out' });
-  };
 
   const handleCloseSession = () => {
     if (!currentSession) {
       Alert.alert('Error', 'No hay sesión activa');
       return;
     }
-    navigation.navigate(ROUTES.CLOSE_SESSION as never);
+
+    // Reiniciar estado previo de recaudación para forzar el flujo de cierre propuesto (QR auto)
+    clearActiveRequest();
+
+    navigation.navigate(ROUTES.CASH_COLLECTION as never, {
+      mode: 'closure',
+      autoStart: true,
+      forceFlow: Date.now(),
+    } as never);
   };
 
   const handleLogout = async () => {
@@ -518,12 +521,6 @@ export default function POSDashboardScreen() {
         Alert.alert('Error', 'No se pudo cerrar la sesión');
       }
     }
-  };
-
-  const formatCurrency = (amountInCents: number) => {
-    // Convertir de centavos a soles
-    const amountInSoles = amountInCents / 100;
-    return `S/ ${amountInSoles.toFixed(2)}`;
   };
 
   const formatDateTime = (dateString: string) => {
@@ -1010,25 +1007,6 @@ export default function POSDashboardScreen() {
         <View style={styles.sessionCard}>
           <Text style={styles.sectionTitle}>Información de Sesión</Text>
 
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Balance Actual:</Text>
-            <Text style={styles.infoValueHighlight}>
-              {formatCurrency(currentSession.currentCashCents)}
-            </Text>
-          </View>
-
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Ventas del día:</Text>
-            <Text style={styles.infoValue}>
-              {formatCurrency(currentSession.totalSalesCents || 0)}
-            </Text>
-          </View>
-
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Transacciones:</Text>
-            <Text style={styles.infoValue}>{currentSession.totalTransactions || 0}</Text>
-          </View>
-
           <View style={styles.divider} />
 
           <View style={styles.infoRow}>
@@ -1080,24 +1058,6 @@ export default function POSDashboardScreen() {
               <Text style={styles.actionButtonIcon}>🛒</Text>
               <Text style={styles.actionButtonText}>Nueva Venta</Text>
             </TouchableOpacity>
-
-            <View style={styles.actionRow}>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.secondaryButton, styles.halfButton]}
-                onPress={handleCashIn}
-              >
-                <Text style={styles.actionButtonIcon}>💵</Text>
-                <Text style={styles.actionButtonText}>Ingreso</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.actionButton, styles.secondaryButton, styles.halfButton]}
-                onPress={handleCashOut}
-              >
-                <Text style={styles.actionButtonIcon}>💸</Text>
-                <Text style={styles.actionButtonText}>Retiro</Text>
-              </TouchableOpacity>
-            </View>
 
             <TouchableOpacity
               style={[styles.actionButton, styles.dangerButton]}

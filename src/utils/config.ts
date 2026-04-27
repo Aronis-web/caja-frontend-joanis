@@ -1,7 +1,19 @@
+const DEFAULT_APP_ID = 'e28208b8-89b4-4682-80dc-925059424b1f';
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const envAppId = process.env.EXPO_PUBLIC_APP_ID;
+const resolvedAppId = envAppId && UUID_REGEX.test(envAppId) ? envAppId : DEFAULT_APP_ID;
+
+if (envAppId && !UUID_REGEX.test(envAppId)) {
+  console.warn(
+    `⚠️ [CONFIG] EXPO_PUBLIC_APP_ID inválido ("${envAppId}"). Usando APP_ID por defecto UUID.`
+  );
+}
+
 export const config = {
-  API_URL: process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8080',
+  API_URL: process.env.EXPO_PUBLIC_API_URL || 'https://pos-erp-aio.com',
   API_TIMEOUT: 30000,
-  APP_ID: process.env.EXPO_PUBLIC_APP_ID || 'e28208b8-89b4-4682-80dc-925059424b1f',
+  APP_ID: resolvedAppId,
 
   STORAGE_KEYS: {
     // Secure storage keys (expo-secure-store) - for sensitive data

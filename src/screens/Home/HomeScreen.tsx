@@ -13,6 +13,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = () => {
     useAuthStore();
 
   const handleLogout = async () => {
+    if (typeof window !== 'undefined' && window.confirm) {
+      const confirmed = window.confirm('¿Estás seguro de que deseas cerrar sesión?');
+      if (!confirmed) return;
+      await logout();
+      return;
+    }
+
     Alert.alert('Cerrar Sesión', '¿Estás seguro de que deseas cerrar sesión?', [
       { text: 'Cancelar', style: 'cancel' },
       {

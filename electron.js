@@ -1,7 +1,20 @@
 console.log('[ELECTRON] 📂 Cargando electron.js...');
 console.log('[ELECTRON] 🔧 NODE_ENV:', process.env.NODE_ENV);
 
-const { app, BrowserWindow, protocol, dialog, ipcMain } = require('electron');
+const electronModule = require('electron');
+
+// Si este archivo se ejecuta con Node (no con Electron), relanzar correctamente con el binario de Electron
+if (typeof electronModule === 'string') {
+  const { spawnSync } = require('child_process');
+  const relaunchResult = spawnSync(electronModule, [__filename, ...process.argv.slice(2)], {
+    stdio: 'inherit',
+    env: process.env,
+  });
+
+  process.exit(relaunchResult.status ?? 0);
+}
+
+const { app, BrowserWindow, protocol, dialog, ipcMain } = electronModule;
 const path = require('path');
 const url = require('url');
 const fs = require('fs');
@@ -13,11 +26,12 @@ const { PDFDocument } = require('pdf-lib');
 
 console.log('[ELECTRON] ✅ Módulos básicos cargados');
 
-const { autoUpdater } = require('electron-updater');
+let autoUpdater = null;
 
-console.log('[ELECTRON] ✅ electron-updater cargado');
+console.log('[ELECTRON] ⏳ electron-updater se inicializará al arrancar la app');
 
-const isDev = process.env.NODE_ENV === 'development';
+const isExplicitDev = process.env.NODE_ENV === 'development';
+const isDev = isExplicitDev || !app.isPackaged;
 let isPackaged = false; // Se inicializará en app.whenReady()
 
 console.log('[ELECTRON] 🎯 isDev:', isDev);
@@ -26,16 +40,6 @@ let mainWindow;
 let server;
 let logStream;
 
-// Configurar auto-updater
-autoUpdater.autoDownload = false; // No descargar automáticamente
-autoUpdater.autoInstallOnAppQuit = true; // Instalar al cerrar la app
-autoUpdater.allowDowngrade = false; // No permitir downgrades
-autoUpdater.allowPrerelease = false; // No permitir pre-releases
-
-// Configuración adicional para Windows
-if (process.platform === 'win32') {
-  autoUpdater.forceDevUpdateConfig = false;
-}
 
 // Función para buscar archivo recursivamente
 function findFile(dir, filename) {
@@ -326,9 +330,9 @@ function createWindow(port) {
 
       try {
         const urlObj = new URL(details.url);
-        if (urlObj.hostname === 'api.app-joanis-backend.com') {
+        if (urlObj.hostname === 'pos-erp-aio.com') {
           console.log('[ELECTRON] 🌐 Interceptando petición al backend:', details.url);
-          requestHeaders['Origin'] = 'https://app.app-joanis-backend.com';
+          requestHeaders['Origin'] = 'https://pos-erp-aio.com';
         }
       } catch (e) {
         // URL inválida, ignorar
@@ -345,7 +349,7 @@ function createWindow(port) {
       responseHeaders['Access-Control-Allow-Headers'] = ['*'];
       responseHeaders['Access-Control-Allow-Credentials'] = ['true'];
 
-      if (!details.url.includes('api.app-joanis-backend.com')) {
+      if (!details.url.includes('pos-erp-aio.com')) {
         responseHeaders['Content-Security-Policy'] = ["default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval';"];
       }
 
@@ -700,6 +704,14 @@ ipcMain.handle('check-for-updates', async () => {
     };
   }
 
+  if (!autoUpdater) {
+    return {
+      updateAvailable: false,
+      currentVersion: app.getVersion(),
+      error: 'Sistema de actualizaciones no inicializado'
+    };
+  }
+
   try {
     console.log('[UPDATE] Verificando actualizaciones manualmente...');
     const result = await autoUpdater.checkForUpdates();
@@ -742,6 +754,10 @@ ipcMain.handle('download-update', async () => {
     return { success: false, message: 'No disponible en modo desarrollo' };
   }
 
+  if (!autoUpdater) {
+    return { success: false, error: 'Sistema de actualizaciones no inicializado' };
+  }
+
   try {
     console.log('[UPDATE] Iniciando descarga de actualización...');
     await autoUpdater.downloadUpdate();
@@ -754,6 +770,10 @@ ipcMain.handle('download-update', async () => {
 
 // Instalar actualización
 ipcMain.handle('install-update', async () => {
+  if (!autoUpdater) {
+    return { success: false, error: 'Sistema de actualizaciones no inicializado' };
+  }
+
   if (updateDownloaded) {
     console.log('[UPDATE] Instalando actualización...');
     autoUpdater.quitAndInstall(false, true);
@@ -769,6 +789,11 @@ function setupAutoUpdater() {
   // Solo verificar actualizaciones en producción
   if (isDev) {
     console.log('Auto-updater deshabilitado en modo desarrollo');
+    return;
+  }
+
+  if (!autoUpdater) {
+    console.error('Auto-updater no disponible: no se pudo inicializar electron-updater');
     return;
   }
 
@@ -921,6 +946,26 @@ app.on('ready', () => {
   // Inicializar isPackaged ahora que app está listo
   isPackaged = app.isPackaged;
 
+  // Inicializar electron-updater solo cuando app ya está listo
+  try {
+    ({ autoUpdater } = require('electron-updater'));
+
+    // Configurar auto-updater
+    autoUpdater.autoDownload = false; // No descargar automáticamente
+    autoUpdater.autoInstallOnAppQuit = true; // Instalar al cerrar la app
+    autoUpdater.allowDowngrade = false; // No permitir downgrades
+    autoUpdater.allowPrerelease = false; // No permitir pre-releases
+
+    // Configuración adicional para Windows
+    if (process.platform === 'win32') {
+      autoUpdater.forceDevUpdateConfig = false;
+    }
+
+    console.log('[ELECTRON] ✅ electron-updater cargado');
+  } catch (updaterInitError) {
+    console.error('[ELECTRON] ❌ Error cargando electron-updater:', updaterInitError);
+  }
+
   console.log('[ELECTRON] 🚀 App ready event triggered');
   console.log('[ELECTRON] 📦 Is packaged:', isPackaged);
   console.log('[ELECTRON] 🔧 Is dev:', isDev);
@@ -950,6 +995,7 @@ app.on('ready', () => {
 
   if (isDev) {
     console.log('[ELECTRON] 🎯 Modo desarrollo - creando ventana en puerto 8081');
+    console.log('[ELECTRON] 🔎 isExplicitDev:', isExplicitDev, '| app.isPackaged:', app.isPackaged);
     createWindow(8081);
   } else {
     console.log('[ELECTRON] 🎯 Modo producción - creando servidor');

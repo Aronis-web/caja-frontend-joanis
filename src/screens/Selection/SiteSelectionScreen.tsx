@@ -61,14 +61,19 @@ export const SiteSelectionScreen: React.FC<SiteSelectionScreenProps> = ({ naviga
 
   const loadSites = async () => {
     if (!user?.id) {
-      Alert.alert('Error', 'Usuario no autenticado', [
-        {
-          text: 'OK',
-          onPress: async () => {
-            await logout();
+      if (typeof window !== 'undefined' && window.alert) {
+        window.alert('Usuario no autenticado');
+        await logout();
+      } else {
+        Alert.alert('Error', 'Usuario no autenticado', [
+          {
+            text: 'OK',
+            onPress: async () => {
+              await logout();
+            },
           },
-        },
-      ]);
+        ]);
+      }
       return;
     }
 

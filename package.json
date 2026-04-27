@@ -1,7 +1,7 @@
 {
   "name": "CajaGrit",
   "private": true,
-  "version": "0.0.51",
+  "version": "0.0.52",
   "description": "Sistema de Punto de Venta (POS) para gestión de cajas registradoras",
   "author": "Aronis Web",
   "main": "index.js",
@@ -17,12 +17,18 @@
     "typecheck": "tsc --noEmit",
     "validate": "npm run typecheck && npm run lint && npm run format:check",
     "web:dev": "expo start --web",
+    "web:dev:clear": "expo start --web -c",
     "electron": "cross-env NODE_ENV=development CI=false concurrently \"npm run web:dev\" \"wait-on http://localhost:8081 && node node_modules/electron/cli.js electron.js\"",
+    "electron:clear": "cross-env NODE_ENV=development CI=false concurrently \"npm run web:dev:clear\" \"wait-on http://localhost:8081 && node node_modules/electron/cli.js electron.js\"",
     "electron:export": "expo export --platform web --output-dir web-build && node node_modules/electron/cli.js electron.js",
-    "electron:build": "expo export --platform web --output-dir web-build && node fix-html.js && electron-builder build --win --x64 && node copy-assets.js",
+    "electron:build": "expo export --platform web --output-dir web-build && node fix-html.js && electron-builder build --win --x64 --config electron-builder.yml --config.win.signAndEditExecutable=false --config.win.forceCodeSigning=false && node copy-assets.js",
     "dist": "npm run electron:build",
-    "publish": "expo export --platform web --output-dir web-build && node fix-html.js && electron-builder build --win --x64 --publish always && node copy-assets.js",
-    "publish:draft": "expo export --platform web --output-dir web-build && node fix-html.js && electron-builder build --win --x64 --publish onTagOrDraft && node copy-assets.js"
+    "publish": "expo export --platform web --output-dir web-build && node fix-html.js && electron-builder build --win --x64 --config electron-builder.yml --publish always && node copy-assets.js",
+    "publish:draft": "expo export --platform web --output-dir web-build && node fix-html.js && electron-builder build --win --x64 --config electron-builder.yml --publish onTagOrDraft && node copy-assets.js",
+    "version": "node scripts/version-manager.js",
+    "publish:stable": "node scripts/publish-release.js stable",
+    "publish:beta": "node scripts/publish-release.js beta",
+    "publish:edge": "node scripts/publish-release.js edge"
   },
   "dependencies": {
     "@expo-google-fonts/baloo-2": "^0.4.2",
@@ -51,6 +57,7 @@
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
     "react-native-web": "^0.21.0",
+    "react-qr-code": "^2.0.18",
     "sql.js": "^1.14.1",
     "zustand": "^4.5.0"
   },

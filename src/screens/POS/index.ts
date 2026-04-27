@@ -10,3 +10,5 @@ export { default as CloseSessionScreen } from './CloseSessionScreen';
 export { default as NewSaleScreen } from './NewSaleScreen';
 export { default as SaleDetailScreen } from './SaleDetailScreen';
 export { default as CashTransactionScreen } from './CashTransactionScreen';
+
+export { default as CashCollectionScreen } from './CashCollectionScreen';

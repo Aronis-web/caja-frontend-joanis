@@ -17,6 +17,13 @@ export type POSStackParamList = {
   [POS_ROUTES.NEW_SALE]: undefined;
   [POS_ROUTES.SALE_DETAIL]: { saleId: string };
   [POS_ROUTES.CASH_TRANSACTION]: { type: 'cash_in' | 'cash_out' };
+  [POS_ROUTES.CASH_COLLECTION]:
+    | {
+        mode?: 'regular' | 'closure';
+        autoStart?: boolean;
+        forceFlow?: number;
+      }
+    | undefined;
 };
 
 export type MainStackParamList = {

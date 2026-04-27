@@ -60,9 +60,33 @@ class POSService {
       headers['x-site-id'] = currentSite.id;
     }
 
-    const response = await fetch(`${this.baseURL}${endpoint}`, {
+    const fullUrl = `${this.baseURL}${endpoint}`;
+
+    // 🔍 DEBUG: Log de la petición
+    console.log('🌐 [POSService] Request:', {
+      method: options.method || 'GET',
+      url: fullUrl,
+      endpoint,
+      headers: {
+        'x-company-id': headers['x-company-id'] || 'NO SET',
+        'x-site-id': headers['x-site-id'] || 'NO SET',
+        Authorization: headers['Authorization'] ? 'Bearer ***' : 'NO SET',
+      },
+      currentCompany: currentCompany ? { id: currentCompany.id, name: currentCompany.name } : null,
+      currentSite: currentSite ? { id: currentSite.id, name: currentSite.name } : null,
+    });
+
+    const response = await fetch(fullUrl, {
       ...options,
       headers,
+    });
+
+    // 🔍 DEBUG: Log de la respuesta
+    console.log('📥 [POSService] Response:', {
+      status: response.status,
+      statusText: response.statusText,
+      ok: response.ok,
+      url: response.url,
     });
 
     if (!response.ok) {
@@ -74,6 +98,16 @@ class POSService {
       }
 
       const errorData = await response.json().catch(() => ({}));
+
+      // 🔍 DEBUG: Log del error
+      console.error('❌ [POSService] Error Response:', {
+        status: response.status,
+        statusText: response.statusText,
+        errorData,
+        endpoint,
+        fullUrl,
+      });
+
       throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
     }
 
@@ -82,7 +116,24 @@ class POSService {
 
   // Cash Registers
   async getCashRegistersBySite(siteId: string): Promise<CashRegister[]> {
-    return this.request<CashRegister[]>(`/pos/cash-registers/site/${siteId}`);
+    console.log('🏪 [POSService] getCashRegistersBySite llamado con siteId:', siteId);
+
+    if (!siteId) {
+      console.error('❌ [POSService] getCashRegistersBySite - siteId es undefined o vacío!');
+      throw new Error('siteId es requerido para obtener las cajas registradoras');
+    }
+
+    try {
+      const result = await this.request<CashRegister[]>(`/pos/cash-registers/site/${siteId}`);
+      console.log(
+        '✅ [POSService] getCashRegistersBySite - Cajas encontradas:',
+        result?.length || 0
+      );
+      return result;
+    } catch (error) {
+      console.error('❌ [POSService] getCashRegistersBySite - Error:', error);
+      throw error;
+    }
   }
 
   async getCashRegister(id: string): Promise<CashRegister> {

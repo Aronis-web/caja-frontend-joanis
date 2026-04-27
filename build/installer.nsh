@@ -7,53 +7,48 @@
 ; Para oneClick, usamos customInit que se ejecuta muy temprano
 !macro customInit
   SetShellVarContext current
-
-  ; Crear log
-  StrCpy $R8 "$DESKTOP\CajaGrit_Install_Log.txt"
-  FileOpen $R9 $R8 w
-  FileWrite $R9 "=== CajaGrit Installation Log v0.0.24 (OneClick) ===$\r$\n"
-  FileWrite $R9 "[customInit] Instalacion OneClick iniciada$\r$\n"
-  FileWrite $R9 "[customInit] Directorio: $INSTDIR$\r$\n"
-
-  ; Cerrar proceso CajaGrit.exe
-  FileWrite $R9 "[customInit] Cerrando CajaGrit.exe...$\r$\n"
-  nsExec::ExecToStack 'taskkill /F /IM "CajaGrit.exe" /T'
+  DetailPrint "Preparando instalación de CajaGrit..."
+  nsExec::Exec 'taskkill /F /IM "CajaGrit.exe" /T'
   Pop $0
-  Pop $1
-  FileWrite $R9 "[customInit] Taskkill Exit Code: $0$\r$\n"
-  FileWrite $R9 "[customInit] Taskkill Output: $1$\r$\n"
+  nsExec::Exec 'taskkill /F /IM "electron.exe" /T'
+  Pop $0
+  Sleep 1500
+!macroend
 
-  Sleep 3000
-  FileWrite $R9 "[customInit] Esperando 3 segundos...$\r$\n"
+!macro customCheckAppRunning
+  ; Override del check por defecto de electron-builder para evitar falso positivo
+  ; "CajaGrit cannot be closed" cuando no hay proceso real.
+  DetailPrint "Verificando y cerrando procesos de CajaGrit..."
 
-  ; Verificar si el directorio existe y renombrarlo
-  IfFileExists "$INSTDIR\*.*" 0 dir_not_exists
-    FileWrite $R9 "[customInit] Directorio existe, renombrando...$\r$\n"
+  nsExec::Exec 'taskkill /F /IM "CajaGrit.exe" /T'
+  Pop $0
+  nsExec::Exec 'taskkill /F /IM "electron.exe" /T'
+  Pop $0
+  Sleep 2000
 
-    ; Renombrar directorio antiguo
-    Rename "$INSTDIR" "$INSTDIR.old"
-    IfFileExists "$INSTDIR.old\*.*" 0 rename_failed
-      FileWrite $R9 "[customInit] Directorio renombrado a .old$\r$\n"
-      ; Programar eliminación al reiniciar
-      Delete /REBOOTOK "$INSTDIR.old\*.*"
-      RMDir /r /REBOOTOK "$INSTDIR.old"
-      FileWrite $R9 "[customInit] Programado para eliminar al reiniciar$\r$\n"
-      Goto dir_done
+  ; Si hubiera procesos huérfanos del mismo EXE, reintenta una vez más
+  nsExec::Exec 'taskkill /F /IM "CajaGrit.exe" /T'
+  Pop $0
+  Sleep 1200
+!macroend
 
-    rename_failed:
-      FileWrite $R9 "[customInit] ERROR: No se pudo renombrar$\r$\n"
-      ; Intentar eliminar directamente
-      Delete /REBOOTOK "$INSTDIR\*.*"
-      RMDir /r /REBOOTOK "$INSTDIR"
-      FileWrite $R9 "[customInit] Programado eliminacion directa$\r$\n"
-      Goto dir_done
+!macro customUnInstallCheck
+  ; Evita falso positivo de "appCannotBeClosed" durante desinstalación previa.
+  ; Cerramos procesos conocidos y continuamos sin mostrar popup bloqueante.
+  nsExec::Exec 'taskkill /F /IM "CajaGrit.exe" /T'
+  Pop $0
+  nsExec::Exec 'taskkill /F /IM "electron.exe" /T'
+  Pop $0
+  Sleep 1500
+!macroend
 
-  dir_not_exists:
-    FileWrite $R9 "[customInit] Directorio no existe (nueva instalacion)$\r$\n"
-
-  dir_done:
-  FileWrite $R9 "[customInit] Completado$\r$\n$\r$\n"
-  FileClose $R9
+!macro customUnInstallCheckCurrentUser
+  ; Mismo comportamiento para instalaciones por usuario actual.
+  nsExec::Exec 'taskkill /F /IM "CajaGrit.exe" /T'
+  Pop $0
+  nsExec::Exec 'taskkill /F /IM "electron.exe" /T'
+  Pop $0
+  Sleep 1500
 !macroend
 
 !macro customInstall

@@ -19,6 +19,7 @@ export const POS_ROUTES = {
   NEW_SALE: 'NewSale',
   SALE_DETAIL: 'SaleDetail',
   CASH_TRANSACTION: 'CashTransaction',
+  CASH_COLLECTION: 'CashCollection',
 } as const;
 
 export const MAIN_ROUTES = {

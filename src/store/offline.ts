@@ -96,6 +96,8 @@ const generateOfflineTicketCode = (cashRegisterCode: string): string => {
   return `OFF-${dateStr}-${cajaCode}-${seqStr}`;
 };
 
+let offlineActivationTimer: ReturnType<typeof setTimeout> | null = null;
+
 export const useOfflineStore = create<OfflineStoreState>((set, get) => ({
   // Estado inicial
   connectionStatus: 'ONLINE',
@@ -117,14 +119,16 @@ export const useOfflineStore = create<OfflineStoreState>((set, get) => ({
   isInitializing: false,
   isInitialized: false,
 
-  // Período de gracia: 2 minutos (120000 ms)
+  // Período de gracia: 1 minuto (60000 ms)
   disconnectedSince: null,
-  gracePeriodMs: 2 * 60 * 1000,
+  gracePeriodMs: 60 * 1000,
 
   // ============ CONEXIÓN ============
 
   setConnectionStatus: (status) => {
     const currentStatus = get().connectionStatus;
+    const wasOfflineModeEnabled = get().isOfflineModeEnabled;
+
     if (currentStatus !== status) {
       console.log(`🌐 [OFFLINE_STORE] Conexión: ${currentStatus} → ${status}`);
 
@@ -133,17 +137,39 @@ export const useOfflineStore = create<OfflineStoreState>((set, get) => ({
       if (status === 'ONLINE') {
         updates.lastOnlineAt = new Date().toISOString();
         updates.disconnectedSince = null; // Resetear período de gracia
+
+        if (offlineActivationTimer) {
+          clearTimeout(offlineActivationTimer);
+          offlineActivationTimer = null;
+        }
+
         // Si estábamos en modo offline y volvimos online, deshabilitar modo offline
-        if (get().isOfflineModeEnabled) {
+        if (wasOfflineModeEnabled) {
           console.log('🔄 [OFFLINE_STORE] Conexión restaurada, deshabilitando modo offline');
           updates.isOfflineModeEnabled = false;
         }
       } else if (status === 'OFFLINE') {
         updates.lastOfflineAt = new Date().toISOString();
-        // Solo establecer disconnectedSince si no estaba ya establecido
+
+        // Solo establecer disconnectedSince y programar activación automática una vez
         if (!get().disconnectedSince) {
           updates.disconnectedSince = new Date().toISOString();
-          console.log('⏱️ [OFFLINE_STORE] Iniciando período de gracia de 2 minutos...');
+          console.log('⏱️ [OFFLINE_STORE] Iniciando período de gracia de 1 minuto...');
+
+          if (offlineActivationTimer) {
+            clearTimeout(offlineActivationTimer);
+          }
+
+          const gracePeriodMs = get().gracePeriodMs;
+          offlineActivationTimer = setTimeout(async () => {
+            offlineActivationTimer = null;
+
+            const state = get();
+            if (state.connectionStatus === 'OFFLINE' && !state.isOfflineModeEnabled) {
+              console.log('⚡ [OFFLINE_STORE] Activando modo offline automáticamente');
+              await state.enableOfflineMode();
+            }
+          }, gracePeriodMs);
         }
       }
 

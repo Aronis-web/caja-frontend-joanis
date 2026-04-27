@@ -139,6 +139,14 @@ export const CompanySelectionScreen: React.FC<CompanySelectionScreenProps> = ({ 
   };
 
   const handleLogout = async () => {
+    // En web/Electron usar confirm para asegurar ejecución del callback
+    if (typeof window !== 'undefined' && window.confirm) {
+      const confirmed = window.confirm('¿Estás seguro de que deseas cerrar sesión?');
+      if (!confirmed) return;
+      await logout();
+      return;
+    }
+
     Alert.alert('Cerrar Sesión', '¿Estás seguro de que deseas cerrar sesión?', [
       { text: 'Cancelar', style: 'cancel' },
       {

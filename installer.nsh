@@ -1,26 +1,49 @@
+!include LogicLib.nsh
+
 !macro customInit
-  ; Cerrar la aplicación si está ejecutándose
+  ; Cierre preventivo temprano
   DetailPrint "Cerrando CajaGrit si está en ejecución..."
-
-  ; Intentar cerrar múltiples veces para asegurar que se cierre
-  nsExec::Exec 'taskkill /F /IM CajaGrit.exe /T'
+  nsExec::Exec 'taskkill /F /IM "CajaGrit.exe" /T'
   Pop $0
-  Sleep 1000
-
-  nsExec::Exec 'taskkill /F /IM electron.exe /T'
+  nsExec::Exec 'taskkill /F /IM "electron.exe" /T'
   Pop $0
-  Sleep 1000
+  Sleep 1500
+!macroend
 
-  ; Segundo intento
-  nsExec::Exec 'taskkill /F /IM CajaGrit.exe /T'
+; Hook exacto usado por electron-builder antes de extraer/reemplazar archivos
+!macro customCheckAppRunning
+  ; Override del check por defecto de electron-builder para evitar falso positivo
+  DetailPrint "Verificando y cerrando procesos de CajaGrit..."
+
+  nsExec::Exec 'taskkill /F /IM "CajaGrit.exe" /T'
   Pop $0
-  Sleep 1000
-
-  nsExec::Exec 'taskkill /F /IM electron.exe /T'
+  nsExec::Exec 'taskkill /F /IM "electron.exe" /T'
   Pop $0
   Sleep 2000
 
-  DetailPrint "Preparando instalación..."
+  ; Reintento preventivo
+  nsExec::Exec 'taskkill /F /IM "CajaGrit.exe" /T'
+  Pop $0
+  Sleep 1200
+!macroend
+
+!macro customUnInstallCheck
+  ; Evita falso positivo de "appCannotBeClosed" durante desinstalación previa.
+  ; Cerramos procesos conocidos y continuamos sin mostrar popup bloqueante.
+  nsExec::Exec 'taskkill /F /IM "CajaGrit.exe" /T'
+  Pop $0
+  nsExec::Exec 'taskkill /F /IM "electron.exe" /T'
+  Pop $0
+  Sleep 1500
+!macroend
+
+!macro customUnInstallCheckCurrentUser
+  ; Mismo comportamiento para instalaciones por usuario actual.
+  nsExec::Exec 'taskkill /F /IM "CajaGrit.exe" /T'
+  Pop $0
+  nsExec::Exec 'taskkill /F /IM "electron.exe" /T'
+  Pop $0
+  Sleep 1500
 !macroend
 
 !macro customInstall

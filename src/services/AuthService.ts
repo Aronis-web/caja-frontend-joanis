@@ -185,10 +185,18 @@ class AuthService {
         headers['X-Site-Id'] = this.currentSite.id;
       }
 
-      await fetch(`${this.baseUrl}/auth/logout`, {
-        method: 'POST',
-        headers,
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+      try {
+        await fetch(`${this.baseUrl}/auth/logout`, {
+          method: 'POST',
+          headers,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
     } catch (error) {
       console.warn('Logout endpoint call failed:', error);
     } finally {
