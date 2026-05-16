@@ -3,7 +3,7 @@
  * Main POS sale interface with product search and cart
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -46,6 +46,7 @@ import type {
 } from '@/types/offline';
 import { ROUTES } from '@/constants/routes';
 import { CashAlertLevel } from '@/types/collections';
+import { calculateRemainingCents, isIzipayAmountValid, toCents } from '@/utils/paymentFlow';
 
 export default function NewSaleScreen() {
   const navigation = useNavigation();
@@ -70,10 +71,13 @@ export default function NewSaleScreen() {
     getCartDiscount,
     getPaymentsTotal,
     createSale,
+    topSellers,
+    isTopSellersLoading,
     isLoading,
     initializeFromStorage,
     loadPaymentMethods,
     loadActiveSession,
+    refreshTopSellersInBackground,
   } = usePOSStore();
 
   // Offline store
@@ -120,6 +124,8 @@ export default function NewSaleScreen() {
   const [customerSearchResults, setCustomerSearchResults] = useState<Customer[]>([]);
   const [searchingCustomers, setSearchingCustomers] = useState(false);
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  const customerSearchRequestIdRef = useRef(0);
+  const latestCustomerSearchQueryRef = useRef('');
 
   // Add Customer Modal states
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
@@ -192,13 +198,15 @@ export default function NewSaleScreen() {
 
   // PinPad states
   const [showPinPadModal, setShowPinPadModal] = useState(false);
+  const isConfirmingSaleRef = useRef(false);
+  const [isConfirmingSale, setIsConfirmingSale] = useState(false);
   const [pinPadProcessing, setPinPadProcessing] = useState(false);
   const [pinPadMessage, setPinPadMessage] = useState('');
   const [pinPadAmountPending, setPinPadAmountPending] = useState(0);
   const [pinPadMethodPending, setPinPadMethodPending] = useState<string | null>(null);
   const [pinPadMethodNamePending, setPinPadMethodNamePending] = useState<string>('');
 
-  const { cashStatus, startCashStatusPolling, stopCashStatusPolling } = useCollectionsStore();
+  const { cashStatus, fetchCashStatus } = useCollectionsStore();
 
   // Initialize store from AsyncStorage on mount
   useEffect(() => {
@@ -249,20 +257,17 @@ export default function NewSaleScreen() {
   useEffect(() => {
     // Solo redirigir si ya terminó de inicializar y no hay sesión
     if (!isInitializing && !currentSession) {
-      console.log('⚠️ No hay sesión activa después de inicializar, redirigiendo a abrir sesión');
-      navigation.navigate(ROUTES.OPEN_SESSION as never);
+      console.log('⚠️ No hay sesión activa después de inicializar, redirigiendo a dashboard');
+      navigation.navigate(ROUTES.POS_DASHBOARD as never);
     }
-  }, [currentSession, isInitializing]);
+  }, [currentSession, isInitializing, navigation]);
 
   useEffect(() => {
-    if (currentSession?.id) {
-      startCashStatusPolling(currentSession.id, 30000);
+    if (selectedCashRegister?.id) {
+      void refreshTopSellersInBackground(selectedCashRegister.id, 40);
     }
+  }, [selectedCashRegister?.id, refreshTopSellersInBackground]);
 
-    return () => {
-      stopCashStatusPolling();
-    };
-  }, [currentSession?.id, startCashStatusPolling, stopCashStatusPolling]);
 
   // Listener global para capturar escaneo de código de barras
   useEffect(() => {
@@ -516,31 +521,55 @@ export default function NewSaleScreen() {
   };
 
   const handleSearchCustomers = async (query: string) => {
+    const normalizedQuery = query.trim();
     setCustomerSearchQuery(query);
+    latestCustomerSearchQueryRef.current = normalizedQuery;
 
-    if (query.length < 2) {
+    if (normalizedQuery.length < 2) {
+      customerSearchRequestIdRef.current += 1;
       setCustomerSearchResults([]);
       setShowCustomerDropdown(false);
+      setSearchingCustomers(false);
       return;
     }
 
+    const requestId = customerSearchRequestIdRef.current + 1;
+    customerSearchRequestIdRef.current = requestId;
+
     try {
       setSearchingCustomers(true);
-      const response = await posService.autocompleteCustomers(query, 10);
+      const response = await posService.autocompleteCustomers(normalizedQuery, 10);
+
+      if (
+        requestId !== customerSearchRequestIdRef.current ||
+        normalizedQuery !== latestCustomerSearchQueryRef.current
+      ) {
+        return;
+      }
+
       setCustomerSearchResults(response.data);
       // Mostrar dropdown si hay resultados O si es un DNI/RUC válido para agregar
-      const isValidDNI = /^\d{8}$/.test(query.trim());
-      const isValidRUC = /^\d{11}$/.test(query.trim());
+      const isValidDNI = /^\d{8}$/.test(normalizedQuery);
+      const isValidRUC = /^\d{11}$/.test(normalizedQuery);
       setShowCustomerDropdown(response.data.length > 0 || isValidDNI || isValidRUC);
     } catch (error) {
+      if (
+        requestId !== customerSearchRequestIdRef.current ||
+        normalizedQuery !== latestCustomerSearchQueryRef.current
+      ) {
+        return;
+      }
+
       console.error('❌ Error searching customers:', error);
       setCustomerSearchResults([]);
       // Aún mostrar dropdown si es DNI/RUC válido para permitir agregar
-      const isValidDNI = /^\d{8}$/.test(query.trim());
-      const isValidRUC = /^\d{11}$/.test(query.trim());
+      const isValidDNI = /^\d{8}$/.test(normalizedQuery);
+      const isValidRUC = /^\d{11}$/.test(normalizedQuery);
       setShowCustomerDropdown(isValidDNI || isValidRUC);
     } finally {
-      setSearchingCustomers(false);
+      if (requestId === customerSearchRequestIdRef.current) {
+        setSearchingCustomers(false);
+      }
     }
   };
 
@@ -690,10 +719,14 @@ export default function NewSaleScreen() {
 
   const handleSelectCustomer = (customer: Customer) => {
     setSelectedCustomer(customer);
-    setCustomerSearchQuery(
-      customer.label || `${customer.fullName || customer.name} - ${customer.documentNumber}`
-    );
+    const selectedLabel =
+      customer.label || `${customer.fullName || customer.name} - ${customer.documentNumber}`;
+    setCustomerSearchQuery(selectedLabel);
+    latestCustomerSearchQueryRef.current = selectedLabel.trim();
+    customerSearchRequestIdRef.current += 1;
+    setCustomerSearchResults([]);
     setShowCustomerDropdown(false);
+    setSearchingCustomers(false);
 
     // Determinar automáticamente el tipo de documento según el tipo de cliente
     if (customer.customerType === 'EMPRESA') {
@@ -706,8 +739,11 @@ export default function NewSaleScreen() {
   const handleClearCustomer = () => {
     setSelectedCustomer(null);
     setCustomerSearchQuery('');
+    latestCustomerSearchQueryRef.current = '';
+    customerSearchRequestIdRef.current += 1;
     setCustomerSearchResults([]);
     setShowCustomerDropdown(false);
+    setSearchingCustomers(false);
     setDocumentType('03'); // Volver a boleta por defecto
   };
 
@@ -822,23 +858,34 @@ export default function NewSaleScreen() {
   };
 
   const handleCompleteSale = async () => {
+    if (isConfirmingSaleRef.current) {
+      console.log('⏳ Confirmación de venta ya en progreso');
+      return;
+    }
+
+    isConfirmingSaleRef.current = true;
+    setIsConfirmingSale(true);
     console.log('🚀 handleCompleteSale iniciado');
     const total = getCartTotal();
     const paymentsTotal = getPaymentsTotal();
+    const totalCents = toCents(total);
+    const paymentsTotalCents = toCents(paymentsTotal);
 
     console.log('💰 Total de la venta:', total);
     console.log('💳 Total de pagos:', paymentsTotal);
     console.log('📊 Diferencia:', paymentsTotal - total);
 
-    // Permitir venta si el pago es mayor o igual al total
-    if (paymentsTotal < total) {
+    // Permitir venta si el pago es mayor o igual al total (comparación en centavos para evitar errores de precisión)
+    if (paymentsTotalCents < totalCents) {
       console.log('❌ Error: Pago insuficiente');
       Alert.alert('Error', 'El monto pagado es insuficiente');
+      isConfirmingSaleRef.current = false;
+      setIsConfirmingSale(false);
       return;
     }
 
     // Calcular el vuelto
-    const change = paymentsTotal - total;
+    const change = (paymentsTotalCents - totalCents) / 100;
     console.log('💵 Vuelto:', change);
 
     console.log('✅ Pago suficiente, procesando venta...');
@@ -854,6 +901,8 @@ export default function NewSaleScreen() {
 
       if (!selectedCashRegister || !currentSession) {
         Alert.alert('Error', 'No hay sesión activa');
+        isConfirmingSaleRef.current = false;
+        setIsConfirmingSale(false);
         return;
       }
 
@@ -923,6 +972,8 @@ export default function NewSaleScreen() {
         );
       }
 
+      isConfirmingSaleRef.current = false;
+      setIsConfirmingSale(false);
       return;
     }
 
@@ -931,6 +982,11 @@ export default function NewSaleScreen() {
       console.log('📞 Llamando a createSale...');
       const result = await createSale(selectedCustomer?.id, documentType, 'Venta desde POS');
       console.log('✅ Venta creada exitosamente:', result);
+
+      // Actualizar estado de efectivo solo tras completar una venta
+      if (currentSession?.id) {
+        await fetchCashStatus(currentSession.id);
+      }
 
       // Cerrar modal de pago solo después de que la venta se complete exitosamente
       setShowPaymentModal(false);
@@ -951,6 +1007,9 @@ export default function NewSaleScreen() {
     } catch (error) {
       console.error('❌ Error al procesar venta:', error);
       Alert.alert('Error', error instanceof Error ? error.message : 'No se pudo procesar la venta');
+    } finally {
+      isConfirmingSaleRef.current = false;
+      setIsConfirmingSale(false);
     }
   };
 
@@ -1588,6 +1647,15 @@ export default function NewSaleScreen() {
     }
   };
 
+  const rightPanelWidth = getRightPanelWidth();
+  const topSellerCardGap = 12;
+  const leftPanelAvailableWidth = Math.max(windowWidth - rightPanelWidth - 48, 320);
+  const topSellerColumns = 8;
+  const topSellerCardSize = Math.floor(
+    (leftPanelAvailableWidth - topSellerCardGap * (topSellerColumns - 1)) / topSellerColumns
+  );
+  const safeTopSellerCardSize = Math.min(Math.max(topSellerCardSize, 90), 280);
+
   const renderProductItem = ({ item }: { item: Product }) => (
     <TouchableOpacity style={styles.productItem} onPress={() => handleAddProduct(item)}>
       {item.imageUrl ? (
@@ -1604,6 +1672,42 @@ export default function NewSaleScreen() {
       </View>
     </TouchableOpacity>
   );
+
+  const renderTopSellerItem = ({ item }: { item: Product }) => {
+    const topSellerSquareSize = Math.round(safeTopSellerCardSize * 0.78);
+
+    return (
+      <TouchableOpacity
+        style={[
+          styles.topSellerCard,
+          {
+            width: safeTopSellerCardSize,
+            minHeight: safeTopSellerCardSize + 72,
+          },
+        ]}
+        onPress={() => handleAddProduct(item)}
+      >
+        {item.imageUrl ? (
+          <Image
+            source={{ uri: item.imageUrl }}
+            style={[styles.topSellerImage, { height: topSellerSquareSize }]}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={[styles.topSellerImagePlaceholder, { height: topSellerSquareSize }]}>
+            <Text style={styles.topSellerImagePlaceholderText}>📦</Text>
+          </View>
+        )}
+        <Text style={styles.topSellerName} numberOfLines={2}>
+          {item.name}
+        </Text>
+        <Text style={styles.topSellerSku} numberOfLines={1}>
+          SKU: {item.sku || item.code || '-'}
+        </Text>
+        <Text style={styles.topSellerPrice}>{formatCurrency(item.price || 0)}</Text>
+      </TouchableOpacity>
+    );
+  };
 
   const renderCartItem = ({ item, index }: { item: any; index: number }) => {
     const unitPrice = item.unitPrice || 0; // Este precio ya incluye IGV
@@ -1847,6 +1951,31 @@ export default function NewSaleScreen() {
               style={styles.searchResults}
             />
           )}
+
+          {searchQuery.length < 2 && (
+            <View style={styles.topSellersSection}>
+              <View style={styles.topSellersHeader}>
+                <Text style={styles.topSellersTitle}>Más vendidos</Text>
+                {isTopSellersLoading && <ActivityIndicator size="small" color="#007AFF" />}
+              </View>
+
+              <FlatList
+                data={topSellers}
+                renderItem={renderTopSellerItem}
+                keyExtractor={(item) => `top-${item.id}`}
+                numColumns={topSellerColumns}
+                key={`top-sellers-grid-${topSellerColumns}`}
+                showsVerticalScrollIndicator={true}
+                contentContainerStyle={styles.topSellersList}
+                columnWrapperStyle={topSellerColumns > 1 ? styles.topSellersRow : undefined}
+                ListEmptyComponent={
+                  !isTopSellersLoading ? (
+                    <Text style={styles.topSellersEmptyText}>Sin productos más vendidos aún</Text>
+                  ) : null
+                }
+              />
+            </View>
+          )}
         </View>
 
         {/* Right Panel - Cart */}
@@ -1946,7 +2075,10 @@ export default function NewSaleScreen() {
                         placeholder="Buscar cliente por DNI, RUC o nombre..."
                         placeholderTextColor="#999"
                         onFocus={() => {
-                          if (customerSearchResults.length > 0) {
+                          const normalizedQuery = customerSearchQuery.trim();
+                          const isValidDNI = /^\d{8}$/.test(normalizedQuery);
+                          const isValidRUC = /^\d{11}$/.test(normalizedQuery);
+                          if (customerSearchResults.length > 0 || isValidDNI || isValidRUC) {
                             setShowCustomerDropdown(true);
                           }
                         }}
@@ -2221,8 +2353,11 @@ export default function NewSaleScreen() {
                   <TouchableOpacity
                     style={styles.fillRemainingButton}
                     onPress={() => {
-                      const remaining = getCartTotal() - getPaymentsTotal();
-                      setPaymentAmount(remaining.toFixed(2));
+                      const remainingCents = calculateRemainingCents(
+                        getCartTotal(),
+                        getPaymentsTotal()
+                      );
+                      setPaymentAmount((remainingCents / 100).toFixed(2));
                     }}
                   >
                     <Text style={styles.fillRemainingButtonText}>Restante</Text>
@@ -2266,9 +2401,12 @@ export default function NewSaleScreen() {
                       const isIzipay =
                         selectedMethod?.code?.includes('IZIPAY') || selectedMethod?.isIzipay;
                       const amount = parseFloat(paymentAmount);
-                      const total = getCartTotal();
+                      const remaining = calculateRemainingCents(
+                        getCartTotal(),
+                        getPaymentsTotal()
+                      ) / 100;
 
-                      if (isIzipay && amount > total) {
+                      if (isIzipay && amount > remaining) {
                         return styles.buttonDisabled;
                       }
 
@@ -2311,6 +2449,8 @@ export default function NewSaleScreen() {
                     const isPinPadTemporarilyDisabled = true; // TODO: reactivar cuando PinPad Izipay vuelva a estar operativo
                     const usePinPadFlow = isIzipayMethod && !isPinPadTemporarilyDisabled;
                     const total = getCartTotal();
+                    const paid = getPaymentsTotal();
+                    const remaining = calculateRemainingCents(total, paid) / 100;
 
                     console.log('💳 Validando pago:', {
                       method: selectedMethod?.name,
@@ -2322,11 +2462,11 @@ export default function NewSaleScreen() {
                       total,
                     });
 
-                    // Si es IZIPAY (tarjeta), validar que no exceda el total de la venta
-                    if (isIzipayMethod && amount > total) {
+                    // Si es IZIPAY (tarjeta), validar que no exceda el restante de la venta
+                    if (isIzipayMethod && !isIzipayAmountValid(amount, total, paid)) {
                       Alert.alert(
                         'Error',
-                        `El monto con tarjeta no puede exceder el total de la venta (S/ ${total.toFixed(
+                        `El monto con tarjeta no puede exceder el restante de la venta (S/ ${remaining.toFixed(
                           2
                         )})`
                       );
@@ -2466,27 +2606,31 @@ export default function NewSaleScreen() {
                     </View>
 
                     {/* Faltante/Vuelto - Grande y Destacado */}
-                    {getPaymentsTotal() !== getCartTotal() && (
+                    {toCents(getPaymentsTotal()) !== toCents(getCartTotal()) && (
                       <View
                         style={[
                           styles.changeHighlightBox,
-                          getPaymentsTotal() < getCartTotal()
+                          toCents(getPaymentsTotal()) < toCents(getCartTotal())
                             ? styles.changeHighlightBoxMissing
                             : styles.changeHighlightBoxChange,
                         ]}
                       >
                         <Text style={styles.changeHighlightLabel}>
-                          {getPaymentsTotal() < getCartTotal() ? '⚠️ FALTANTE' : '💰 VUELTO'}
+                          {toCents(getPaymentsTotal()) < toCents(getCartTotal())
+                            ? '⚠️ FALTANTE'
+                            : '💰 VUELTO'}
                         </Text>
                         <Text
                           style={[
                             styles.changeHighlightValue,
-                            getPaymentsTotal() < getCartTotal()
+                            toCents(getPaymentsTotal()) < toCents(getCartTotal())
                               ? styles.summaryValueMissing
                               : styles.summaryValueChange,
                           ]}
                         >
-                          {formatCurrency(Math.abs(getPaymentsTotal() - getCartTotal()))}
+                          {formatCurrency(
+                            Math.abs(toCents(getPaymentsTotal()) - toCents(getCartTotal())) / 100
+                          )}
                         </Text>
                       </View>
                     )}
@@ -2510,26 +2654,43 @@ export default function NewSaleScreen() {
                 style={[
                   styles.button,
                   styles.modalConfirmButton,
-                  (getPaymentsTotal() < getCartTotal() || isLoading) && styles.buttonDisabled,
+                  (() => {
+                    const totalCents = toCents(getCartTotal());
+                    const paymentsTotalCents = toCents(getPaymentsTotal());
+                    const hasInsufficientPayment = paymentsTotalCents < totalCents;
+                    const isDisabled = hasInsufficientPayment || isLoading || isConfirmingSale;
+                    return isDisabled ? styles.buttonDisabled : null;
+                  })(),
                 ]}
-                onPress={() => {
+                onPress={async () => {
                   const total = getCartTotal();
                   const paymentsTotal = getPaymentsTotal();
+                  const totalCents = toCents(total);
+                  const paymentsTotalCents = toCents(paymentsTotal);
+                  const hasInsufficientPayment = paymentsTotalCents < totalCents;
+                  const isDisabled = hasInsufficientPayment || isLoading || isConfirmingSale;
+
                   console.log('🔘 Botón presionado');
                   console.log('💰 Total carrito:', total);
                   console.log('💳 Total pagos:', paymentsTotal);
-                  console.log('🔒 Está deshabilitado:', paymentsTotal < total || isLoading);
+                  console.log('🔒 Está deshabilitado:', isDisabled);
                   console.log('⏳ isLoading:', isLoading);
 
-                  if (paymentsTotal < total || isLoading) {
-                    console.log('❌ Botón deshabilitado, no se ejecuta handleCompleteSale');
+                  if (hasInsufficientPayment) {
+                    const missing = (totalCents - paymentsTotalCents) / 100;
+                    Alert.alert('Pago insuficiente', `Falta pagar S/ ${missing.toFixed(2)}`);
                     return;
                   }
 
-                  handleCompleteSale();
+                  if (isLoading || isConfirmingSale) {
+                    console.log('❌ Confirmación en progreso, ignorando click');
+                    return;
+                  }
+
+                  await handleCompleteSale();
                 }}
               >
-                {isLoading ? (
+                {isLoading || isConfirmingSale ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
                   <Text style={styles.modalConfirmButtonText}>Confirmar Venta</Text>
@@ -2959,7 +3120,12 @@ export default function NewSaleScreen() {
             </View>
 
             {selectedSaleForCreditNote && (
-              <>
+              <ScrollView
+                style={styles.creditNoteModalScroll}
+                contentContainerStyle={styles.creditNoteModalScrollContent}
+                showsVerticalScrollIndicator={true}
+                nestedScrollEnabled
+              >
                 <View style={styles.creditNoteSaleInfo}>
                   <Text style={styles.creditNoteSaleNumber}>
                     Venta: {selectedSaleForCreditNote.sale.code} - #
@@ -3195,7 +3361,7 @@ export default function NewSaleScreen() {
                     )}
                   </TouchableOpacity>
                 </View>
-              </>
+              </ScrollView>
             )}
           </View>
         </View>
@@ -3969,6 +4135,80 @@ const styles = StyleSheet.create({
   },
   searchResults: {
     flex: 1,
+  },
+  topSellersSection: {
+    marginTop: 8,
+    flex: 1,
+  },
+  topSellersHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  topSellersTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1F2937',
+  },
+  topSellersList: {
+    paddingVertical: 4,
+    paddingBottom: 24,
+    gap: 12,
+  },
+  topSellersRow: {
+    justifyContent: 'flex-start',
+    gap: 12,
+    marginBottom: 12,
+  },
+  topSellerCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 10,
+    justifyContent: 'space-between',
+  },
+  topSellerImage: {
+    width: '100%',
+    borderRadius: 10,
+    backgroundColor: '#F3F4F6',
+    marginBottom: 8,
+  },
+  topSellerImagePlaceholder: {
+    width: '100%',
+    borderRadius: 10,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  topSellerImagePlaceholderText: {
+    fontSize: 34,
+  },
+  topSellerName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    minHeight: 36,
+  },
+  topSellerSku: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#374151',
+    marginTop: 2,
+  },
+  topSellerPrice: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#007AFF',
+    marginTop: 6,
+  },
+  topSellersEmptyText: {
+    fontSize: 13,
+    color: '#6B7280',
+    paddingVertical: 10,
+    paddingHorizontal: 4,
   },
   productItem: {
     backgroundColor: '#FFFFFF',
@@ -5757,6 +5997,12 @@ const styles = StyleSheet.create({
     width: '90%',
     maxWidth: 600,
     maxHeight: '80%',
+  },
+  creditNoteModalScroll: {
+    flexGrow: 0,
+  },
+  creditNoteModalScrollContent: {
+    paddingBottom: 8,
   },
   creditNoteModalHeader: {
     flexDirection: 'row',

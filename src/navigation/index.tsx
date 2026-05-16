@@ -69,7 +69,7 @@ const POSStack = React.memo(function POSStack() {
   return (
     <POSStackNavigator.Navigator
       screenOptions={{ headerShown: true }}
-      initialRouteName={POS_ROUTES.NEW_SALE}
+      initialRouteName={POS_ROUTES.POS_DASHBOARD}
     >
       <POSStackNavigator.Screen
         name={POS_ROUTES.NEW_SALE}
@@ -119,7 +119,7 @@ const MainStack = React.memo(function MainStack() {
 });
 
 export const Navigation = () => {
-  const { isAuthenticated, currentCompany, currentSite } = useAuthStore();
+  const { isAuthenticated, user, currentCompany, currentSite } = useAuthStore();
   const { selectedCashRegister } = usePOSStore();
 
   console.log('🧭 Navigation render - isAuthenticated:', isAuthenticated);
@@ -165,9 +165,14 @@ export const Navigation = () => {
   }
 
   // Authenticated with company, site, and cash register -> POS App
+  // key para forzar remount limpio del stack cuando cambia el contexto
+  const posStackKey = [user?.id, currentCompany?.id, currentSite?.id, selectedCashRegister?.id]
+    .filter(Boolean)
+    .join(':');
+
   return (
     <NavigationContainer>
-      <POSStack />
+      <POSStack key={posStackKey} />
     </NavigationContainer>
   );
 };

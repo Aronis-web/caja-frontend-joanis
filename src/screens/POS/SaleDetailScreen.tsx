@@ -39,11 +39,13 @@ export default function SaleDetailScreen() {
   }, []);
 
   useEffect(() => {
+    const normalizedStatus = (saleInfo?.status ?? '').toLowerCase();
+
     // Poll for document status if processing
-    if (saleInfo?.status === 'processing' || saleInfo?.status === 'pending') {
+    if (normalizedStatus === 'processing' || normalizedStatus === 'pending') {
       setPolling(true);
       const interval = setInterval(() => {
-        loadSaleInfo(true);
+        void loadSaleInfo(true);
       }, 5000);
 
       return () => {
@@ -51,6 +53,8 @@ export default function SaleDetailScreen() {
         setPolling(false);
       };
     }
+
+    setPolling(false);
   }, [saleInfo?.status]);
 
   const loadSaleInfo = async (silent = false) => {
@@ -99,8 +103,10 @@ export default function SaleDetailScreen() {
     });
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
+  const getStatusColor = (status?: string) => {
+    const normalizedStatus = (status ?? '').toLowerCase();
+
+    switch (normalizedStatus) {
       case 'completed':
         return '#4CAF50';
       case 'processing':
@@ -113,8 +119,10 @@ export default function SaleDetailScreen() {
     }
   };
 
-  const getStatusText = (status: string) => {
-    switch (status) {
+  const getStatusText = (status?: string) => {
+    const normalizedStatus = (status ?? '').toLowerCase();
+
+    switch (normalizedStatus) {
       case 'completed':
         return 'COMPLETADO';
       case 'processing':
@@ -124,7 +132,7 @@ export default function SaleDetailScreen() {
       case 'rejected':
         return 'RECHAZADO';
       default:
-        return status.toUpperCase();
+        return normalizedStatus ? normalizedStatus.toUpperCase() : 'SIN ESTADO';
     }
   };
 
@@ -227,7 +235,7 @@ export default function SaleDetailScreen() {
           <Text style={styles.backButtonText}>Volver</Text>
         </TouchableOpacity>
 
-        {saleInfo.status === 'completed' && saleInfo.documents.length > 0 && (
+        {saleInfo.status === 'completed' && saleInfo.documents && saleInfo.documents.length > 0 && (
           <TouchableOpacity
             style={[styles.button, styles.primaryButton]}
             onPress={handleDownloadPDF}

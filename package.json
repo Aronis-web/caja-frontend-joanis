@@ -1,7 +1,7 @@
 {
   "name": "CajaGrit",
   "private": true,
-  "version": "0.0.52",
+  "version": "0.0.56",
   "description": "Sistema de Punto de Venta (POS) para gestión de cajas registradoras",
   "author": "Aronis Web",
   "main": "index.js",
@@ -28,7 +28,8 @@
     "version": "node scripts/version-manager.js",
     "publish:stable": "node scripts/publish-release.js stable",
     "publish:beta": "node scripts/publish-release.js beta",
-    "publish:edge": "node scripts/publish-release.js edge"
+    "publish:edge": "node scripts/publish-release.js edge",
+    "test:payment-flow": "tsc -p tsconfig.payment-tests.json && node .tmp-tests/utils/paymentFlow.test.js"
   },
   "dependencies": {
     "@expo-google-fonts/baloo-2": "^0.4.2",
@@ -58,6 +59,7 @@
     "react-native-screens": "~4.16.0",
     "react-native-web": "^0.21.0",
     "react-qr-code": "^2.0.18",
+    "socket.io-client": "^4.8.3",
     "sql.js": "^1.14.1",
     "zustand": "^4.5.0"
   },

@@ -3,7 +3,7 @@
  * Pantalla para solicitar recaudación de efectivo y mostrar código QR
  */
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { usePOSStore } from '@/store/pos';
+import { useAuthStore } from '@/store/auth';
 import { useCollectionsStore } from '@/store/collections';
 import { CashProgressBar } from '@/components/collections/CashProgressBar';
 import { CashAlertBadge } from '@/components/collections/CashAlertBadge';
@@ -29,9 +30,9 @@ import {
 let QRCode: React.ComponentType<{ value: string; size?: number; level?: string }> | null = null;
 if (Platform.OS === 'web') {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
     QRCode = require('react-qr-code').default;
-  } catch (e) {
+  } catch {
     console.warn('⚠️ react-qr-code no está instalado');
   }
 }
@@ -40,6 +41,7 @@ export default function CashCollectionScreen() {
   const navigation = useNavigation();
   const route = useRoute();
   const { currentSession, selectedCashRegister } = usePOSStore();
+  const logout = useAuthStore((state) => state.logout);
   const {
     cashStatus,
     isCashStatusLoading,
@@ -56,10 +58,22 @@ export default function CashCollectionScreen() {
 
   const [countdown, setCountdown] = useState<number>(0);
   const [showConfirmCancel, setShowConfirmCancel] = useState(false);
+  const [closureLogoutCountdown, setClosureLogoutCountdown] = useState<number>(10);
+  const completedRequestIdRef = useRef<string | null>(null);
+  const closureTicketPrintedForRequestRef = useRef<string | null>(null);
+
+  const completedRequestId = useMemo(
+    () =>
+      requestStatus?.status === CollectionRequestStatus.COMPLETED && requestStatus?.id
+        ? requestStatus.id
+        : null,
+    [requestStatus?.status, requestStatus?.id]
+  );
 
   const routeParams =
-    (route.params as { mode?: 'regular' | 'closure'; autoStart?: boolean; forceFlow?: number } | undefined) ||
-    undefined;
+    (route.params as
+      | { mode?: 'regular' | 'closure'; autoStart?: boolean; forceFlow?: number }
+      | undefined) || undefined;
 
   const isClosureMode = routeParams?.mode === 'closure';
   const autoStart = routeParams?.autoStart === true;
@@ -79,7 +93,10 @@ export default function CashCollectionScreen() {
 
   // Manejar countdown del QR
   useEffect(() => {
-    if (requestStatus?.expiresInSeconds && requestStatus.status === CollectionRequestStatus.PENDING) {
+    if (
+      requestStatus?.expiresInSeconds &&
+      requestStatus.status === CollectionRequestStatus.PENDING
+    ) {
       setCountdown(requestStatus.expiresInSeconds);
 
       const timer = setInterval(() => {
@@ -96,6 +113,307 @@ export default function CashCollectionScreen() {
     }
   }, [requestStatus?.expiresInSeconds, requestStatus?.status]);
 
+  useEffect(() => {
+    if (!isClosureMode || !completedRequestId) {
+      completedRequestIdRef.current = null;
+      closureTicketPrintedForRequestRef.current = null;
+      setClosureLogoutCountdown(10);
+      return;
+    }
+
+    if (completedRequestIdRef.current !== completedRequestId) {
+      completedRequestIdRef.current = completedRequestId;
+      closureTicketPrintedForRequestRef.current = null;
+      setClosureLogoutCountdown(10);
+    }
+  }, [isClosureMode, completedRequestId]);
+
+  const buildClosureTicketHtml = useCallback((): string | null => {
+    const closureSnapshot = requestStatus?.closureContext?.sessionSnapshot;
+    if (!closureSnapshot) return null;
+
+    const sessionIdentity = closureSnapshot.session_identity;
+    const timesAndStatus = closureSnapshot.times_and_status;
+    const monetarySummary = closureSnapshot.monetary_summary;
+    const salesBreakdown = closureSnapshot.sales_breakdown;
+    const operationalTraceability = closureSnapshot.operational_traceability;
+    const reconciliationAndAudit = closureSnapshot.reconciliation_and_audit;
+
+    const escapeHtml = (value: unknown): string =>
+      String(value ?? '-')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+
+    const formatMoney = (cents?: number | null): string => `S/ ${((cents ?? 0) / 100).toFixed(2)}`;
+
+    const mapLabel = (key: string): string => {
+      const labels: Record<string, string> = {
+        method_name: 'Método',
+        methodName: 'Método',
+        methodCode: 'Código método',
+        document_type: 'Tipo doc.',
+        documentType: 'Tipo doc.',
+        document_type_label: 'Documento',
+        total_transactions: 'Transacciones',
+        total_count: 'Cantidad',
+        count: 'Cantidad',
+        total_sales_count: 'Cantidad ventas',
+        total_quantity: 'Cantidad',
+        totalCents: 'Monto',
+        session_number: 'Sesión',
+        cashier_name: 'Cajero',
+        cashier_user_id: 'ID cajero',
+        userName: 'Cajero',
+        userId: 'ID cajero',
+        difference_type: 'Tipo diferencia',
+      };
+      return labels[key] ?? key.replace(/_/g, ' ');
+    };
+
+    const formatFieldValue = (key: string, value: unknown): string => {
+      if (value === null || value === undefined || value === '') return '-';
+      if (
+        typeof value === 'number' &&
+        (key.endsWith('_cents') || key.endsWith('Cents') || key === 'totalCents')
+      ) {
+        return formatMoney(value);
+      }
+      if (Array.isArray(value)) return value.join(', ');
+      return String(value);
+    };
+
+    const row = (label: string, value: unknown): string =>
+      `<div class="row"><span class="label">${escapeHtml(label)}:</span><span class="value">${escapeHtml(String(value ?? '-'))}</span></div>`;
+
+    const section = (title: string, rows: string): string =>
+      `<div class="line"></div><div class="section-title">${escapeHtml(title)}</div>${rows || row('Info', '-')}`;
+
+    const renderList = (title: string, items?: Array<Record<string, unknown>>): string => {
+      if (!items || items.length === 0) {
+        return section(title, row('Registros', 'Sin datos'));
+      }
+
+      const rows = items
+        .map((item, index) => {
+          const itemRows = Object.entries(item)
+            .map(([key, value]) =>
+              row(`${index + 1}. ${mapLabel(key)}`, formatFieldValue(key, value))
+            )
+            .join('');
+          return `<div class="sub-block">${itemRows}</div>`;
+        })
+        .join('');
+
+      return section(title, rows);
+    };
+
+    const identityRows = [
+      row('Caja', sessionIdentity?.cash_register_name ?? '-'),
+      row('Código caja', sessionIdentity?.cash_register_code ?? '-'),
+      row('Sede', sessionIdentity?.site_name ?? '-'),
+      row('Usuario', sessionIdentity?.user_name ?? '-'),
+      row('N° sesión', sessionIdentity?.session_number ?? '-'),
+      row('ID sesión', sessionIdentity?.session_id ?? '-'),
+    ].join('');
+
+    const statusRows = [
+      row('Estado', timesAndStatus?.status ?? '-'),
+      row('Apertura', timesAndStatus?.opened_at ?? '-'),
+      row('Cierre', timesAndStatus?.closed_at ?? '-'),
+      row('Duración (min)', timesAndStatus?.duration_minutes ?? '-'),
+      row('Motivo cierre', timesAndStatus?.closure_reason ?? '-'),
+    ].join('');
+
+    const moneyRows = [
+      row('Apertura', formatMoney(monetarySummary?.opening_cash_cents)),
+      row('Cierre', formatMoney(monetarySummary?.closing_cash_cents)),
+      row('Esperado', formatMoney(monetarySummary?.expected_cash_cents)),
+      row('Diferencia', formatMoney(monetarySummary?.difference_cents)),
+      row('Tipo diferencia', monetarySummary?.difference_type ?? '-'),
+      row('Ventas totales', formatMoney(monetarySummary?.total_sales_cents)),
+      row('Cantidad ventas', monetarySummary?.total_sales_count ?? '-'),
+      row('Ingresos caja', formatMoney(monetarySummary?.total_cash_in_cents)),
+      row('Egresos caja', formatMoney(monetarySummary?.total_cash_out_cents)),
+      row('Devoluciones', formatMoney(monetarySummary?.total_refunds_cents)),
+      row('Efectivo actual', formatMoney(monetarySummary?.current_cash_cents)),
+    ].join('');
+
+    const traceabilityRows = [
+      row(
+        'Cerrado por',
+        operationalTraceability?.closed_by_name ?? operationalTraceability?.closed_by ?? '-'
+      ),
+      row('ID recaudo final', operationalTraceability?.final_collection_id ?? '-'),
+      row('Nivel alerta caja', operationalTraceability?.alerts?.cash_alert_level ?? '-'),
+      row('Caja bloqueada', String(operationalTraceability?.alerts?.is_blocked ?? false)),
+      row(
+        'Con inconsistencias',
+        String(operationalTraceability?.alerts?.had_inconsistencies ?? false)
+      ),
+    ].join('');
+
+    const reconciliationRows = [
+      row('Estado reconciliación', reconciliationAndAudit?.reconciliation_status ?? '-'),
+      row('Generado', reconciliationAndAudit?.generated_at ?? '-'),
+      row('Versión reporte', reconciliationAndAudit?.report_version ?? '-'),
+      row('Request origen', reconciliationAndAudit?.source_request_id ?? '-'),
+    ].join('');
+
+    return `
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Ticket de Cierre</title>
+        <style>
+          body { font-family: Arial, sans-serif; width: 220px; margin: 0 auto; padding: 6px; color: #000; }
+          h1, h2 { text-align: center; margin: 2px 0; }
+          h1 { font-size: 13px; }
+          h2 { font-size: 10px; font-weight: normal; }
+          .line { border-top: 1px dashed #000; margin: 5px 0; }
+          .section-title { font-size: 10px; font-weight: 700; text-transform: uppercase; margin: 3px 0; }
+          .sub-block { padding-left: 2px; margin-bottom: 3px; }
+          .row { display: flex; justify-content: space-between; font-size: 9px; margin: 1px 0; gap: 6px; align-items: flex-start; }
+          .label { font-weight: 700; max-width: 55%; word-break: break-word; }
+          .value { text-align: right; word-break: break-word; max-width: 45%; }
+          .footer { text-align: center; font-size: 9px; margin-top: 6px; }
+        </style>
+      </head>
+      <body>
+        <h1>CIERRE DE CAJA</h1>
+        <h2>${escapeHtml(sessionIdentity?.cash_register_name ?? '-')}</h2>
+
+        ${section('Identidad de sesión', identityRows)}
+        ${section('Tiempos y estado', statusRows)}
+        ${section('Resumen monetario (S/)', moneyRows)}
+        ${renderList(
+          'Ventas por método de pago',
+          salesBreakdown?.by_payment_method as Array<Record<string, unknown>> | undefined
+        )}
+        ${renderList(
+          'Ventas por tipo de documento',
+          salesBreakdown?.by_document_type as Array<Record<string, unknown>> | undefined
+        )}
+        ${renderList(
+          'Ventas por cajero/sesión',
+          salesBreakdown?.by_cashier_session as Array<Record<string, unknown>> | undefined
+        )}
+        ${section('Trazabilidad operativa', traceabilityRows)}
+        ${section('Reconciliación y auditoría', reconciliationRows)}
+
+        <div class="line"></div>
+        <div class="footer">${new Date().toLocaleString('es-PE')}</div>
+      </body>
+      </html>
+    `;
+  }, [requestStatus?.closureContext?.sessionSnapshot]);
+
+  const printClosureTicket = useCallback(async (): Promise<boolean> => {
+    try {
+      const ticketHtml = buildClosureTicketHtml();
+      if (!ticketHtml) {
+        console.warn('⚠️ No hay sessionSnapshot para imprimir ticket de cierre.');
+        return false;
+      }
+
+      const filename = `ticket_cierre_${completedRequestId ?? Date.now()}.pdf`;
+
+      const electronAPI =
+        Platform.OS === 'web' && typeof window !== 'undefined'
+          ? (
+              window as unknown as {
+                electronAPI?: {
+                  printHTML?: (
+                    html: string,
+                    filename: string
+                  ) => Promise<{ success: boolean; error?: string }>;
+                };
+              }
+            ).electronAPI
+          : undefined;
+
+      if (electronAPI?.printHTML) {
+        const result = await electronAPI.printHTML(ticketHtml, filename);
+        if (!result?.success) {
+          console.error('❌ Error imprimiendo ticket de cierre en Electron:', result?.error);
+          return false;
+        }
+        console.log('✅ Ticket de cierre impreso en Electron');
+        return true;
+      }
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const printWindow = window.open('', '_blank', 'width=420,height=720');
+        if (!printWindow) {
+          console.error('❌ No se pudo abrir ventana para imprimir ticket de cierre');
+          return false;
+        }
+        printWindow.document.write(ticketHtml);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => {
+          printWindow.print();
+        }, 250);
+        console.log('✅ Ticket de cierre enviado a impresión (web)');
+        return true;
+      }
+
+      console.warn('⚠️ Impresión automática de ticket de cierre soportada en web/electron.');
+      return false;
+    } catch (error) {
+      console.error('❌ Error imprimiendo ticket de cierre:', error);
+      return false;
+    }
+  }, [buildClosureTicketHtml, completedRequestId]);
+
+  useEffect(() => {
+    if (!isClosureMode || !completedRequestId) {
+      return;
+    }
+
+    const closureSnapshot = requestStatus?.closureContext?.sessionSnapshot;
+    const isSnapshotReady =
+      !!closureSnapshot &&
+      closureSnapshot.times_and_status?.status === 'CLOSED' &&
+      !!closureSnapshot.times_and_status?.closed_at &&
+      Array.isArray(closureSnapshot.sales_breakdown?.by_payment_method) &&
+      Array.isArray(closureSnapshot.sales_breakdown?.by_document_type) &&
+      !!closureSnapshot.operational_traceability;
+
+    if (closureTicketPrintedForRequestRef.current !== completedRequestId && isSnapshotReady) {
+      closureTicketPrintedForRequestRef.current = completedRequestId;
+      printClosureTicket().catch((error) => {
+        console.error('❌ Error en impresión automática de ticket de cierre:', error);
+      });
+    }
+
+    if (closureLogoutCountdown <= 0) {
+      clearActiveRequest();
+      logout().catch((error) => {
+        console.error('❌ Error cerrando sesión post-cierre:', error);
+      });
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setClosureLogoutCountdown((prev) => Math.max(prev - 1, 0));
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [
+    isClosureMode,
+    completedRequestId,
+    closureLogoutCountdown,
+    clearActiveRequest,
+    logout,
+    printClosureTicket,
+    requestStatus?.closureContext?.sessionSnapshot,
+  ]);
+
   // Manejar solicitud de recaudación
   const handleRequestCollection = useCallback(async () => {
     if (!currentSession?.id) return;
@@ -104,10 +422,10 @@ export default function CashCollectionScreen() {
       const reason = isClosureMode
         ? CollectionRequestReason.END_OF_SHIFT
         : cashStatus?.isBlocked
-        ? CollectionRequestReason.BLOCKED
-        : cashStatus?.alertLevel === CashAlertLevel.CRITICAL
-        ? CollectionRequestReason.APPROACHING_LIMIT
-        : CollectionRequestReason.MANUAL;
+          ? CollectionRequestReason.BLOCKED
+          : cashStatus?.alertLevel === CashAlertLevel.CRITICAL
+            ? CollectionRequestReason.APPROACHING_LIMIT
+            : CollectionRequestReason.MANUAL;
 
       await createCollectionRequest(
         currentSession.id,
@@ -144,7 +462,11 @@ export default function CashCollectionScreen() {
     // Si ya hay una solicitud pendiente/en proceso, no crear una nueva
     if (
       requestStatus &&
-      [CollectionRequestStatus.PENDING, CollectionRequestStatus.IN_PROGRESS].includes(requestStatus.status)
+      [
+        CollectionRequestStatus.PENDING,
+        CollectionRequestStatus.IN_PROGRESS,
+        CollectionRequestStatus.PROCESSING,
+      ].includes(requestStatus.status)
     ) {
       autoStartTriggeredRef.current = true;
       return;
@@ -237,6 +559,7 @@ export default function CashCollectionScreen() {
         case CollectionRequestStatus.PENDING:
           return renderPendingState();
         case CollectionRequestStatus.IN_PROGRESS:
+        case CollectionRequestStatus.PROCESSING:
           return renderInProgressState();
         case CollectionRequestStatus.COMPLETED:
           return renderCompletedState();
@@ -293,7 +616,11 @@ export default function CashCollectionScreen() {
           </View>
 
           <View style={styles.progressContainer}>
-            <CashProgressBar percent={cashStatus.percentUsed} alertLevel={cashStatus.alertLevel} height={16} />
+            <CashProgressBar
+              percent={cashStatus.percentUsed}
+              alertLevel={cashStatus.alertLevel}
+              height={16}
+            />
             <Text style={[styles.percentBig, { color: config.color }]}>
               {cashStatus.percentUsed.toFixed(0)}%
             </Text>
@@ -317,7 +644,12 @@ export default function CashCollectionScreen() {
           </View>
 
           {cashStatus.message && (
-            <View style={[styles.alertBox, { backgroundColor: config.backgroundColor, borderColor: config.borderColor }]}>
+            <View
+              style={[
+                styles.alertBox,
+                { backgroundColor: config.backgroundColor, borderColor: config.borderColor },
+              ]}
+            >
               <Text style={[styles.alertBoxText, { color: config.color }]}>
                 {config.icon} {cashStatus.message}
               </Text>
@@ -349,10 +681,7 @@ export default function CashCollectionScreen() {
         {/* Botón de Solicitar */}
         {cashStatus.canCollect && (
           <TouchableOpacity
-            style={[
-              styles.requestButton,
-              cashStatus.isBlocked && styles.requestButtonUrgent,
-            ]}
+            style={[styles.requestButton, cashStatus.isBlocked && styles.requestButtonUrgent]}
             onPress={handleRequestCollection}
             disabled={isRequestLoading}
           >
@@ -393,7 +722,9 @@ export default function CashCollectionScreen() {
       return (
         <View style={styles.centerContainer}>
           <View style={styles.errorBox}>
-            <Text style={styles.errorText}>❌ No se pudo obtener el código QR para esta solicitud.</Text>
+            <Text style={styles.errorText}>
+              ❌ No se pudo obtener el código QR para esta solicitud.
+            </Text>
           </View>
           <TouchableOpacity style={styles.regenerateButton} onPress={handleRegenerateQR}>
             <Text style={styles.regenerateButtonText}>🔄 Generar Nuevo Código</Text>
@@ -408,16 +739,14 @@ export default function CashCollectionScreen() {
     return (
       <ScrollView style={styles.scrollContent} contentContainerStyle={styles.scrollCenter}>
         <View style={styles.qrCard}>
-          <Text style={styles.qrTitle}>{isClosureMode ? '🔒 ESCANEAR PARA RECAUDO DE CIERRE' : '📱 ESCANEAR PARA RECAUDAR'}</Text>
+          <Text style={styles.qrTitle}>
+            {isClosureMode ? '🔒 ESCANEAR PARA RECAUDO DE CIERRE' : '📱 ESCANEAR PARA RECAUDAR'}
+          </Text>
 
           {/* QR Code */}
           <View style={styles.qrContainer}>
             {QRCode ? (
-              <QRCode
-                value={qrValue}
-                size={220}
-                level="H"
-              />
+              <QRCode value={qrValue} size={220} level="H" />
             ) : (
               <View style={styles.qrPlaceholder}>
                 <Text style={styles.qrPlaceholderText}>QR</Text>
@@ -498,10 +827,7 @@ export default function CashCollectionScreen() {
                 >
                   <Text style={styles.confirmButtonNoText}>No, mantener</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.confirmButtonYes}
-                  onPress={handleCancelRequest}
-                >
+                <TouchableOpacity style={styles.confirmButtonYes} onPress={handleCancelRequest}>
                   <Text style={styles.confirmButtonYesText}>Sí, cancelar</Text>
                 </TouchableOpacity>
               </View>
@@ -533,9 +859,43 @@ export default function CashCollectionScreen() {
   // Render: Estado COMPLETED
   const renderCompletedState = () => {
     const completedInfo = requestStatus?.completedCollection;
+    const closureSnapshot = requestStatus?.closureContext?.sessionSnapshot;
+    const monetarySummary = closureSnapshot?.monetary_summary;
+    const sessionIdentity = closureSnapshot?.session_identity;
+    const timesAndStatus = closureSnapshot?.times_and_status;
+    const salesBreakdown = closureSnapshot?.sales_breakdown;
+    const operationalTraceability = closureSnapshot?.operational_traceability;
+    const reconciliationAndAudit = closureSnapshot?.reconciliation_and_audit;
+
+    const renderArraySection = (title: string, rows?: Array<Record<string, unknown>>) => {
+      if (!rows || rows.length === 0) {
+        return (
+          <View style={styles.completedInfo}>
+            <Text style={styles.sectionTitleText}>{title}</Text>
+            <Text style={styles.sectionEmptyText}>Sin registros</Text>
+          </View>
+        );
+      }
+
+      return (
+        <View style={styles.completedInfo}>
+          <Text style={styles.sectionTitleText}>{title}</Text>
+          {rows.map((row, index) => (
+            <View key={`${title}-${index}`} style={styles.subSectionBlock}>
+              {Object.entries(row).map(([key, value]) => (
+                <View key={`${title}-${index}-${key}`} style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>{key}:</Text>
+                  <Text style={styles.completedValue}>{String(value ?? '-')}</Text>
+                </View>
+              ))}
+            </View>
+          ))}
+        </View>
+      );
+    };
 
     return (
-      <View style={styles.centerContainer}>
+      <ScrollView style={styles.scrollContent} contentContainerStyle={styles.scrollCenter}>
         <View style={styles.completedCard}>
           <Text style={styles.completedIcon}>✅</Text>
           <Text style={styles.completedTitle}>¡Recaudación Completada!</Text>
@@ -555,21 +915,230 @@ export default function CashCollectionScreen() {
             </View>
           )}
 
+          {isClosureMode && closureSnapshot && (
+            <>
+              <View style={styles.completedInfo}>
+                <Text style={styles.sectionTitleText}>Identidad de sesión</Text>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Session ID:</Text>
+                  <Text style={styles.completedValue}>{sessionIdentity?.session_id ?? '-'}</Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Caja:</Text>
+                  <Text style={styles.completedValue}>
+                    {sessionIdentity?.cash_register_name ?? '-'}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Código caja:</Text>
+                  <Text style={styles.completedValue}>
+                    {sessionIdentity?.cash_register_code ?? '-'}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Sede:</Text>
+                  <Text style={styles.completedValue}>{sessionIdentity?.site_name ?? '-'}</Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Usuario:</Text>
+                  <Text style={styles.completedValue}>{sessionIdentity?.user_name ?? '-'}</Text>
+                </View>
+              </View>
+
+              <View style={styles.completedInfo}>
+                <Text style={styles.sectionTitleText}>Tiempos y estado</Text>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Estado:</Text>
+                  <Text style={styles.completedValue}>{timesAndStatus?.status ?? '-'}</Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Apertura:</Text>
+                  <Text style={styles.completedValue}>{timesAndStatus?.opened_at ?? '-'}</Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Cierre:</Text>
+                  <Text style={styles.completedValue}>{timesAndStatus?.closed_at ?? '-'}</Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Duración (min):</Text>
+                  <Text style={styles.completedValue}>
+                    {String(timesAndStatus?.duration_minutes ?? '-')}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Motivo cierre:</Text>
+                  <Text style={styles.completedValue}>{timesAndStatus?.closure_reason ?? '-'}</Text>
+                </View>
+              </View>
+
+              <View style={styles.completedInfo}>
+                <Text style={styles.sectionTitleText}>Resumen monetario</Text>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Apertura:</Text>
+                  <Text style={styles.completedValue}>
+                    {formatCurrency((monetarySummary?.opening_cash_cents ?? 0) / 100)}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Cierre:</Text>
+                  <Text style={styles.completedValue}>
+                    {formatCurrency((monetarySummary?.closing_cash_cents ?? 0) / 100)}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Esperado:</Text>
+                  <Text style={styles.completedValue}>
+                    {formatCurrency((monetarySummary?.expected_cash_cents ?? 0) / 100)}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Diferencia:</Text>
+                  <Text style={styles.completedValue}>
+                    {formatCurrency((monetarySummary?.difference_cents ?? 0) / 100)}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Tipo diferencia:</Text>
+                  <Text style={styles.completedValue}>
+                    {monetarySummary?.difference_type ?? '-'}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Ventas total:</Text>
+                  <Text style={styles.completedValue}>
+                    {formatCurrency((monetarySummary?.total_sales_cents ?? 0) / 100)}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Cantidad ventas:</Text>
+                  <Text style={styles.completedValue}>
+                    {String(monetarySummary?.total_sales_count ?? '-')}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Ingresos caja:</Text>
+                  <Text style={styles.completedValue}>
+                    {formatCurrency((monetarySummary?.total_cash_in_cents ?? 0) / 100)}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Egresos caja:</Text>
+                  <Text style={styles.completedValue}>
+                    {formatCurrency((monetarySummary?.total_cash_out_cents ?? 0) / 100)}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Devoluciones:</Text>
+                  <Text style={styles.completedValue}>
+                    {formatCurrency((monetarySummary?.total_refunds_cents ?? 0) / 100)}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Efectivo actual:</Text>
+                  <Text style={styles.completedValue}>
+                    {formatCurrency((monetarySummary?.current_cash_cents ?? 0) / 100)}
+                  </Text>
+                </View>
+              </View>
+
+              {renderArraySection(
+                'Desglose por método de pago',
+                salesBreakdown?.by_payment_method as Array<Record<string, unknown>> | undefined
+              )}
+              {renderArraySection(
+                'Desglose por tipo de documento',
+                salesBreakdown?.by_document_type as Array<Record<string, unknown>> | undefined
+              )}
+              {renderArraySection(
+                'Desglose por cajero/sesión',
+                salesBreakdown?.by_cashier_session as Array<Record<string, unknown>> | undefined
+              )}
+
+              <View style={styles.completedInfo}>
+                <Text style={styles.sectionTitleText}>Trazabilidad operativa</Text>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Cerrado por:</Text>
+                  <Text style={styles.completedValue}>
+                    {operationalTraceability?.closed_by_name ??
+                      operationalTraceability?.closed_by ??
+                      '-'}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Recaudo final ID:</Text>
+                  <Text style={styles.completedValue}>
+                    {operationalTraceability?.final_collection_id ?? '-'}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Alerta caja:</Text>
+                  <Text style={styles.completedValue}>
+                    {operationalTraceability?.alerts?.cash_alert_level ?? '-'}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Bloqueada:</Text>
+                  <Text style={styles.completedValue}>
+                    {String(operationalTraceability?.alerts?.is_blocked ?? false)}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Inconsistencias:</Text>
+                  <Text style={styles.completedValue}>
+                    {String(operationalTraceability?.alerts?.had_inconsistencies ?? false)}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.completedInfo}>
+                <Text style={styles.sectionTitleText}>Reconciliación y auditoría</Text>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Estado:</Text>
+                  <Text style={styles.completedValue}>
+                    {reconciliationAndAudit?.reconciliation_status ?? '-'}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Generado:</Text>
+                  <Text style={styles.completedValue}>
+                    {reconciliationAndAudit?.generated_at ?? '-'}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Versión:</Text>
+                  <Text style={styles.completedValue}>
+                    {reconciliationAndAudit?.report_version ?? '-'}
+                  </Text>
+                </View>
+                <View style={styles.completedInfoRow}>
+                  <Text style={styles.completedLabel}>Source request ID:</Text>
+                  <Text style={styles.completedValue}>
+                    {reconciliationAndAudit?.source_request_id ?? '-'}
+                  </Text>
+                </View>
+              </View>
+            </>
+          )}
+
           <Text style={styles.completedHint}>
-            El efectivo de su caja ha sido actualizado.
+            {isClosureMode
+              ? `Cerrando sesión automáticamente en ${closureLogoutCountdown}s...`
+              : 'El efectivo de su caja ha sido actualizado.'}
           </Text>
 
-          <TouchableOpacity
-            style={styles.completedButton}
-            onPress={() => {
-              clearActiveRequest();
-              navigation.goBack();
-            }}
-          >
-            <Text style={styles.completedButtonText}>Volver al Dashboard</Text>
-          </TouchableOpacity>
+          {!isClosureMode && (
+            <TouchableOpacity
+              style={styles.completedButton}
+              onPress={() => {
+                clearActiveRequest();
+                navigation.goBack();
+              }}
+            >
+              <Text style={styles.completedButtonText}>Volver al Dashboard</Text>
+            </TouchableOpacity>
+          )}
         </View>
-      </View>
+      </ScrollView>
     );
   };
 
@@ -609,9 +1178,7 @@ export default function CashCollectionScreen() {
         <View style={styles.cancelledCard}>
           <Text style={styles.cancelledIcon}>❌</Text>
           <Text style={styles.cancelledTitle}>Solicitud Cancelada</Text>
-          <Text style={styles.cancelledText}>
-            La solicitud de recaudación ha sido cancelada.
-          </Text>
+          <Text style={styles.cancelledText}>La solicitud de recaudación ha sido cancelada.</Text>
 
           <TouchableOpacity
             style={styles.completedButton}
@@ -634,7 +1201,9 @@ export default function CashCollectionScreen() {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerBackButton}>
           <Text style={styles.headerBackText}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{isClosureMode ? 'Recaudo de Cierre' : 'Recaudación de Efectivo'}</Text>
+        <Text style={styles.headerTitle}>
+          {isClosureMode ? 'Recaudo de Cierre' : 'Recaudación de Efectivo'}
+        </Text>
         <Text style={styles.headerSubtitle}>{selectedCashRegister?.name}</Text>
       </View>
 
@@ -1067,7 +1636,8 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 32,
     alignItems: 'center',
-    maxWidth: 350,
+    width: '100%',
+    maxWidth: 560,
   },
   completedIcon: {
     fontSize: 64,
@@ -1100,6 +1670,23 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#333',
+  },
+  sectionTitleText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 10,
+  },
+  sectionEmptyText: {
+    fontSize: 13,
+    color: '#777',
+    fontStyle: 'italic',
+  },
+  subSectionBlock: {
+    marginBottom: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
   },
   completedHint: {
     fontSize: 14,

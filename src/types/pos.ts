@@ -73,6 +73,10 @@ export interface Session {
     email: string;
   };
   summary?: SessionSummary;
+  sessionSnapshot?: Record<string, unknown>;
+  closureContext?: {
+    sessionSnapshot?: Record<string, unknown>;
+  };
 }
 
 export interface SessionSummary {
@@ -238,6 +242,7 @@ export interface Product {
   salePriceCents?: number;
   availableStock?: number;
   imageUrl?: string;
+  imageDataUrl?: string;
   categoryName?: string;
   taxType?: string;
   // Campos calculados para compatibilidad
@@ -247,6 +252,13 @@ export interface Product {
   stock?: number;
   taxRate?: number;
   isActive?: boolean;
+}
+
+export interface TopSellersResponse {
+  results: Product[];
+  total: number;
+  cashRegisterId: string;
+  sourceDay: string;
 }
 
 export interface Customer {

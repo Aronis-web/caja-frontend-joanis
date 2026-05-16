@@ -25,6 +25,7 @@ export enum CollectionRequestReason {
 export enum CollectionRequestStatus {
   PENDING = 'PENDING',
   IN_PROGRESS = 'IN_PROGRESS',
+  PROCESSING = 'PROCESSING',
   COMPLETED = 'COMPLETED',
   EXPIRED = 'EXPIRED',
   CANCELLED = 'CANCELLED',
@@ -72,6 +73,9 @@ export interface CashStatusResponse {
 
   // Solicitud pendiente (si existe)
   pendingRequest?: PendingRequestInfo;
+
+  // Snapshot de cierre cuando existe una solicitud CLOSURE COMPLETED en la sesión
+  sessionSnapshot?: ClosureSessionSnapshot;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -101,6 +105,84 @@ export interface CollectionRequestResponse {
   mode?: 'CLOSURE' | 'REGULAR';
 }
 
+export interface ClosureSessionIdentity {
+  session_id: string;
+  cash_register_id: string;
+  cash_register_code: string;
+  cash_register_name: string;
+  site_id: string;
+  site_name: string;
+  user_id: string;
+  user_name: string;
+}
+
+export interface ClosureSessionTimesAndStatus {
+  opened_at: string;
+  closed_at: string;
+  duration_minutes: number;
+  status: string;
+  closure_reason: string | null;
+}
+
+export interface ClosureSessionMonetarySummary {
+  opening_cash_cents: number;
+  closing_cash_cents: number;
+  expected_cash_cents: number;
+  difference_cents: number;
+  difference_type: string;
+  total_sales_cents: number;
+  total_sales_count: number;
+  total_cash_in_cents: number;
+  total_cash_out_cents: number;
+  total_refunds_cents: number;
+  current_cash_cents: number;
+}
+
+export interface ClosureSalesBreakdownItem {
+  [key: string]: string | number | null;
+}
+
+export interface ClosureSalesBreakdown {
+  by_payment_method: ClosureSalesBreakdownItem[];
+  by_document_type: ClosureSalesBreakdownItem[];
+  by_cashier_session: ClosureSalesBreakdownItem[];
+}
+
+export interface ClosureOperationalTraceability {
+  closed_by: string | null;
+  closed_by_name: string | null;
+  pending_collection_request_id: string | null;
+  final_collection_id: string | null;
+  alerts: {
+    cash_alert_level: string;
+    is_blocked: boolean;
+    blocked_reason: string | null;
+    blocked_at: string | null;
+    had_inconsistencies: boolean;
+  };
+}
+
+export interface ClosureReconciliationAndAudit {
+  reconciliation_status: string;
+  mismatch_details: Array<Record<string, unknown>>;
+  generated_at: string;
+  report_version: string;
+  source_request_id: string;
+}
+
+export interface ClosureSessionSnapshot {
+  session_identity: ClosureSessionIdentity;
+  times_and_status: ClosureSessionTimesAndStatus;
+  monetary_summary: ClosureSessionMonetarySummary;
+  sales_breakdown?: ClosureSalesBreakdown;
+  operational_traceability?: ClosureOperationalTraceability;
+  reconciliation_and_audit?: ClosureReconciliationAndAudit;
+}
+
+export interface ClosureContext {
+  sessionSnapshot?: ClosureSessionSnapshot;
+}
+
 export interface CollectionRequestStatusResponse {
   id: string;
   status: CollectionRequestStatus;
@@ -113,6 +195,10 @@ export interface CollectionRequestStatusResponse {
     name: string;
   };
   processedAt?: string;
+  sessionId?: string;
+  isClosureRequest?: boolean;
+  source?: string;
+  closureContext?: ClosureContext;
   // Información adicional cuando se completa
   completedCollection?: {
     collectionNumber: string;

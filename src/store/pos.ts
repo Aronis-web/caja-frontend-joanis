@@ -6,6 +6,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { posService } from '@/services/POSService';
+import { buildSalePayments, toCents } from '@/utils/paymentFlow';
 import type {
   CashRegister,
   Session,
@@ -21,6 +22,10 @@ interface POSState {
   selectedCashRegister: CashRegister | null;
   currentSession: Session | null;
   paymentMethods: PaymentMethod[];
+  topSellers: Product[];
+  isTopSellersLoading: boolean;
+  topSellersLastUpdatedAt: string | null;
+  salesSinceTopSellersRefresh: number;
 
   // Cart state
   cartItems: SaleItem[];
@@ -73,6 +78,12 @@ interface POSState {
     notes?: string
   ) => Promise<CreateSaleResponse>;
 
+  // Actions - Top sellers
+  loadTopSellers: (cashRegisterId?: string, limit?: number) => Promise<void>;
+  refreshTopSellersInBackground: (cashRegisterId?: string, limit?: number) => Promise<void>;
+  incrementSalesCounterAndRefreshTopSellers: () => Promise<void>;
+  resetTopSellersState: () => void;
+
   // Utility
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
@@ -82,6 +93,82 @@ interface POSState {
 
 const STORAGE_KEY = '@caja:selected_cash_register';
 const SESSION_STORAGE_KEY = '@pos_current_session';
+const TOP_SELLERS_STORAGE_KEY = '@pos_top_sellers';
+const TOP_SELLERS_META_STORAGE_KEY = '@pos_top_sellers_meta';
+
+const normalizeTaxRate = (taxType?: string): number => (taxType === 'GRAVADO' ? 18 : 0);
+
+const normalizeTopSellerProduct = (product: Product): Product => {
+  const price =
+    typeof product.price === 'number' ? product.price : (product.salePriceCents || 0) / 100;
+  const stock = typeof product.stock === 'number' ? product.stock : (product.availableStock ?? 0);
+
+  return {
+    ...product,
+    code: product.code || product.sku || product.barcode || '',
+    description: product.description || product.name || '',
+    price,
+    stock,
+    availableStock: product.availableStock ?? stock,
+    taxRate: product.taxRate ?? normalizeTaxRate(product.taxType),
+    imageUrl: product.imageDataUrl || product.imageUrl,
+    imageDataUrl: product.imageDataUrl,
+    isActive: true,
+  };
+};
+
+const toDataUrlFromBlob = (blob: Blob, fallbackType = 'image/jpeg'): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = reader.result;
+      if (typeof result === 'string') {
+        resolve(result);
+      } else {
+        reject(new Error('No se pudo convertir imagen a Data URL'));
+      }
+    };
+    reader.onerror = () => reject(reader.error || new Error('Error leyendo imagen'));
+    reader.readAsDataURL(new Blob([blob], { type: blob.type || fallbackType }));
+  });
+
+const preloadImageAsDataUrl = async (url?: string): Promise<string | undefined> => {
+  if (!url) return undefined;
+
+  if (url.startsWith('data:image')) {
+    return url;
+  }
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const blob = await response.blob();
+    return await toDataUrlFromBlob(blob, blob.type || 'image/jpeg');
+  } catch (error) {
+    console.warn('⚠️ [TOP_SELLERS] No se pudo precargar imagen:', url, error);
+    return undefined;
+  }
+};
+
+const persistTopSellers = async (
+  products: Product[],
+  cashRegisterId?: string,
+  salesCounter: number = 0
+): Promise<void> => {
+  const now = new Date().toISOString();
+  await AsyncStorage.setItem(TOP_SELLERS_STORAGE_KEY, JSON.stringify(products));
+  await AsyncStorage.setItem(
+    TOP_SELLERS_META_STORAGE_KEY,
+    JSON.stringify({
+      cashRegisterId,
+      updatedAt: now,
+      salesCounter,
+    })
+  );
+};
 
 // Initialize store with persisted data
 const initializeStore = async () => {
@@ -102,6 +189,10 @@ export const usePOSStore = create<POSState>((set, get) => ({
   selectedCashRegister: null,
   currentSession: null,
   paymentMethods: [],
+  topSellers: [],
+  isTopSellersLoading: false,
+  topSellersLastUpdatedAt: null,
+  salesSinceTopSellersRefresh: 0,
   cartItems: [],
   cartPayments: [],
   isLoading: false,
@@ -115,13 +206,15 @@ export const usePOSStore = create<POSState>((set, get) => ({
       // Load active session if exists
       try {
         await get().loadActiveSession(cashRegister.id);
-      } catch (error) {
+      } catch {
         // No active session, that's ok
         set({ currentSession: null });
       }
+      void get().refreshTopSellersInBackground(cashRegister.id, 40);
     } else {
       await AsyncStorage.removeItem(STORAGE_KEY);
       set({ currentSession: null });
+      get().resetTopSellersState();
     }
   },
 
@@ -153,6 +246,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
       // Guardar sesión en AsyncStorage para uso del servicio
       await AsyncStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
       set({ currentSession: session, isLoading: false });
+      void get().refreshTopSellersInBackground(cashRegisterId, 40);
       return session;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to open session';
@@ -190,6 +284,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
       // Guardar sesión en AsyncStorage para uso del servicio
       await AsyncStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
       set({ currentSession: session, isLoading: false });
+      void get().refreshTopSellersInBackground(cashRegisterId, 40);
     } catch (error) {
       await AsyncStorage.removeItem(SESSION_STORAGE_KEY);
       set({ currentSession: null, isLoading: false });
@@ -380,7 +475,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
   },
 
   // Sales actions
-  createSale: async (customerId, documentType = '03', notes) => {
+  createSale: async (customerId, _documentType = '03', notes) => {
     console.log('🏪 [STORE] createSale iniciado');
     const { currentSession, cartItems, cartPayments, paymentMethods } = get();
 
@@ -405,17 +500,19 @@ export const usePOSStore = create<POSState>((set, get) => ({
 
     const total = get().getCartTotal();
     const paymentsTotal = get().getPaymentsTotal();
+    const totalCents = toCents(total);
+    const paymentsTotalCents = toCents(paymentsTotal);
 
     console.log('💰 [STORE] Total venta:', total);
     console.log('💳 [STORE] Total pagos:', paymentsTotal);
 
-    // Permitir venta si el pago es mayor o igual al total
-    if (paymentsTotal < total - 0.01) {
+    // Permitir venta si el pago es mayor o igual al total (comparación en centavos)
+    if (paymentsTotalCents < totalCents) {
       console.error('❌ [STORE] Pago insuficiente');
       throw new Error('Payment amount is insufficient');
     }
 
-    const change = paymentsTotal - total;
+    const change = (paymentsTotalCents - totalCents) / 100;
     if (change > 0) {
       console.log('💵 [STORE] Vuelto:', change);
     }
@@ -439,60 +536,27 @@ export const usePOSStore = create<POSState>((set, get) => ({
       console.log('📦 [STORE] Items convertidos:', JSON.stringify(items, null, 2));
 
       // Procesar pagos según el tipo de método
-      const totalCents = Math.round(total * 100);
-      let remainingCents = totalCents;
-      const payments = cartPayments.map((payment, index) => {
-        const paymentMethod = paymentMethods.find((pm) => pm.id === payment.paymentMethodId);
-        const isIzipay = paymentMethod?.code?.includes('IZIPAY') || paymentMethod?.isIzipay;
-        const isCash = paymentMethod?.code === 'CASH' || paymentMethod?.isCash;
-
-        let amountCents = Math.round(payment.amount * 100);
-
-        console.log(`💳 [STORE] Procesando pago ${index + 1}:`, {
-          method: paymentMethod?.name,
-          code: paymentMethod?.code,
-          isIzipay,
-          isCash,
-          originalAmount: payment.amount,
-          remaining: remainingCents / 100,
-        });
-
-        // Si es IZIPAY, el monto no puede exceder el total de la venta
-        if (isIzipay) {
-          if (amountCents > totalCents) {
-            console.warn(
-              `⚠️ [STORE] IZIPAY: Monto ${amountCents / 100} excede total ${totalCents / 100}, ajustando a total`
-            );
-            amountCents = totalCents;
-          }
-        }
-
-        // Si es EFECTIVO, enviar solo el monto necesario (restante sin tarjeta)
-        if (isCash) {
-          // Si hay otros pagos (tarjeta), enviar solo el restante
-          if (cartPayments.length > 1) {
-            amountCents = Math.min(amountCents, remainingCents);
-            console.log(`💵 [STORE] EFECTIVO: Ajustando a restante ${amountCents / 100}`);
-          } else {
-            // Si es el único pago, enviar el total de la venta
-            amountCents = totalCents;
-            console.log(`💵 [STORE] EFECTIVO único: Enviando total ${amountCents / 100}`);
-          }
-        }
-
-        remainingCents -= amountCents;
-
-        return {
-          paymentMethodId: payment.paymentMethodId,
-          amountCents,
-          referenceNumber: `PAY-${Date.now()}-${index}`,
-          notes: paymentMethod?.name || 'Pago',
-        };
-      });
+      const payments = buildSalePayments(total, cartPayments, paymentMethods);
 
       console.log('💳 [STORE] Pagos procesados:', JSON.stringify(payments, null, 2));
 
-      const requestData: any = {
+      const requestData: {
+        saleType: 'B2C' | 'B2B';
+        items: {
+          productId: string;
+          quantity: number;
+          unitPriceCents: number;
+          discountCents: number;
+        }[];
+        payments: {
+          paymentMethodId: string;
+          amountCents: number;
+          referenceNumber: string;
+          notes: string;
+        }[];
+        notes?: string;
+        customerId?: string;
+      } = {
         saleType,
         items,
         payments,
@@ -517,6 +581,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
 
       // Refresh session to update balance
       await get().refreshSession();
+      void get().incrementSalesCounterAndRefreshTopSellers();
 
       set({ isLoading: false });
 
@@ -526,6 +591,92 @@ export const usePOSStore = create<POSState>((set, get) => ({
       set({ error: errorMessage, isLoading: false });
       throw error;
     }
+  },
+
+  // Top sellers actions
+  loadTopSellers: async (cashRegisterId, limit = 40) => {
+    const state = get();
+    const registerId =
+      cashRegisterId || state.selectedCashRegister?.id || state.currentSession?.cashRegisterId;
+
+    if (!registerId) {
+      return;
+    }
+
+    set({ isTopSellersLoading: true });
+
+    try {
+      const products = await posService.getTopSellers(registerId, limit);
+
+      const withCachedImages = await Promise.all(
+        products.map(async (product) => {
+          const imageDataUrl = await preloadImageAsDataUrl(product.imageUrl);
+          return normalizeTopSellerProduct({
+            ...product,
+            imageDataUrl,
+            imageUrl: imageDataUrl || product.imageUrl,
+          });
+        })
+      );
+
+      const now = new Date().toISOString();
+      set({
+        topSellers: withCachedImages,
+        isTopSellersLoading: false,
+        topSellersLastUpdatedAt: now,
+        salesSinceTopSellersRefresh: 0,
+      });
+
+      await persistTopSellers(withCachedImages, registerId, 0);
+    } catch (error) {
+      console.warn('⚠️ [POS_STORE] No se pudo cargar top sellers:', error);
+      set({ isTopSellersLoading: false });
+
+      // Mantener datos cacheados sin interrumpir operación
+      const cached = await AsyncStorage.getItem(TOP_SELLERS_STORAGE_KEY);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached) as Product[];
+          set({ topSellers: parsed.map(normalizeTopSellerProduct) });
+        } catch {
+          // Ignorar errores de parseo
+        }
+      }
+    }
+  },
+
+  refreshTopSellersInBackground: async (cashRegisterId, limit = 40) => {
+    setTimeout(() => {
+      void get().loadTopSellers(cashRegisterId, limit);
+    }, 0);
+  },
+
+  incrementSalesCounterAndRefreshTopSellers: async () => {
+    const state = get();
+    const nextCounter = state.salesSinceTopSellersRefresh + 1;
+    set({ salesSinceTopSellersRefresh: nextCounter });
+
+    if (nextCounter >= 10) {
+      const registerId = state.selectedCashRegister?.id || state.currentSession?.cashRegisterId;
+      set({ salesSinceTopSellersRefresh: 0 });
+      await persistTopSellers(state.topSellers, registerId, 0);
+      void get().refreshTopSellersInBackground(registerId, 40);
+      return;
+    }
+
+    const registerId = state.selectedCashRegister?.id || state.currentSession?.cashRegisterId;
+    await persistTopSellers(state.topSellers, registerId, nextCounter);
+  },
+
+  resetTopSellersState: () => {
+    set({
+      topSellers: [],
+      isTopSellersLoading: false,
+      topSellersLastUpdatedAt: null,
+      salesSinceTopSellersRefresh: 0,
+    });
+    void AsyncStorage.removeItem(TOP_SELLERS_STORAGE_KEY);
+    void AsyncStorage.removeItem(TOP_SELLERS_META_STORAGE_KEY);
   },
 
   // Utility
@@ -544,6 +695,31 @@ export const usePOSStore = create<POSState>((set, get) => ({
       } else {
         console.log('ℹ️ No hay sesión guardada en AsyncStorage');
       }
+
+      const cachedTopSellers = await AsyncStorage.getItem(TOP_SELLERS_STORAGE_KEY);
+      const cachedTopSellersMeta = await AsyncStorage.getItem(TOP_SELLERS_META_STORAGE_KEY);
+
+      if (cachedTopSellers) {
+        try {
+          const topSellers = (JSON.parse(cachedTopSellers) as Product[]).map(
+            normalizeTopSellerProduct
+          );
+          const meta = cachedTopSellersMeta
+            ? (JSON.parse(cachedTopSellersMeta) as {
+                updatedAt?: string;
+                salesCounter?: number;
+              })
+            : undefined;
+
+          set({
+            topSellers,
+            topSellersLastUpdatedAt: meta?.updatedAt || null,
+            salesSinceTopSellersRefresh: meta?.salesCounter || 0,
+          });
+        } catch (parseError) {
+          console.warn('⚠️ [POS_STORE] Error cargando top sellers cacheados:', parseError);
+        }
+      }
     } catch (error) {
       console.error('❌ Error cargando sesión desde AsyncStorage:', error);
     }
@@ -554,12 +730,19 @@ export const usePOSStore = create<POSState>((set, get) => ({
       selectedCashRegister: null,
       currentSession: null,
       paymentMethods: [],
+      topSellers: [],
+      isTopSellersLoading: false,
+      topSellersLastUpdatedAt: null,
+      salesSinceTopSellersRefresh: 0,
       cartItems: [],
       cartPayments: [],
       isLoading: false,
       error: null,
     });
-    AsyncStorage.removeItem(STORAGE_KEY);
+    void AsyncStorage.removeItem(STORAGE_KEY);
+    void AsyncStorage.removeItem(SESSION_STORAGE_KEY);
+    void AsyncStorage.removeItem(TOP_SELLERS_STORAGE_KEY);
+    void AsyncStorage.removeItem(TOP_SELLERS_META_STORAGE_KEY);
   },
 }));
 

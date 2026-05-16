@@ -28,6 +28,7 @@ import type {
   ApiPeruDNIResponse,
   ApiPeruRUCResponse,
   CreateCustomerRequest,
+  TopSellersResponse,
 } from '@/types/pos';
 
 class POSService {
@@ -323,34 +324,44 @@ class POSService {
     }
 
     // Mapear los productos del nuevo endpoint
-    return response.results.map((product) => {
-      // Usar salePriceCents del endpoint (convertir de centavos a soles)
-      const price = product.salePriceCents ? product.salePriceCents / 100 : 0;
+    return response.results.map((product) => this.mapProductForPOS(product));
+  }
 
-      // Determinar la tasa de impuesto según el taxType
-      let taxRate = 0;
-      if (product.taxType === 'GRAVADO') {
-        taxRate = 18; // IGV 18%
-      } else if (product.taxType === 'EXONERADO' || product.taxType === 'INAFECTO') {
-        taxRate = 0; // Sin IGV
-      }
+  async getTopSellers(cashRegisterId: string, limit: number = 40): Promise<Product[]> {
+    if (!cashRegisterId) {
+      throw new Error('cashRegisterId es requerido para obtener productos más vendidos');
+    }
 
-      const mappedProduct = {
-        ...product,
-        code: product.sku || product.barcode || '',
-        description: product.name || '',
-        price,
-        stock: product.availableStock || 0,
-        taxRate,
-        isActive: true, // Si está en los resultados, está activo
-      };
+    const safeLimit = Math.min(Math.max(limit, 1), 50);
 
-      console.log(
-        `📦 Producto mapeado: ${product.name} - Precio: S/ ${price} - Stock: ${product.availableStock}`
-      );
+    const response = await this.request<TopSellersResponse>(
+      `/pos/cash-registers/products/top-sellers?cashRegisterId=${cashRegisterId}&limit=${safeLimit}`
+    );
 
-      return mappedProduct;
-    });
+    return response.results.map((product) => this.mapProductForPOS(product));
+  }
+
+  private mapProductForPOS(product: Product): Product {
+    const price = product.salePriceCents ? product.salePriceCents / 100 : 0;
+
+    let taxRate = 0;
+    if (product.taxType === 'GRAVADO') {
+      taxRate = 18;
+    } else if (product.taxType === 'EXONERADO' || product.taxType === 'INAFECTO') {
+      taxRate = 0;
+    }
+
+    const mappedProduct = {
+      ...product,
+      code: product.sku || product.barcode || '',
+      description: product.name || '',
+      price,
+      stock: product.availableStock || 0,
+      taxRate,
+      isActive: true,
+    };
+
+    return mappedProduct;
   }
 
   // Método auxiliar para obtener la sesión actual
@@ -476,7 +487,7 @@ class POSService {
   async lookupDNI(dni: string): Promise<ApiPeruDNIResponse> {
     console.log('🔍 [API] lookupDNI - Consultando DNI:', dni);
     try {
-      const response = await this.request<ApiPeruDNIResponse>(`/customers/apiperu/dni/${dni}`);
+      const response = await this.request<ApiPeruDNIResponse>(`/customers/dni/${dni}`);
       console.log('✅ [API] lookupDNI - Response:', JSON.stringify(response, null, 2));
       return response;
     } catch (error) {
@@ -488,7 +499,7 @@ class POSService {
   async lookupRUC(ruc: string): Promise<ApiPeruRUCResponse> {
     console.log('🔍 [API] lookupRUC - Consultando RUC:', ruc);
     try {
-      const response = await this.request<ApiPeruRUCResponse>(`/customers/apiperu/ruc/${ruc}`);
+      const response = await this.request<ApiPeruRUCResponse>(`/customers/ruc/${ruc}`);
       console.log('✅ [API] lookupRUC - Response:', JSON.stringify(response, null, 2));
       return response;
     } catch (error) {

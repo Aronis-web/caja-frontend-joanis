@@ -4,6 +4,7 @@ import { Alert } from 'react-native';
 import { config } from '@/utils/config';
 import secureStorage from '@/utils/secureStorage';
 import { authService } from '@/services/AuthService';
+import { usePOSStore } from '@/store/pos';
 import { PermissionCheck, Permission } from '@/types/auth';
 import type { User, Company, Site } from '@/types/auth';
 
@@ -58,6 +59,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   setUser: (user) => set({ user, isAuthenticated: !!user }),
 
   setCurrentCompany: async (company) => {
+    const previousCompanyId = get().currentCompany?.id;
+    const nextCompanyId = company?.id;
+
+    // Si cambia de empresa (o se limpia), resetear contexto POS para evitar arrastre de sesión/caja
+    if (previousCompanyId && previousCompanyId !== nextCompanyId) {
+      usePOSStore.getState().reset();
+      await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_SITE);
+      set({ currentSite: null });
+      authService.setCurrentSite(null);
+    }
+
     set({ currentCompany: company });
     if (company) {
       await AsyncStorage.setItem(config.STORAGE_KEYS.CURRENT_COMPANY, JSON.stringify(company));
@@ -68,6 +80,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   setCurrentSite: async (site) => {
+    const previousSiteId = get().currentSite?.id;
+    const nextSiteId = site?.id;
+
+    // Si cambia de sede (o se limpia), resetear contexto POS para evitar usar caja/sesión de otra sede
+    if (previousSiteId && previousSiteId !== nextSiteId) {
+      usePOSStore.getState().reset();
+    }
+
     set({ currentSite: site });
     if (site) {
       await AsyncStorage.setItem(config.STORAGE_KEYS.CURRENT_SITE, JSON.stringify(site));
@@ -126,10 +146,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       console.log('✅ Login successful');
 
-      // Don't clear company/site selection on login
-      // This allows resuming active sessions
-      // await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_COMPANY);
-      // await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_SITE);
+      // Limpiar contexto previo para evitar arrastrar empresa/sede/caja/sesión de otro usuario
+      await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_COMPANY);
+      await AsyncStorage.removeItem(config.STORAGE_KEYS.CURRENT_SITE);
+      usePOSStore.getState().reset();
 
       await secureStorage.setItem(config.STORAGE_KEYS.AUTH_TOKEN, response.accessToken);
       await secureStorage.setItem(config.STORAGE_KEYS.REFRESH_TOKEN, response.refreshToken);
@@ -150,19 +170,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       authService.setAccessToken(response.accessToken);
 
-      // Try to load previously selected company and site
-      let savedCompany = null;
-      let savedSite = null;
-      try {
-        const companyData = await AsyncStorage.getItem(config.STORAGE_KEYS.CURRENT_COMPANY);
-        const siteData = await AsyncStorage.getItem(config.STORAGE_KEYS.CURRENT_SITE);
-        if (companyData) savedCompany = JSON.parse(companyData);
-        if (siteData) savedSite = JSON.parse(siteData);
-        console.log('📦 Empresa guardada cargada:', savedCompany?.name);
-        console.log('🏪 Sede guardada cargada:', savedSite?.name);
-      } catch {
-        console.log('ℹ️ No hay empresa/sede guardada');
-      }
+      // En login nuevo siempre forzar selección de empresa/sede
+      const savedCompany = null;
+      const savedSite = null;
 
       set({
         user: response.user,
@@ -352,6 +362,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           );
         }, 500);
       }
+
+      // Limpiar primero el estado POS para evitar rehidratación de sesión/caja antigua
+      usePOSStore.getState().reset();
 
       await secureStorage.deleteItem(config.STORAGE_KEYS.AUTH_TOKEN);
       await secureStorage.deleteItem(config.STORAGE_KEYS.REFRESH_TOKEN);
