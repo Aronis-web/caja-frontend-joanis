@@ -184,9 +184,15 @@ export default function NewSaleScreen() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const [showCreditNoteModal, setShowCreditNoteModal] = useState(false);
+  const [showCreditNoteManagementModal, setShowCreditNoteManagementModal] = useState(false);
   const [creditNoteType, setCreditNoteType] = useState<'total' | 'partial' | null>(null);
   const [selectedSaleForCreditNote, setSelectedSaleForCreditNote] = useState<any>(null);
+  const [selectedSaleForCreditNoteManagement, setSelectedSaleForCreditNoteManagement] = useState<any>(null);
+  const [creditNoteReturnedQuantities, setCreditNoteReturnedQuantities] = useState<Record<string, number>>({});
+  const [loadingCreditNoteManagement, setLoadingCreditNoteManagement] = useState(false);
   const [selectedProductsForCreditNote, setSelectedProductsForCreditNote] = useState<string[]>([]);
+  const [creditNoteProductQuantities, setCreditNoteProductQuantities] = useState<Record<string, string>>({});
+  const [creditNoteRemainingMode, setCreditNoteRemainingMode] = useState(false);
   const [creditNoteMotivo, setCreditNoteMotivo] = useState<string>('06');
   const [creditNoteSustento, setCreditNoteSustento] = useState<string>('');
   const [generatingCreditNote, setGeneratingCreditNote] = useState(false);
@@ -1125,13 +1131,14 @@ export default function NewSaleScreen() {
     }
   };
 
-  const handleGenerateCreditNote = async (saleId: string) => {
+  const handleGenerateCreditNote = async (saleId: string, remainingOnly = false, sourceSaleData?: any) => {
     console.log('🔵 [CREDIT_NOTE] handleGenerateCreditNote llamado');
     console.log('🔵 [CREDIT_NOTE] saleId:', saleId);
+    console.log('🔵 [CREDIT_NOTE] remainingOnly:', remainingOnly);
 
     try {
-      // Buscar la venta en activeSalesData
-      const saleData = activeSalesData?.sales.find((s) => s.saleId === saleId);
+      // Buscar la venta en activeSalesData o usar la venta enriquecida desde gestión
+      const saleData = sourceSaleData || activeSalesData?.sales.find((s) => s.saleId === saleId);
       if (!saleData) {
         Alert.alert('Error', 'No se encontró la información de la venta');
         return;
@@ -1140,12 +1147,42 @@ export default function NewSaleScreen() {
       console.log('🔵 [CREDIT_NOTE] Sale data:', saleData);
       console.log('🔵 [CREDIT_NOTE] Items:', saleData.sale.items);
 
+      const returnedQuantities = calculateCreditNoteReturnedQuantities(saleData);
+      const availableItems = remainingOnly
+        ? saleData.sale.items.filter(
+            (item: any, index: number) =>
+              getCreditNoteAvailableQuantity(item, index, returnedQuantities, saleData) > 0
+          )
+        : saleData.sale.items;
+
+      if (remainingOnly && availableItems.length === 0) {
+        Alert.alert('Sin saldo disponible', 'Todos los productos de esta venta ya fueron devueltos.');
+        return;
+      }
+
+      const productQuantities = availableItems.reduce(
+        (acc: Record<string, string>, item: any, index: number) => {
+          const originalIndex = saleData.sale.items.indexOf(item);
+          const itemIndex = originalIndex >= 0 ? originalIndex : index;
+          acc[getCreditNoteProductId(item, itemIndex)] = String(
+            remainingOnly
+              ? getCreditNoteAvailableQuantity(item, itemIndex, returnedQuantities, saleData)
+              : getCreditNoteProductQuantity(item)
+          );
+          return acc;
+        },
+        {}
+      );
+
       // Abrir modal de selección de tipo de devolución
       setSelectedSaleForCreditNote(saleData);
-      setCreditNoteType(null);
+      setCreditNoteType(remainingOnly ? 'partial' : null);
       setSelectedProductsForCreditNote([]);
-      setCreditNoteMotivo('06'); // Devolución total por defecto
+      setCreditNoteProductQuantities(productQuantities);
+      setCreditNoteRemainingMode(remainingOnly);
+      setCreditNoteMotivo(remainingOnly ? '07' : '06'); // Devolución por ítem si viene desde gestión
       setCreditNoteSustento('');
+      setShowCreditNoteManagementModal(false);
       setShowCreditNoteModal(true);
     } catch (error) {
       console.error('❌ [CREDIT_NOTE] Error en handleGenerateCreditNote:', error);
@@ -1175,6 +1212,27 @@ export default function NewSaleScreen() {
       return;
     }
 
+    if (creditNoteType === 'partial') {
+      const invalidQuantityItem = selectedSaleForCreditNote.sale.items.find(
+        (item: any, index: number) => {
+          const productId = getCreditNoteProductId(item, index);
+          if (!selectedProductsForCreditNote.includes(productId)) return false;
+
+          const limitQuantity = getCreditNoteItemLimitQuantity(item, index);
+          const quantity = getCreditNoteEditedQuantity(productId, limitQuantity);
+          return !Number.isFinite(quantity) || quantity <= 0 || quantity > limitQuantity;
+        }
+      );
+
+      if (invalidQuantityItem) {
+        Alert.alert(
+          'Cantidad inválida',
+          'La cantidad a devolver debe ser mayor a 0 y no puede superar la cantidad disponible.'
+        );
+        return;
+      }
+    }
+
     setGeneratingCreditNote(true);
 
     try {
@@ -1189,14 +1247,22 @@ export default function NewSaleScreen() {
       if (creditNoteType === 'partial') {
         // Construir array de items para devolución parcial
         const items = selectedSaleForCreditNote.sale.items
-          .filter((item: any) => selectedProductsForCreditNote.includes(item.productId))
-          .map((item: any) => ({
-            sku: item.productCode || item.sku,
-            descripcion: item.productName || item.name,
-            cantidad: item.quantity,
-            valorUnitario: item.unitPrice / 100, // Convertir de centavos a soles
-            precioVentaUnitario: item.unitPrice / 100,
-          }));
+          .filter((item: any, index: number) =>
+            selectedProductsForCreditNote.includes(getCreditNoteProductId(item, index))
+          )
+          .map((item: any, index: number) => {
+            const productId = getCreditNoteProductId(item, index);
+            const limitQuantity = getCreditNoteItemLimitQuantity(item, index);
+            const quantity = getCreditNoteEditedQuantity(productId, limitQuantity);
+            const unitPrice = getCreditNoteProductUnitPrice(item, selectedSaleForCreditNote, index);
+            return {
+              sku: getCreditNoteProductSku(item),
+              descripcion: getCreditNoteProductName(item),
+              cantidad: quantity,
+              valorUnitario: unitPrice,
+              precioVentaUnitario: unitPrice,
+            };
+          });
         requestBody.items = items;
       }
 
@@ -1224,6 +1290,8 @@ export default function NewSaleScreen() {
       setShowCreditNoteModal(false);
       setCreditNoteType(null);
       setSelectedProductsForCreditNote([]);
+      setCreditNoteProductQuantities({});
+      setCreditNoteRemainingMode(false);
       setSelectedSaleForCreditNote(null);
       setCreditNoteMotivo('06');
       setCreditNoteSustento('');
@@ -1276,6 +1344,242 @@ export default function NewSaleScreen() {
     }
   };
 
+  const getCreditNoteProductId = (item: any, index: number) =>
+    String(
+      item.saleItemId ||
+        item.id ||
+        item.itemId ||
+        item.productId ||
+        item.product?.id ||
+        item.sku ||
+        item.productCode ||
+        index
+    );
+
+  const getCreditNoteProductName = (item: any) =>
+    item.productName ||
+    item.product?.name ||
+    item.name ||
+    item.description ||
+    item.descripcion ||
+    item.descripcionProducto ||
+    'Producto sin nombre';
+
+  const getCreditNoteProductSku = (item: any) =>
+    item.productCode || item.codigo || item.product?.sku || item.product?.code || item.sku || item.code || '';
+
+  const centsToAmount = (value: unknown) => Number(value || 0) / 100;
+
+  const getCreditNoteProductUnitPrice = (item: any, saleData?: any, index?: number) => {
+    const summaryItem = saleData ? findCreditNoteSummaryForSaleItem(saleData, item, index ?? 0) : null;
+    const sourceItem = summaryItem || item;
+
+    if (sourceItem.unitPriceCents != null) return centsToAmount(sourceItem.unitPriceCents);
+    if (sourceItem.priceCents != null) return centsToAmount(sourceItem.priceCents);
+    if (sourceItem.salePriceCents != null) return centsToAmount(sourceItem.salePriceCents);
+    if (sourceItem.product?.salePriceCents != null) return centsToAmount(sourceItem.product.salePriceCents);
+    if (sourceItem.product?.priceCents != null) return centsToAmount(sourceItem.product.priceCents);
+    if (sourceItem.unitPrice != null) return centsToAmount(sourceItem.unitPrice);
+    if (sourceItem.price != null) return Number(sourceItem.price || 0);
+    if (sourceItem.product?.price != null) return Number(sourceItem.product.price || 0);
+    return 0;
+  };
+
+  const normalizeCreditNoteQuantity = (value: unknown, fallback = 0) => {
+    const numericValue = Number(String(value ?? '').replace(',', '.'));
+    return Number.isFinite(numericValue) ? numericValue : fallback;
+  };
+
+  const getCreditNoteProductQuantity = (item: any) =>
+    normalizeCreditNoteQuantity(item.quantity ?? item.qty ?? item.purchasedQuantity, 1);
+
+  const getCreditNoteCreditedQuantityFromItem = (item: any) =>
+    Number(
+      item.creditedQuantity ??
+        item.refundedQuantity ??
+        item.returnedQuantity ??
+        item.quantityCredited ??
+        item.quantityRefunded ??
+        item.quantityReturned ??
+        item.creditNoteQuantity ??
+        item.product?.creditedQuantity ??
+        0
+    );
+
+  const getCreditNoteItemsFromDocument = (creditNote: any) =>
+    creditNote?.items ||
+    creditNote?.details ||
+    creditNote?.products ||
+    creditNote?.saleItems ||
+    creditNote?.creditNoteItems ||
+    creditNote?.documentItems ||
+    creditNote?.document?.items ||
+    creditNote?.creditNote?.items ||
+    [];
+
+  const getCreditNoteDocumentsFromSaleData = (saleData: any) =>
+    saleData?.sale?.creditNotes ||
+    saleData?.sale?.creditNoteDocuments ||
+    saleData?.sale?.documents?.filter((document: any) =>
+      String(document.documentType || document.type || '').toLowerCase().includes('credit')
+    ) ||
+    saleData?.creditNotes ||
+    saleData?.creditNoteDocuments ||
+    [];
+
+  const getCreditNoteItemsFromSaleData = (saleData: any) =>
+    saleData?.sale?.creditNoteItems ||
+    saleData?.sale?.returnedItems ||
+    saleData?.sale?.refundedItems ||
+    saleData?.creditNoteItems ||
+    saleData?.returnedItems ||
+    saleData?.refundedItems ||
+    [];
+
+  const getCreditNoteReturnedItemQuantity = (item: any) =>
+    normalizeCreditNoteQuantity(
+      item.returnedQuantity ?? item.cantidad ?? item.quantity ?? item.qty ?? item.refundedQuantity,
+      0
+    );
+
+  const findCreditNoteSummaryForSaleItem = (saleData: any, saleItem: any, index: number) => {
+    const saleProductId = getCreditNoteProductId(saleItem, index);
+    const saleSku = getCreditNoteProductSku(saleItem);
+    const saleName = getCreditNoteProductName(saleItem);
+    const summaryItems = getCreditNoteItemsFromSaleData(saleData);
+
+    return summaryItems.find((creditNoteItem: any) => {
+      const creditSaleItemId = String(creditNoteItem.saleItemId || creditNoteItem.id || creditNoteItem.itemId || '');
+      const creditProductId = String(creditNoteItem.productId || creditNoteItem.product?.id || '');
+      const creditSku = getCreditNoteProductSku(creditNoteItem);
+
+      return (
+        (!!creditSaleItemId && saleProductId === creditSaleItemId) ||
+        (!!creditProductId && saleProductId === creditProductId) ||
+        (!!saleSku && saleSku === creditSku) ||
+        saleName === getCreditNoteProductName(creditNoteItem)
+      );
+    });
+  };
+
+  const calculateCreditNoteReturnedQuantities = (saleData: any) => {
+    const returnedQuantities: Record<string, number> = {};
+    const saleItems = saleData?.sale?.items || [];
+    const summaryItems = getCreditNoteItemsFromSaleData(saleData);
+
+    saleItems.forEach((item: any, index: number) => {
+      const productId = getCreditNoteProductId(item, index);
+      const summaryItem = findCreditNoteSummaryForSaleItem(saleData, item, index);
+      const returnedQuantity = summaryItem
+        ? normalizeCreditNoteQuantity(summaryItem.returnedQuantity, 0)
+        : getCreditNoteCreditedQuantityFromItem(item);
+
+      if (returnedQuantity > 0) {
+        returnedQuantities[productId] = returnedQuantity;
+      }
+    });
+
+    if (summaryItems.length > 0) {
+      return returnedQuantities;
+    }
+
+    const creditNotes = getCreditNoteDocumentsFromSaleData(saleData);
+
+    const addReturnedQuantityFromCreditNoteItem = (creditNoteItem: any) => {
+      const matchedIndex = saleItems.findIndex((saleItem: any, index: number) => {
+        const saleProductId = getCreditNoteProductId(saleItem, index);
+        const creditProductId = String(
+          creditNoteItem.saleItemId ||
+            creditNoteItem.itemId ||
+            creditNoteItem.productId ||
+            creditNoteItem.product?.id ||
+            creditNoteItem.id ||
+            creditNoteItem.sku ||
+            creditNoteItem.productCode ||
+            creditNoteItem.codigo ||
+            ''
+        );
+
+        return (
+          (!!creditProductId && saleProductId === creditProductId) ||
+          (!!creditNoteItem.sku && getCreditNoteProductSku(saleItem) === creditNoteItem.sku) ||
+          (!!creditNoteItem.codigo && getCreditNoteProductSku(saleItem) === creditNoteItem.codigo) ||
+          (!!creditNoteItem.productCode && getCreditNoteProductSku(saleItem) === creditNoteItem.productCode) ||
+          getCreditNoteProductName(saleItem) === getCreditNoteProductName(creditNoteItem)
+        );
+      });
+
+      if (matchedIndex >= 0) {
+        const matchedItem = saleItems[matchedIndex];
+        const productId = getCreditNoteProductId(matchedItem, matchedIndex);
+        returnedQuantities[productId] =
+          (returnedQuantities[productId] || 0) + getCreditNoteReturnedItemQuantity(creditNoteItem);
+      }
+    };
+
+    creditNotes.forEach((creditNote: any) => {
+      getCreditNoteItemsFromDocument(creditNote).forEach(addReturnedQuantityFromCreditNoteItem);
+    });
+
+    return returnedQuantities;
+  };
+
+  const getCreditNoteCreditedQuantity = (
+    item: any,
+    index?: number,
+    returnedQuantities: Record<string, number> = creditNoteReturnedQuantities,
+    saleData?: any
+  ) => {
+    const summaryItem = saleData ? findCreditNoteSummaryForSaleItem(saleData, item, index ?? 0) : null;
+    if (summaryItem?.returnedQuantity != null) {
+      return normalizeCreditNoteQuantity(summaryItem.returnedQuantity, 0);
+    }
+
+    const productId = getCreditNoteProductId(item, index ?? 0);
+    return returnedQuantities[productId] ?? getCreditNoteCreditedQuantityFromItem(item);
+  };
+
+  const getCreditNoteAvailableQuantity = (
+    item: any,
+    index: number,
+    returnedQuantities: Record<string, number> = creditNoteReturnedQuantities,
+    saleData?: any
+  ) => {
+    const summaryItem = saleData ? findCreditNoteSummaryForSaleItem(saleData, item, index) : null;
+    if (summaryItem?.remainingQuantity != null) {
+      return Math.max(normalizeCreditNoteQuantity(summaryItem.remainingQuantity, 0), 0);
+    }
+
+    return Math.max(
+      getCreditNoteProductQuantity(item) - getCreditNoteCreditedQuantity(item, index, returnedQuantities, saleData),
+      0
+    );
+  };
+
+  const getCreditNoteItemLimitQuantity = (item: any, index: number) =>
+    creditNoteRemainingMode
+      ? getCreditNoteAvailableQuantity(item, index, creditNoteReturnedQuantities, selectedSaleForCreditNote)
+      : getCreditNoteProductQuantity(item);
+
+  const getCreditNoteEditedQuantity = (productId: string, defaultQuantity: number) => {
+    const quantityText = creditNoteProductQuantities[productId] ?? String(defaultQuantity);
+    return Number(quantityText.replace(',', '.'));
+  };
+
+  const updateCreditNoteProductQuantity = (productId: string, quantity: string, maxQuantity: number) => {
+    const sanitizedQuantity = quantity.replace(/[^0-9.,]/g, '');
+    const numericQuantity = Number(sanitizedQuantity.replace(',', '.'));
+    const limitedQuantity =
+      Number.isFinite(numericQuantity) && numericQuantity > maxQuantity
+        ? String(maxQuantity)
+        : sanitizedQuantity;
+
+    setCreditNoteProductQuantities((prev) => ({
+      ...prev,
+      [productId]: limitedQuantity,
+    }));
+  };
+
   const toggleProductSelection = (productId: string) => {
     setSelectedProductsForCreditNote((prev) => {
       if (prev.includes(productId)) {
@@ -1286,26 +1590,24 @@ export default function NewSaleScreen() {
     });
   };
 
-  const handlePrintCreditNote = async (saleId: string, creditNotes: any[]) => {
+  const pickFirstNonEmptyArray = (...arrays: any[]) =>
+    arrays.find((value) => Array.isArray(value) && value.length > 0) ||
+    arrays.find((value) => Array.isArray(value));
+
+  const handlePrintSingleCreditNote = async (saleId: string, creditNote: any) => {
     try {
       console.log('🖨️ [CREDIT_NOTE] Imprimiendo ticket de nota de crédito para venta:', saleId);
-      console.log('🖨️ [CREDIT_NOTE] Credit Notes disponibles:', creditNotes);
+      console.log('🖨️ [CREDIT_NOTE] Credit Note:', creditNote);
 
-      // Obtener el primer creditNote (o el más reciente)
-      if (!creditNotes || creditNotes.length === 0) {
+      if (!creditNote?.id) {
         Alert.alert('Error', 'No se encontró la nota de crédito');
         return;
       }
 
-      const creditNote = creditNotes[0]; // Tomar la primera nota de crédito
-      const creditNoteDocumentId = creditNote.id;
-
-      console.log('🖨️ [CREDIT_NOTE] Credit Note Document ID:', creditNoteDocumentId);
-
-      const response = await posService.regenerateCreditNoteTicket(saleId, creditNoteDocumentId);
+      const response = await posService.regenerateCreditNoteTicket(saleId, creditNote.id);
       console.log('✅ [CREDIT_NOTE] Ticket de nota de crédito generado:', response.filename);
 
-      // Imprimir el ticket
+      // Imprimir/abrir el ticket
       await handlePrintPDF(response.pdfBase64, response.filename);
       console.log('✅ [CREDIT_NOTE] Ticket impreso exitosamente');
     } catch (error) {
@@ -1313,6 +1615,64 @@ export default function NewSaleScreen() {
       Alert.alert('Error', 'No se pudo imprimir el ticket de la nota de crédito');
     }
   };
+
+  const mergeSaleDataWithInfo = (saleData: any, saleInfo: any) => {
+    const detailedSale = saleInfo?.sale || saleInfo;
+    return {
+      ...saleData,
+      sale: {
+        ...saleData.sale,
+        ...detailedSale,
+        code: saleData.sale.code || detailedSale?.code,
+        saleNumber: saleData.sale.saleNumber || detailedSale?.saleNumber,
+        status: detailedSale?.status || saleData.sale.status,
+        creditNoteType: detailedSale?.creditNoteType || saleData.sale.creditNoteType,
+        hasCreditNote: detailedSale?.hasCreditNote ?? saleData.sale.hasCreditNote,
+        items: pickFirstNonEmptyArray(detailedSale?.items, detailedSale?.sale?.items, saleData.sale.items),
+        creditNotes: pickFirstNonEmptyArray(
+          detailedSale?.creditNotes,
+          detailedSale?.creditNoteDocuments,
+          detailedSale?.documents?.filter((document: any) =>
+            String(document.documentType || document.type || '').toLowerCase().includes('credit')
+          ),
+          saleData.sale.creditNotes
+        ),
+        creditNoteItems: pickFirstNonEmptyArray(
+          detailedSale?.creditNoteItems,
+          detailedSale?.returnedItems,
+          detailedSale?.refundedItems,
+          saleData.sale.creditNoteItems
+        ),
+        returnedItems: detailedSale?.returnedItems || saleData.sale.returnedItems,
+        refundedItems: detailedSale?.refundedItems || saleData.sale.refundedItems,
+      },
+    };
+  };
+
+  const handleOpenCreditNoteManagement = async (saleData: any) => {
+    setSelectedSaleForCreditNoteManagement(saleData);
+    setCreditNoteReturnedQuantities(calculateCreditNoteReturnedQuantities(saleData));
+    setShowCreditNoteManagementModal(true);
+    setLoadingCreditNoteManagement(true);
+
+    try {
+      const saleInfo = await posService.getSaleInfo(saleData.saleId);
+      console.log('🟣 [CREDIT_NOTE] Sale info para gestión NC:', JSON.stringify(saleInfo, null, 2));
+      const mergedSaleData = mergeSaleDataWithInfo(saleData, saleInfo);
+      setSelectedSaleForCreditNoteManagement(mergedSaleData);
+      setCreditNoteReturnedQuantities(calculateCreditNoteReturnedQuantities(mergedSaleData));
+    } catch (error) {
+      console.warn('⚠️ [CREDIT_NOTE] No se pudo cargar detalle de venta para NC:', error);
+    } finally {
+      setLoadingCreditNoteManagement(false);
+    }
+  };
+
+  const isTotalCreditNoteSale = (sale: any) =>
+    sale.status === 'CONFIRMED_DEV_TOTAL' ||
+    sale.creditNoteType === 'total' ||
+    sale.creditNoteType === 'TOTAL' ||
+    sale.creditNoteType === 'DEV_TOTAL';
 
   const handleNewSale = () => {
     setShowSaleSuccessModal(false);
@@ -2895,18 +3255,17 @@ export default function NewSaleScreen() {
                         {/* Botón de Nota de Crédito */}
                         {hasCreditNote ? (
                           <TouchableOpacity
-                            style={styles.creditNoteButton}
+                            style={styles.manageCreditNoteButton}
                             onPress={(e) => {
-                              console.log('🟢 [BUTTON] Botón Imprimir NC presionado');
-                              console.log('🟢 [BUTTON] Sale ID:', saleId);
-                              console.log('🟢 [BUTTON] Has Credit Note:', hasCreditNote);
-                              console.log('🟢 [BUTTON] Credit Notes:', sale.creditNotes);
+                              console.log('🟣 [BUTTON] Botón Gestionar NC presionado');
+                              console.log('🟣 [BUTTON] Sale ID:', saleId);
+                              console.log('🟣 [BUTTON] Credit Notes:', sale.creditNotes);
                               e.stopPropagation();
-                              handlePrintCreditNote(saleId, sale.creditNotes);
+                              void handleOpenCreditNoteManagement(saleData);
                             }}
                           >
-                            <Text style={styles.creditNoteButtonIcon}>🖨️</Text>
-                            <Text style={styles.creditNoteButtonText}>Imprimir NC</Text>
+                            <Text style={styles.creditNoteButtonIcon}>📋</Text>
+                            <Text style={styles.creditNoteButtonText}>Gestionar NC</Text>
                           </TouchableOpacity>
                         ) : (
                           <TouchableOpacity
@@ -2916,7 +3275,7 @@ export default function NewSaleScreen() {
                               console.log('🟠 [BUTTON] Sale ID:', saleId);
                               console.log('🟠 [BUTTON] Has Credit Note:', hasCreditNote);
                               e.stopPropagation();
-                              handleGenerateCreditNote(saleId);
+                              void handleGenerateCreditNote(saleId);
                             }}
                           >
                             <Text style={styles.generateCreditNoteButtonIcon}>📝</Text>
@@ -3089,6 +3448,178 @@ export default function NewSaleScreen() {
         </TouchableOpacity>
       </Modal>
 
+      {/* Credit Note Management Modal */}
+      <Modal
+        visible={showCreditNoteManagementModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => {
+          setShowCreditNoteManagementModal(false);
+          setSelectedSaleForCreditNoteManagement(null);
+          setCreditNoteReturnedQuantities({});
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.creditNoteManagementModalContent}>
+            <View style={styles.creditNoteModalHeader}>
+              <Text style={styles.modalTitle}>Gestionar Notas de Crédito</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowCreditNoteManagementModal(false);
+                  setSelectedSaleForCreditNoteManagement(null);
+                  setCreditNoteReturnedQuantities({});
+                }}
+              >
+                <Text style={styles.closeButton}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {selectedSaleForCreditNoteManagement && (
+              <ScrollView
+                style={styles.creditNoteManagementScroll}
+                contentContainerStyle={styles.creditNoteManagementScrollContent}
+                showsVerticalScrollIndicator
+              >
+                <View style={styles.creditNoteSaleInfo}>
+                  <Text style={styles.creditNoteSaleNumber}>
+                    Venta: {selectedSaleForCreditNoteManagement.sale.code} - #
+                    {selectedSaleForCreditNoteManagement.sale.saleNumber}
+                  </Text>
+                  <Text style={styles.creditNoteSaleTotal}>
+                    Total venta: {formatCurrency(selectedSaleForCreditNoteManagement.sale.total)}
+                  </Text>
+                  <Text style={styles.creditNoteManagementSummaryText}>
+                    NC emitidas: {selectedSaleForCreditNoteManagement.sale.creditNotes?.length || 0}
+                  </Text>
+                </View>
+
+                {loadingCreditNoteManagement && (
+                  <View style={styles.creditNoteManagementLoadingBox}>
+                    <ActivityIndicator size="small" color="#673AB7" />
+                    <Text style={styles.creditNoteManagementLoadingText}>
+                      Cargando detalle de notas de crédito...
+                    </Text>
+                  </View>
+                )}
+
+                <View style={styles.creditNoteManagementSection}>
+                  <Text style={styles.creditNoteManagementSectionTitle}>Notas emitidas</Text>
+                  {!selectedSaleForCreditNoteManagement.sale.creditNotes ||
+                  selectedSaleForCreditNoteManagement.sale.creditNotes.length === 0 ? (
+                    <Text style={styles.creditNoteManagementEmptyText}>
+                      Esta venta todavía no tiene notas de crédito.
+                    </Text>
+                  ) : (
+                    selectedSaleForCreditNoteManagement.sale.creditNotes.map(
+                      (creditNote: any, index: number) => (
+                        <View key={creditNote.id || index} style={styles.creditNoteManagementItem}>
+                          <View style={styles.creditNoteManagementItemInfo}>
+                            <Text style={styles.creditNoteManagementItemTitle}>
+                              {creditNote.code || creditNote.documentNumber || `NC ${index + 1}`}
+                            </Text>
+                            <Text style={styles.creditNoteManagementItemDetail}>
+                              Estado: {creditNote.status || 'Sin estado'}
+                            </Text>
+                            {!!creditNote.createdAt && (
+                              <Text style={styles.creditNoteManagementItemDetail}>
+                                Fecha:{' '}
+                                {new Date(creditNote.createdAt).toLocaleString('es-PE', {
+                                  day: '2-digit',
+                                  month: '2-digit',
+                                  year: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </Text>
+                            )}
+                          </View>
+                          <TouchableOpacity
+                            style={styles.creditNoteManagementDownloadButton}
+                            onPress={() =>
+                              void handlePrintSingleCreditNote(
+                                selectedSaleForCreditNoteManagement.saleId,
+                                creditNote
+                              )
+                            }
+                          >
+                            <Text style={styles.creditNoteManagementDownloadButtonText}>
+                              Imprimir
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      )
+                    )
+                  )}
+                </View>
+
+                <View style={styles.creditNoteManagementSection}>
+                  <Text style={styles.creditNoteManagementSectionTitle}>Productos disponibles</Text>
+                  {selectedSaleForCreditNoteManagement.sale.items.map((item: any, index: number) => {
+                    const summaryItem = findCreditNoteSummaryForSaleItem(
+                      selectedSaleForCreditNoteManagement,
+                      item,
+                      index
+                    );
+                    const purchasedQuantity = summaryItem?.purchasedQuantity ?? getCreditNoteProductQuantity(item);
+                    const creditedQuantity = getCreditNoteCreditedQuantity(
+                      item,
+                      index,
+                      creditNoteReturnedQuantities,
+                      selectedSaleForCreditNoteManagement
+                    );
+                    const availableQuantity = getCreditNoteAvailableQuantity(
+                      item,
+                      index,
+                      creditNoteReturnedQuantities,
+                      selectedSaleForCreditNoteManagement
+                    );
+                    const returns = summaryItem?.returns || [];
+
+                    return (
+                      <View key={getCreditNoteProductId(item, index)} style={styles.creditNoteAvailableItem}>
+                        <Text style={styles.creditNoteAvailableItemName}>
+                          {summaryItem?.productName || getCreditNoteProductName(item)}
+                        </Text>
+                        <Text style={styles.creditNoteAvailableItemDetail}>
+                          Comprado: {purchasedQuantity} | Devuelto: {creditedQuantity} | Disponible:{' '}
+                          {availableQuantity}
+                        </Text>
+                        {returns.map((returnedItem: any, returnIndex: number) => (
+                          <Text
+                            key={returnedItem.creditNoteId || returnIndex}
+                            style={styles.creditNoteAvailableReturnDetail}
+                          >
+                            {returnedItem.documentNumber || `NC ${returnIndex + 1}`}: {returnedItem.quantity}{' '}
+                            devuelto(s)
+                          </Text>
+                        ))}
+                      </View>
+                    );
+                  })}
+                </View>
+
+                {!isTotalCreditNoteSale(selectedSaleForCreditNoteManagement.sale) && (
+                  <TouchableOpacity
+                    style={styles.creditNoteManagementGenerateButton}
+                    onPress={() =>
+                      void handleGenerateCreditNote(
+                        selectedSaleForCreditNoteManagement.saleId,
+                        true,
+                        selectedSaleForCreditNoteManagement
+                      )
+                    }
+                  >
+                    <Text style={styles.creditNoteManagementGenerateButtonText}>
+                      Generar nueva NC con saldo restante
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+
       {/* Credit Note Modal */}
       <Modal
         visible={showCreditNoteModal}
@@ -3098,6 +3629,8 @@ export default function NewSaleScreen() {
           setShowCreditNoteModal(false);
           setCreditNoteType(null);
           setSelectedProductsForCreditNote([]);
+          setCreditNoteProductQuantities({});
+          setCreditNoteRemainingMode(false);
           setCreditNoteMotivo('06');
           setCreditNoteSustento('');
         }}
@@ -3183,77 +3716,6 @@ export default function NewSaleScreen() {
                   </View>
                 </View>
 
-                {/* Motivo de la Nota de Crédito */}
-                <View style={styles.creditNoteFieldContainer}>
-                  <Text style={styles.creditNoteFieldLabel}>Motivo (Catálogo 09 SUNAT):</Text>
-                  <View style={styles.creditNoteSelectContainer}>
-                    <TouchableOpacity
-                      style={styles.creditNoteSelect}
-                      onPress={() => {
-                        // Aquí podrías abrir un picker o modal con todos los motivos
-                        // Por ahora, mostraremos los más comunes
-                      }}
-                    >
-                      <Text style={styles.creditNoteSelectText}>
-                        {creditNoteMotivo === '01' && '01 - Anulación de la operación'}
-                        {creditNoteMotivo === '06' && '06 - Devolución total'}
-                        {creditNoteMotivo === '07' && '07 - Devolución por ítem'}
-                        {creditNoteMotivo === '04' && '04 - Descuento global'}
-                        {creditNoteMotivo === '05' && '05 - Descuento por ítem'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                  <View style={styles.creditNoteMotivoButtons}>
-                    <TouchableOpacity
-                      style={[
-                        styles.creditNoteMotivoButton,
-                        creditNoteMotivo === '01' && styles.creditNoteMotivoButtonActive,
-                      ]}
-                      onPress={() => setCreditNoteMotivo('01')}
-                    >
-                      <Text
-                        style={[
-                          styles.creditNoteMotivoButtonText,
-                          creditNoteMotivo === '01' && styles.creditNoteMotivoButtonTextActive,
-                        ]}
-                      >
-                        01 - Anulación
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[
-                        styles.creditNoteMotivoButton,
-                        creditNoteMotivo === '06' && styles.creditNoteMotivoButtonActive,
-                      ]}
-                      onPress={() => setCreditNoteMotivo('06')}
-                    >
-                      <Text
-                        style={[
-                          styles.creditNoteMotivoButtonText,
-                          creditNoteMotivo === '06' && styles.creditNoteMotivoButtonTextActive,
-                        ]}
-                      >
-                        06 - Dev. Total
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[
-                        styles.creditNoteMotivoButton,
-                        creditNoteMotivo === '07' && styles.creditNoteMotivoButtonActive,
-                      ]}
-                      onPress={() => setCreditNoteMotivo('07')}
-                    >
-                      <Text
-                        style={[
-                          styles.creditNoteMotivoButtonText,
-                          creditNoteMotivo === '07' && styles.creditNoteMotivoButtonTextActive,
-                        ]}
-                      >
-                        07 - Dev. Ítem
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
 
                 {/* Sustento de la Nota de Crédito */}
                 <View style={styles.creditNoteFieldContainer}>
@@ -3279,17 +3741,41 @@ export default function NewSaleScreen() {
                     <Text style={styles.creditNoteProductsLabel}>
                       Seleccione los productos a devolver:
                     </Text>
-                    <ScrollView style={styles.creditNoteProductsList}>
+                    <ScrollView style={styles.creditNoteProductsList} nestedScrollEnabled>
                       {selectedSaleForCreditNote.sale.items.map((item: any, index: number) => {
-                        const isSelected = selectedProductsForCreditNote.includes(item.productId);
+                        const productId = getCreditNoteProductId(item, index);
+                        const productName = getCreditNoteProductName(item);
+                        const productSku = getCreditNoteProductSku(item);
+                        const summaryItem = findCreditNoteSummaryForSaleItem(
+                          selectedSaleForCreditNote,
+                          item,
+                          index
+                        );
+                        const purchasedQuantity = summaryItem?.purchasedQuantity ?? getCreditNoteProductQuantity(item);
+                        const creditedQuantity = getCreditNoteCreditedQuantity(
+                          item,
+                          index,
+                          creditNoteReturnedQuantities,
+                          selectedSaleForCreditNote
+                        );
+                        const limitQuantity = getCreditNoteItemLimitQuantity(item, index);
+                        const quantityText =
+                          creditNoteProductQuantities[productId] ?? String(limitQuantity);
+                        const quantity = getCreditNoteEditedQuantity(productId, limitQuantity);
+                        const unitPrice = getCreditNoteProductUnitPrice(item, selectedSaleForCreditNote, index);
+                        const isSelected = selectedProductsForCreditNote.includes(productId);
+
+                        if (creditNoteRemainingMode && limitQuantity <= 0) {
+                          return null;
+                        }
                         return (
                           <TouchableOpacity
-                            key={index}
+                            key={productId}
                             style={[
                               styles.creditNoteProductItem,
                               isSelected && styles.creditNoteProductItemSelected,
                             ]}
-                            onPress={() => toggleProductSelection(item.productId)}
+                            onPress={() => toggleProductSelection(productId)}
                           >
                             <View style={styles.creditNoteProductCheckbox}>
                               <Text style={styles.creditNoteProductCheckboxIcon}>
@@ -3297,16 +3783,30 @@ export default function NewSaleScreen() {
                               </Text>
                             </View>
                             <View style={styles.creditNoteProductInfo}>
-                              <Text style={styles.creditNoteProductName}>
-                                {item.productName || item.name}
-                              </Text>
+                              <Text style={styles.creditNoteProductName}>{productName}</Text>
+                              {!!productSku && (
+                                <Text style={styles.creditNoteProductSku}>SKU: {productSku}</Text>
+                              )}
                               <Text style={styles.creditNoteProductDetails}>
-                                Cantidad: {item.quantity} | Precio:{' '}
-                                {formatCurrency(item.unitPrice / 100)}
+                                Comprado: {purchasedQuantity}
+                                {creditNoteRemainingMode && ` | Devuelto: ${creditedQuantity}`}
+                                {' | '}Disponible: {limitQuantity} | Precio: {formatCurrency(unitPrice)}
                               </Text>
+                              <View style={styles.creditNoteQuantityRow}>
+                                <Text style={styles.creditNoteQuantityLabel}>Devolver:</Text>
+                                <TextInput
+                                  style={styles.creditNoteQuantityInput}
+                                  value={quantityText}
+                                  onChangeText={(value) =>
+                                    updateCreditNoteProductQuantity(productId, value, limitQuantity)
+                                  }
+                                  keyboardType="numeric"
+                                  selectTextOnFocus
+                                />
+                              </View>
                             </View>
                             <Text style={styles.creditNoteProductTotal}>
-                              {formatCurrency((item.quantity * item.unitPrice) / 100)}
+                              {formatCurrency((Number.isFinite(quantity) ? quantity : 0) * unitPrice)}
                             </Text>
                           </TouchableOpacity>
                         );
@@ -5563,6 +6063,18 @@ const styles = StyleSheet.create({
     borderLeftWidth: 1,
     borderLeftColor: '#FFFFFF',
   },
+  manageCreditNoteButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#673AB7',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    gap: 8,
+    borderLeftWidth: 1,
+    borderLeftColor: '#FFFFFF',
+  },
   creditNoteButtonIcon: {
     fontSize: 18,
   },
@@ -5989,6 +6501,127 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+  // Credit Note Management Modal Styles
+  creditNoteManagementModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    width: '90%',
+    maxWidth: 700,
+    maxHeight: '88%',
+  },
+  creditNoteManagementScroll: {
+    flex: 1,
+  },
+  creditNoteManagementScrollContent: {
+    paddingBottom: 16,
+  },
+  creditNoteManagementSummaryText: {
+    fontSize: 13,
+    color: '#666',
+    marginTop: 6,
+  },
+  creditNoteManagementLoadingBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#F3E5F5',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  creditNoteManagementLoadingText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#673AB7',
+  },
+  creditNoteManagementSection: {
+    marginBottom: 20,
+  },
+  creditNoteManagementSectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 12,
+  },
+  creditNoteManagementEmptyText: {
+    fontSize: 14,
+    color: '#999',
+    backgroundColor: '#F9F9F9',
+    borderRadius: 8,
+    padding: 14,
+  },
+  creditNoteManagementItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    backgroundColor: '#F9F9F9',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 10,
+  },
+  creditNoteManagementItemInfo: {
+    flex: 1,
+  },
+  creditNoteManagementItemTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 4,
+  },
+  creditNoteManagementItemDetail: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 2,
+  },
+  creditNoteManagementDownloadButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  creditNoteManagementDownloadButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  creditNoteAvailableItem: {
+    backgroundColor: '#F8F9FA',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
+  },
+  creditNoteAvailableItemName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  creditNoteAvailableItemDetail: {
+    fontSize: 12,
+    color: '#666',
+  },
+  creditNoteAvailableReturnDetail: {
+    fontSize: 11,
+    color: '#7E57C2',
+    marginTop: 3,
+  },
+  creditNoteManagementGenerateButton: {
+    backgroundColor: '#FF9800',
+    borderRadius: 10,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  creditNoteManagementGenerateButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
   // Credit Note Modal Styles
   creditNoteModalContent: {
     backgroundColor: '#FFFFFF',
@@ -5996,13 +6629,13 @@ const styles = StyleSheet.create({
     padding: 24,
     width: '90%',
     maxWidth: 600,
-    maxHeight: '80%',
+    maxHeight: '88%',
   },
   creditNoteModalScroll: {
-    flexGrow: 0,
+    flex: 1,
   },
   creditNoteModalScrollContent: {
-    paddingBottom: 8,
+    paddingBottom: 16,
   },
   creditNoteModalHeader: {
     flexDirection: 'row',
@@ -6071,45 +6704,6 @@ const styles = StyleSheet.create({
     color: '#333',
     marginBottom: 8,
   },
-  creditNoteSelectContainer: {
-    marginBottom: 8,
-  },
-  creditNoteSelect: {
-    backgroundColor: '#F5F5F5',
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  creditNoteSelectText: {
-    fontSize: 14,
-    color: '#333',
-  },
-  creditNoteMotivoButtons: {
-    flexDirection: 'row',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  creditNoteMotivoButton: {
-    backgroundColor: '#F5F5F5',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  creditNoteMotivoButtonActive: {
-    backgroundColor: '#E3F2FD',
-    borderColor: '#2196F3',
-  },
-  creditNoteMotivoButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#666',
-  },
-  creditNoteMotivoButtonTextActive: {
-    color: '#2196F3',
-  },
   creditNoteSustentoInput: {
     backgroundColor: '#F9F9F9',
     borderWidth: 1,
@@ -6137,7 +6731,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   creditNoteProductsList: {
-    maxHeight: 300,
+    maxHeight: 260,
     borderWidth: 1,
     borderColor: '#E0E0E0',
     borderRadius: 8,
@@ -6173,9 +6767,38 @@ const styles = StyleSheet.create({
     color: '#333',
     marginBottom: 4,
   },
+  creditNoteProductSku: {
+    fontSize: 11,
+    color: '#999',
+    marginBottom: 4,
+  },
   creditNoteProductDetails: {
     fontSize: 12,
     color: '#666',
+  },
+  creditNoteQuantityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+  },
+  creditNoteQuantityLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#333',
+  },
+  creditNoteQuantityInput: {
+    width: 70,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D0D0D0',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    textAlign: 'center',
   },
   creditNoteProductTotal: {
     fontSize: 14,
