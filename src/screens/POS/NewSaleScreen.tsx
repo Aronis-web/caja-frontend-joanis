@@ -2806,8 +2806,7 @@ export default function NewSaleScreen() {
                     const isIzipayMethod =
                       selectedMethod?.code?.includes('IZIPAY') || selectedMethod?.isIzipay;
                     const isCash = selectedMethod?.code === 'CASH' || selectedMethod?.isCash;
-                    const isPinPadTemporarilyDisabled = true; // TODO: reactivar cuando PinPad Izipay vuelva a estar operativo
-                    const usePinPadFlow = isIzipayMethod && !isPinPadTemporarilyDisabled;
+                    const usePinPadFlow = isIzipayMethod;
                     const total = getCartTotal();
                     const paid = getPaymentsTotal();
                     const remaining = calculateRemainingCents(total, paid) / 100;
