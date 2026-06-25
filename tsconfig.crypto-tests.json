@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "outDir": "./.tmp-tests",
+    "noEmit": false,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2020",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "rootDir": "./src",
+    "lib": ["ES2020", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["src/utils/cryptoOffline.ts", "src/utils/cryptoOffline.test.ts"]
+}

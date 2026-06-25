@@ -3,6 +3,8 @@
  * Tipos para el sistema de recaudación de efectivo
  */
 
+import { palette } from '@/design-system/tokens/palette';
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ENUMS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -107,6 +109,7 @@ export interface CollectionRequestResponse {
 
 export interface ClosureSessionIdentity {
   session_id: string;
+  session_number?: string | number;
   cash_register_id: string;
   cash_register_code: string;
   cash_register_name: string;
@@ -221,30 +224,30 @@ export interface AlertLevelConfig {
 
 export const ALERT_LEVEL_CONFIGS: Record<CashAlertLevel, AlertLevelConfig> = {
   [CashAlertLevel.NORMAL]: {
-    color: '#2E7D32',
-    backgroundColor: '#E8F5E9',
-    borderColor: '#A5D6A7',
+    color: palette.green[800],
+    backgroundColor: palette.green[100],
+    borderColor: palette.green[300],
     icon: '✅',
     label: 'Normal',
   },
   [CashAlertLevel.WARNING]: {
-    color: '#F57F17',
-    backgroundColor: '#FFF8E1',
-    borderColor: '#FFE082',
+    color: palette.amber[800],
+    backgroundColor: palette.amber[100],
+    borderColor: palette.amber[300],
     icon: '⚠️',
     label: 'Advertencia',
   },
   [CashAlertLevel.CRITICAL]: {
-    color: '#E65100',
-    backgroundColor: '#FFF3E0',
-    borderColor: '#FFCC80',
+    color: palette.amber[900],
+    backgroundColor: palette.amber[200],
+    borderColor: palette.amber[400],
     icon: '🔶',
     label: 'Crítico',
   },
   [CashAlertLevel.BLOCKED]: {
-    color: '#C62828',
-    backgroundColor: '#FFEBEE',
-    borderColor: '#EF9A9A',
+    color: palette.red[800],
+    backgroundColor: palette.red[100],
+    borderColor: palette.red[300],
     icon: '🚫',
     label: 'Bloqueado',
   },

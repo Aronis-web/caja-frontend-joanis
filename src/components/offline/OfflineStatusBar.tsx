@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { useTheme, useThemedStyles, type Theme } from '@/design-system';
 import { useOfflineStore } from '@/store/offline';
 
 interface OfflineStatusBarProps {
@@ -12,6 +13,8 @@ interface OfflineStatusBarProps {
 }
 
 export default function OfflineStatusBar({ onSyncPress }: OfflineStatusBarProps) {
+  const theme = useTheme();
+  const styles = useThemedStyles(createStyles);
   const { connectionStatus, isOfflineModeEnabled, availableTokens, pendingSales, lastProductSync } =
     useOfflineStore();
 
@@ -44,7 +47,9 @@ export default function OfflineStatusBar({ onSyncPress }: OfflineStatusBarProps)
         <Text style={styles.statusText}>
           {isSyncing ? 'Sincronizando...' : isOnline ? 'Online' : 'Sin conexión'}
         </Text>
-        {isSyncing && <ActivityIndicator size="small" color="#fff" style={styles.loader} />}
+        {isSyncing && (
+          <ActivityIndicator size="small" color={theme.color.text.inverse} style={styles.loader} />
+        )}
       </View>
 
       {/* Modo offline activo */}
@@ -76,62 +81,63 @@ export default function OfflineStatusBar({ onSyncPress }: OfflineStatusBarProps)
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#343a40',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    gap: 12,
-  },
-  containerOffline: {
-    backgroundColor: '#e65100',
-  },
-  section: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  dotOnline: {
-    backgroundColor: '#4caf50',
-  },
-  dotOffline: {
-    backgroundColor: '#f44336',
-  },
-  statusText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  loader: {
-    marginLeft: 6,
-  },
-  offlineBadge: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '700',
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  infoText: {
-    color: '#fff',
-    fontSize: 12,
-  },
-  pendingText: {
-    color: '#ffeb3b',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  syncText: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 11,
-  },
-});
+const createStyles = (theme: Theme) =>
+  StyleSheet.create({
+    container: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.color.background.inverse,
+      paddingVertical: theme.space[1.5],
+      paddingHorizontal: theme.space[3],
+      gap: theme.space[3],
+    },
+    containerOffline: {
+      backgroundColor: theme.color.icon.warning,
+    },
+    section: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    dot: {
+      width: 8,
+      height: 8,
+      borderRadius: theme.radii.xs,
+      marginRight: theme.space[1.5],
+    },
+    dotOnline: {
+      backgroundColor: theme.color.icon.success,
+    },
+    dotOffline: {
+      backgroundColor: theme.color.icon.danger,
+    },
+    statusText: {
+      color: theme.color.text.inverse,
+      fontSize: 12,
+      fontWeight: '500',
+    },
+    loader: {
+      marginLeft: theme.space[1.5],
+    },
+    offlineBadge: {
+      color: theme.color.text.inverse,
+      fontSize: 11,
+      fontWeight: '700',
+      backgroundColor: 'rgba(255,255,255,0.2)',
+      paddingHorizontal: theme.space[2],
+      paddingVertical: theme.space[0.5],
+      borderRadius: theme.radii.lg,
+    },
+    infoText: {
+      color: theme.color.text.inverse,
+      fontSize: 12,
+    },
+    pendingText: {
+      color: theme.color.text.warning,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    syncText: {
+      color: 'rgba(255,255,255,0.7)',
+      fontSize: 11,
+    },
+  });

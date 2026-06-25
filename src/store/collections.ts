@@ -12,6 +12,7 @@ import type {
   CollectionRequestResponse,
   CollectionRequestStatusResponse,
   CollectionRequestReason,
+  ClosureSessionSnapshot,
 } from '@/types/collections';
 
 interface CollectionsState {
@@ -162,7 +163,7 @@ export const useCollectionsStore = create<CollectionsState>((set, get) => {
                       ...state.requestStatus,
                       closureContext: {
                         ...state.requestStatus.closureContext,
-                        sessionSnapshot: snapshotFromRefresh,
+                        sessionSnapshot: snapshotFromRefresh as ClosureSessionSnapshot,
                       },
                     }
                   : state.requestStatus,

@@ -95,6 +95,36 @@ const STORAGE_KEY = '@caja:selected_cash_register';
 const SESSION_STORAGE_KEY = '@pos_current_session';
 const TOP_SELLERS_STORAGE_KEY = '@pos_top_sellers';
 const TOP_SELLERS_META_STORAGE_KEY = '@pos_top_sellers_meta';
+const PAYMENT_METHODS_STORAGE_KEY = '@pos_payment_methods';
+const CART_STORAGE_KEY = '@pos_cart';
+
+interface PersistedCart {
+  cashRegisterId: string | null;
+  cartItems: SaleItem[];
+  cartPayments: SalePayment[];
+  updatedAt: string;
+}
+
+// Persiste el carrito asociado a la caja actual. Si está vacío, lo borra para
+// no dejar basura en storage. Es fire-and-forget: un fallo de storage no debe
+// bloquear la UI ni la operación de venta.
+const persistCart = (state: {
+  selectedCashRegister: CashRegister | null;
+  cartItems: SaleItem[];
+  cartPayments: SalePayment[];
+}): void => {
+  if (state.cartItems.length === 0 && state.cartPayments.length === 0) {
+    void AsyncStorage.removeItem(CART_STORAGE_KEY);
+    return;
+  }
+  const payload: PersistedCart = {
+    cashRegisterId: state.selectedCashRegister?.id ?? null,
+    cartItems: state.cartItems,
+    cartPayments: state.cartPayments,
+    updatedAt: new Date().toISOString(),
+  };
+  void AsyncStorage.setItem(CART_STORAGE_KEY, JSON.stringify(payload));
+};
 
 const normalizeTaxRate = (taxType?: string): number => (taxType === 'GRAVADO' ? 18 : 0);
 
@@ -200,6 +230,16 @@ export const usePOSStore = create<POSState>((set, get) => ({
 
   // Cash Register actions
   setSelectedCashRegister: async (cashRegister) => {
+    const previousId = get().selectedCashRegister?.id ?? null;
+    const nextId = cashRegister?.id ?? null;
+
+    // Al cambiar de caja (o al deseleccionar) limpiamos el carrito persistido:
+    // el carrito está ligado a una caja específica y no debe cruzarse.
+    if (previousId !== nextId) {
+      set({ cartItems: [], cartPayments: [] });
+      void AsyncStorage.removeItem(CART_STORAGE_KEY);
+    }
+
     set({ selectedCashRegister: cashRegister });
     if (cashRegister) {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(cashRegister));
@@ -247,6 +287,30 @@ export const usePOSStore = create<POSState>((set, get) => ({
       await AsyncStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
       set({ currentSession: session, isLoading: false });
       void get().refreshTopSellersInBackground(cashRegisterId, 40);
+
+      // Reasignar ventas offline pendientes a la caja/sesión/usuario recién abiertos
+      // y disparar sincronización en background. Imports dinámicos para evitar
+      // ciclos con el offline/auth store.
+      void (async () => {
+        try {
+          const { useOfflineStore } = await import('@/store/offline');
+          const cashRegisterCode = get().selectedCashRegister?.code;
+          const reassigned = await useOfflineStore.getState().reassignPendingSales({
+            cashRegisterId,
+            sessionId: session.id,
+            sellerId: userId,
+            cashRegisterCode,
+          });
+          if (reassigned > 0) {
+            console.log(`🔁 [POS] ${reassigned} ventas offline reasignadas a la nueva sesión`);
+          }
+          const { offlineSyncService } = await import('@/services/OfflineSyncService');
+          await offlineSyncService.syncPendingSales(cashRegisterId);
+        } catch (syncError) {
+          console.warn('⚠️ [POS] No se pudieron sincronizar ventas pendientes:', syncError);
+        }
+      })();
+
       return session;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to open session';
@@ -326,10 +390,23 @@ export const usePOSStore = create<POSState>((set, get) => ({
       console.log('💳 Loading payment methods with warehouseId:', warehouseId);
       const paymentMethods = await posService.getPaymentMethods(warehouseId);
       console.log('💳 Payment methods loaded:', paymentMethods.length);
+      await AsyncStorage.setItem(PAYMENT_METHODS_STORAGE_KEY, JSON.stringify(paymentMethods));
       set({ paymentMethods, isLoading: false });
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Failed to load payment methods';
+      // Sin red: caer al cache para no bloquear la operación offline.
+      try {
+        const cached = await AsyncStorage.getItem(PAYMENT_METHODS_STORAGE_KEY);
+        if (cached) {
+          const paymentMethods = JSON.parse(cached) as PaymentMethod[];
+          console.log('💳 Payment methods restaurados desde cache:', paymentMethods.length);
+          set({ paymentMethods, isLoading: false, error: null });
+          return;
+        }
+      } catch (cacheError) {
+        console.error('❌ Error leyendo cache de payment methods:', cacheError);
+      }
       console.error('❌ Error loading payment methods:', errorMessage);
       set({ error: errorMessage, isLoading: false });
       throw error;
@@ -340,6 +417,12 @@ export const usePOSStore = create<POSState>((set, get) => ({
   addItemToCart: (product, quantity) => {
     const { cartItems } = get();
     const existingIndex = cartItems.findIndex((item) => item.productId === product.id);
+    const availableStock =
+      typeof product.availableStock === 'number'
+        ? product.availableStock
+        : typeof product.stock === 'number'
+          ? product.stock
+          : undefined;
 
     console.log('🛒 Agregando al carrito:', {
       name: product.name,
@@ -347,28 +430,40 @@ export const usePOSStore = create<POSState>((set, get) => ({
       price: product.price,
       imageUrl: product.imageUrl,
       taxRate: product.taxRate,
+      availableStock,
     });
 
     if (existingIndex >= 0) {
       // Update existing item
       const newItems = [...cartItems];
-      newItems[existingIndex].quantity += quantity;
+      const currentQty = newItems[existingIndex].quantity;
+      const desiredQty = currentQty + quantity;
+      const cappedQty =
+        typeof availableStock === 'number' ? Math.min(desiredQty, availableStock) : desiredQty;
+      newItems[existingIndex].quantity = cappedQty;
+      if (typeof availableStock === 'number') {
+        newItems[existingIndex].availableStock = availableStock;
+      }
       set({ cartItems: newItems });
     } else {
       // Add new item
+      const cappedQty =
+        typeof availableStock === 'number' ? Math.min(quantity, availableStock) : quantity;
       const newItem: SaleItem = {
         productId: product.id,
         productName: product.name,
         productCode: product.code,
-        quantity,
+        quantity: cappedQty,
         unitPrice: product.price,
         discount: 0,
         taxRate: product.taxRate,
         imageUrl: product.imageUrl,
+        availableStock,
       };
       console.log('✅ Item agregado al carrito:', newItem);
       set({ cartItems: [...cartItems, newItem] });
     }
+    persistCart(get());
   },
 
   updateCartItem: (index, quantity) => {
@@ -378,18 +473,24 @@ export const usePOSStore = create<POSState>((set, get) => ({
       return;
     }
     const newItems = [...cartItems];
-    newItems[index].quantity = quantity;
+    const availableStock = newItems[index].availableStock;
+    const cappedQty =
+      typeof availableStock === 'number' ? Math.min(quantity, availableStock) : quantity;
+    newItems[index].quantity = cappedQty;
     set({ cartItems: newItems });
+    persistCart(get());
   },
 
   removeCartItem: (index) => {
     const { cartItems } = get();
     const newItems = cartItems.filter((_, i) => i !== index);
     set({ cartItems: newItems });
+    persistCart(get());
   },
 
   clearCart: () => {
     set({ cartItems: [] });
+    persistCart(get());
   },
 
   addPaymentToCart: (paymentMethodId, amount) => {
@@ -402,6 +503,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
       amount,
     };
     set({ cartPayments: [...cartPayments, newPayment] });
+    persistCart(get());
   },
 
   updateCartPayment: (index, amount) => {
@@ -413,16 +515,19 @@ export const usePOSStore = create<POSState>((set, get) => ({
     const newPayments = [...cartPayments];
     newPayments[index].amount = amount;
     set({ cartPayments: newPayments });
+    persistCart(get());
   },
 
   removeCartPayment: (index) => {
     const { cartPayments } = get();
     const newPayments = cartPayments.filter((_, i) => i !== index);
     set({ cartPayments: newPayments });
+    persistCart(get());
   },
 
   clearPayments: () => {
     set({ cartPayments: [] });
+    persistCart(get());
   },
 
   getCartSubtotal: () => {
@@ -696,6 +801,16 @@ export const usePOSStore = create<POSState>((set, get) => ({
         console.log('ℹ️ No hay sesión guardada en AsyncStorage');
       }
 
+      const cachedPaymentMethods = await AsyncStorage.getItem(PAYMENT_METHODS_STORAGE_KEY);
+      if (cachedPaymentMethods) {
+        try {
+          const paymentMethods = JSON.parse(cachedPaymentMethods) as PaymentMethod[];
+          set({ paymentMethods });
+        } catch (parseError) {
+          console.warn('⚠️ [POS_STORE] Error cargando payment methods cacheados:', parseError);
+        }
+      }
+
       const cachedTopSellers = await AsyncStorage.getItem(TOP_SELLERS_STORAGE_KEY);
       const cachedTopSellersMeta = await AsyncStorage.getItem(TOP_SELLERS_META_STORAGE_KEY);
 
@@ -718,6 +833,38 @@ export const usePOSStore = create<POSState>((set, get) => ({
           });
         } catch (parseError) {
           console.warn('⚠️ [POS_STORE] Error cargando top sellers cacheados:', parseError);
+        }
+      }
+
+      // Restaurar carrito persistido. Solo se aplica si la caja del carrito
+      // coincide con la caja actualmente seleccionada (evita cruzar carritos
+      // entre cajas distintas). Si no hay caja seleccionada todavía, también
+      // se restaura: el flujo posterior de setSelectedCashRegister limpiará
+      // si el usuario elige una caja distinta.
+      const cartData = await AsyncStorage.getItem(CART_STORAGE_KEY);
+      if (cartData) {
+        try {
+          const persisted = JSON.parse(cartData) as PersistedCart;
+          const currentRegisterId = get().selectedCashRegister?.id ?? null;
+          const sameRegister =
+            currentRegisterId === null || persisted.cashRegisterId === currentRegisterId;
+
+          if (sameRegister) {
+            set({
+              cartItems: persisted.cartItems ?? [],
+              cartPayments: persisted.cartPayments ?? [],
+            });
+            console.log('🛒 Carrito restaurado desde AsyncStorage:', {
+              items: persisted.cartItems?.length || 0,
+              payments: persisted.cartPayments?.length || 0,
+            });
+          } else {
+            console.log('🛒 Carrito persistido pertenece a otra caja, descartando');
+            await AsyncStorage.removeItem(CART_STORAGE_KEY);
+          }
+        } catch (parseError) {
+          console.warn('⚠️ [POS_STORE] Error cargando carrito persistido:', parseError);
+          await AsyncStorage.removeItem(CART_STORAGE_KEY);
         }
       }
     } catch (error) {
@@ -743,6 +890,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
     void AsyncStorage.removeItem(SESSION_STORAGE_KEY);
     void AsyncStorage.removeItem(TOP_SELLERS_STORAGE_KEY);
     void AsyncStorage.removeItem(TOP_SELLERS_META_STORAGE_KEY);
+    void AsyncStorage.removeItem(CART_STORAGE_KEY);
   },
 }));
 

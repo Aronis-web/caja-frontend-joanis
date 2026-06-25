@@ -6,11 +6,15 @@
 import { offlineDatabase } from './OfflineDatabase';
 import { networkMonitor } from './NetworkMonitor';
 import { authService } from './AuthService';
+import { deviceTokenService } from './DeviceTokenService';
+import { offlineLoginService } from './OfflineLoginService';
+import { offlineUsersBundleService } from './OfflineUsersBundleService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { config } from '@/utils/config';
 import type { Session } from '@/types/pos';
 import type {
   OfflineProduct,
+  OfflineSale,
   OfflineCatalogResponse,
   StockUpdateResponse,
   TokenReplenishResponse,
@@ -19,6 +23,7 @@ import type {
   SyncSalesResponse,
 } from '@/types/offline';
 import { DEFAULT_OFFLINE_CONFIG } from '@/types/offline';
+import pkg from '../../package.json';
 
 type SyncCallback = (event: string, data?: any) => void;
 
@@ -29,6 +34,8 @@ class OfflineSyncService {
   private productSyncInterval: NodeJS.Timeout | null = null;
   private stockSyncInterval: NodeJS.Timeout | null = null;
   private config: typeof DEFAULT_OFFLINE_CONFIG;
+  private reconnectUnsubscribe: (() => void) | null = null;
+  private startedForCashRegisterId: string | null = null;
 
   constructor() {
     this.baseURL = config.API_URL;
@@ -43,16 +50,34 @@ class OfflineSyncService {
       salesBatchSize: 10,
       batchDelayMs: 3000,
     };
+
+    // Inyectar el cliente HTTP en el servicio de bundle para reusar headers/auth.
+    offlineUsersBundleService.setRequestFn(
+      <T>(endpoint: string, options: RequestInit, cashRegisterId: string) =>
+        this.request<T>(endpoint, options, cashRegisterId)
+    );
   }
 
   /**
-   * Inicia el servicio de sincronización
+   * Inicia el servicio de sincronización.
+   * Idempotente: llamadas repetidas con el mismo cashRegisterId son no-op;
+   * con un id distinto reinicia listeners e intervals para evitar duplicados.
    */
   async start(cashRegisterId: string): Promise<void> {
+    if (this.startedForCashRegisterId === cashRegisterId) {
+      console.log('🔄 [SYNC] Ya iniciado para esta caja, omitiendo re-inicialización');
+      return;
+    }
+
+    if (this.startedForCashRegisterId && this.startedForCashRegisterId !== cashRegisterId) {
+      console.log('🔄 [SYNC] Reiniciando para nueva caja, deteniendo recursos previos...');
+      this.stop();
+    }
+
     console.log('🔄 [SYNC] Iniciando servicio de sincronización...');
 
-    // Suscribirse a reconexiones
-    networkMonitor.onReconnect(async () => {
+    // Suscribirse a reconexiones (guardando el unsubscribe para limpiarlo en stop)
+    this.reconnectUnsubscribe = networkMonitor.onReconnect(async () => {
       console.log('🔄 [SYNC] Reconexión detectada, iniciando sincronización...');
       await this.syncOnReconnect(cashRegisterId);
     });
@@ -60,7 +85,16 @@ class OfflineSyncService {
     // Iniciar sincronización periódica
     this.startPeriodicSync(cashRegisterId);
 
+    this.startedForCashRegisterId = cashRegisterId;
     console.log('✅ [SYNC] Servicio de sincronización iniciado');
+  }
+
+  /**
+   * Garantiza que la BD local esté inicializada antes de cualquier operación.
+   * Idempotente: offlineDatabase.initialize() cachea el initPromise.
+   */
+  private async ensureDb(): Promise<void> {
+    await offlineDatabase.initialize();
   }
 
   /**
@@ -75,6 +109,15 @@ class OfflineSyncService {
       clearInterval(this.stockSyncInterval);
       this.stockSyncInterval = null;
     }
+    if (this.reconnectUnsubscribe) {
+      try {
+        this.reconnectUnsubscribe();
+      } catch {
+        /* ignore */
+      }
+      this.reconnectUnsubscribe = null;
+    }
+    this.startedForCashRegisterId = null;
     console.log('🛑 [SYNC] Servicio de sincronización detenido');
   }
 
@@ -85,6 +128,7 @@ class OfflineSyncService {
     this.emit('sync:start', { type: 'initial' });
 
     try {
+      await this.ensureDb();
       const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
 
       // 1. Descargar catálogo completo
@@ -94,6 +138,9 @@ class OfflineSyncService {
       // 2. Verificar/reponer tokens hasta llegar a 1000
       console.log('🎫 [SYNC] Verificando pool de tokens...');
       await this.ensureTokenPool(resolvedCashRegisterId);
+
+      // 3. Descargar bundle de usuarios para login offline (si está aprovisionado)
+      await this.syncUsersBundle(resolvedCashRegisterId);
 
       // NOTA: Las ventas pendientes se sincronizan MANUALMENTE desde configuración
       const pendingCount = await offlineDatabase.getPendingSalesCount();
@@ -123,6 +170,7 @@ class OfflineSyncService {
     this.emit('sync:start', { type: 'reconnect' });
 
     try {
+      await this.ensureDb();
       const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
 
       // NOTA: Las ventas pendientes se sincronizan MANUALMENTE desde configuración
@@ -138,6 +186,12 @@ class OfflineSyncService {
       // 2. Actualizar catálogo (delta)
       console.log('📦 [SYNC] Actualizando catálogo...');
       await this.syncProducts(resolvedCashRegisterId, 'delta');
+
+      // 3. Refrescar bundle de usuarios (TTL 24h, nextRefreshMs ~4h)
+      await this.syncUsersBundle(resolvedCashRegisterId);
+
+      // 4. Subir eventos de login offline acumulados
+      await this.syncLoginEvents(resolvedCashRegisterId);
 
       this.emit('sync:complete', { type: 'reconnect' });
       console.log('✅ [SYNC] Sincronización post-reconexión completada');
@@ -156,13 +210,16 @@ class OfflineSyncService {
     this.emit('products:sync:start', { mode });
 
     try {
+      await this.ensureDb();
       const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
       let endpoint = `/pos/offline-catalog/${resolvedCashRegisterId}`;
 
       if (mode === 'delta') {
-        const lastSync = await offlineDatabase.getLastSync('FULL');
-        if (lastSync) {
-          endpoint += `/delta?since=${lastSync.syncId}`;
+        const lastSync =
+          (await offlineDatabase.getLastSync('DELTA')) ||
+          (await offlineDatabase.getLastSync('FULL'));
+        if (lastSync?.timestamp) {
+          endpoint += `/delta?since=${encodeURIComponent(lastSync.timestamp)}`;
         } else {
           // Si no hay sync previo, hacer full
           mode = 'full';
@@ -296,6 +353,7 @@ class OfflineSyncService {
     this.emit('stock:sync:start');
 
     try {
+      await this.ensureDb();
       const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
       const lastSync = await offlineDatabase.getLastSync('STOCK');
       const since = lastSync?.timestamp || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -332,6 +390,7 @@ class OfflineSyncService {
    * Asegura que haya 1000 tokens disponibles
    */
   async ensureTokenPool(cashRegisterId: string): Promise<void> {
+    await this.ensureDb();
     const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
     const currentCount = await offlineDatabase.getAvailableTokenCount();
     const needed = this.config.tokenPoolSize - currentCount;
@@ -354,7 +413,7 @@ class OfflineSyncService {
         {
           method: 'POST',
           body: JSON.stringify({
-            requestedCount: needed,
+            requestCount: needed,
             usedTokens,
           }),
         },
@@ -380,9 +439,82 @@ class OfflineSyncService {
   }
 
   /**
+   * Descarga (o refresca) el bundle cifrado de usuarios para login offline.
+   * 403 = feature off o caja no aprovisionada -> deshabilitar login offline silenciosamente.
+   * Ver POS_OFFLINE.MD seccion 4.2.
+   */
+  async syncUsersBundle(cashRegisterId: string): Promise<void> {
+    await this.ensureDb();
+    const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
+
+    if (!(await deviceTokenService.isProvisioned())) {
+      console.log('ℹ️ [SYNC] Caja no aprovisionada (sin deviceToken); se omite bundle de usuarios');
+      return;
+    }
+
+    this.emit('users-bundle:sync:start');
+    const result = await offlineUsersBundleService.downloadBundle(resolvedCashRegisterId);
+    if (result.ok) {
+      this.emit('users-bundle:sync:complete', {
+        bundleId: result.bundle.bundleId,
+        userCount: result.bundle.userCount,
+        expiresAt: result.bundle.expiresAt,
+      });
+    } else {
+      this.emit('users-bundle:sync:skipped', { reason: result.reason });
+    }
+  }
+
+  /**
+   * Envia los eventos de login offline pendientes al backend (idempotente).
+   * Ver POS_OFFLINE.MD seccion 7.1.
+   */
+  async syncLoginEvents(cashRegisterId: string): Promise<void> {
+    await this.ensureDb();
+    const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
+    const pending = await offlineDatabase.getPendingLoginEvents();
+    if (pending.length === 0) return;
+
+    if (!(await deviceTokenService.isProvisioned())) {
+      console.log('ℹ️ [SYNC] Sin deviceToken; no se pueden enviar login-events');
+      return;
+    }
+
+    this.emit('login-events:sync:start', { count: pending.length });
+
+    try {
+      const body = {
+        events: pending.map((e) => ({
+          userId: e.userId,
+          bundleId: e.bundleId,
+          occurredAt: e.occurredAt,
+          method: e.method,
+          success: e.success,
+          ...(e.failureReason ? { failureReason: e.failureReason } : {}),
+        })),
+      };
+
+      await this.request(
+        `/pos/offline-catalog/${resolvedCashRegisterId}/users/login-events`,
+        { method: 'POST', body: JSON.stringify(body) },
+        resolvedCashRegisterId
+      );
+
+      await offlineDatabase.markLoginEventsSynced(pending.map((e) => e.id));
+      await offlineDatabase.deleteSyncedLoginEvents();
+      this.emit('login-events:sync:complete', { count: pending.length });
+      console.log(`✅ [SYNC] ${pending.length} eventos de login sincronizados`);
+    } catch (error) {
+      this.emit('login-events:sync:error', { error });
+      console.error('❌ [SYNC] Error sincronizando eventos de login:', error);
+    }
+  }
+
+  /**
    * Sincroniza ventas pendientes con control de avalancha
    */
   async syncPendingSales(cashRegisterId: string): Promise<void> {
+    await this.ensureDb();
     const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
     const pendingSales = await offlineDatabase.getPendingSales();
     if (pendingSales.length === 0) {
@@ -397,6 +529,11 @@ class OfflineSyncService {
       const firstSaleSessionId = pendingSales[0].sessionId;
       console.log(`🔍 [SYNC] SessionId de primera venta: "${firstSaleSessionId}"`);
 
+      const oldestSaleTimestamp = pendingSales.reduce<string>(
+        (oldest, sale) => (!oldest || sale.createdAt < oldest ? sale.createdAt : oldest),
+        ''
+      );
+
       // 1. Registrarse en la cola
       console.log('📝 [SYNC] Registrándose en cola de sincronización...');
       const registration = await this.request<SyncRegistrationResponse>(
@@ -407,32 +544,49 @@ class OfflineSyncService {
             cashRegisterId: resolvedCashRegisterId,
             sessionId: firstSaleSessionId,
             pendingSalesCount: pendingSales.length,
+            oldestSaleTimestamp,
+            clientInfo: this.getClientInfo(),
           }),
         },
         resolvedCashRegisterId
       );
 
-      console.log(`📊 [SYNC] Posición en cola: ${registration.queuePosition}`);
+      console.log(`📊 [SYNC] Posición en cola: ${registration.queuePosition ?? 0}`);
       this.emit('sales:sync:queued', { position: registration.queuePosition });
 
-      // 2. Esperar turno (polling)
+      // 2. Esperar turno (polling). Si register ya devolvió READY + syncToken, saltarse el poll.
       let status: SyncStatusResponse;
-      do {
-        await this.delay(registration.pollIntervalMs);
-        status = await this.request<SyncStatusResponse>(
-          `/pos/sync/status/${registration.registrationId}`,
-          {},
-          resolvedCashRegisterId
-        );
+      if (registration.status === 'READY' && registration.syncToken) {
+        status = {
+          status: 'READY',
+          syncToken: registration.syncToken,
+          expiresAt: registration.tokenExpiresAt,
+        };
+        console.log('⚡ [SYNC] Turno libre desde register; se omite polling');
+      } else {
+        do {
+          await this.delay(registration.pollIntervalMs);
+          status = await this.request<SyncStatusResponse>(
+            `/pos/sync/status/${registration.registrationId}`,
+            {},
+            resolvedCashRegisterId
+          );
 
-        if (status.status === 'QUEUED') {
-          console.log(`⏳ [SYNC] Esperando turno... Posición: ${status.position}`);
-          this.emit('sales:sync:waiting', { position: status.position });
-        }
-      } while (status.status === 'QUEUED');
+          if (status.status === 'QUEUED') {
+            console.log(`⏳ [SYNC] Esperando turno... Posición: ${status.position}`);
+            this.emit('sales:sync:waiting', { position: status.position });
+          }
+        } while (status.status === 'QUEUED');
+      }
 
       if (status.status === 'EXPIRED') {
         throw new Error('Sesión de sincronización expirada');
+      }
+
+      if (!status.syncToken) {
+        throw new Error(
+          `Backend no devolvió syncToken (status=${status.status}); no se puede subir el batch`
+        );
       }
 
       // 3. Enviar ventas en lotes
@@ -458,6 +612,8 @@ class OfflineSyncService {
           await offlineDatabase.updateSaleSyncStatus(sale.localId, 'SYNCING');
         }
 
+        let nextBatchAllowedAt: string | undefined;
+
         try {
           // Obtener sessionId del primer elemento del batch
           const batchSessionId = batch[0].sessionId;
@@ -476,11 +632,23 @@ class OfflineSyncService {
                 cashRegisterId: resolvedCashRegisterId,
                 sessionId: batchSessionId,
                 batchId,
-                syncToken: status.syncToken,
-                sales: batch,
+                sales: batch.map((s) => this.toSyncSalePayload(s)),
               }),
             },
             resolvedCashRegisterId
+          );
+
+          nextBatchAllowedAt = response.nextBatchAllowedAt;
+
+          console.log(
+            `📥 [SYNC] Respuesta batch (${response.results?.length ?? 0} results):`,
+            response.results?.map((r) => ({
+              localId: r.localId,
+              status: r.status,
+              errorCode: r.errorCode,
+              error: r.error,
+              serverSaleId: r.serverSaleId,
+            }))
           );
 
           // Actualizar estado de cada venta
@@ -491,9 +659,16 @@ class OfflineSyncService {
                 serverDocumentNumber: result.serverDocumentNumber,
               });
               syncedCount++;
+            } else if (result.errorCode === 'TOKEN_ALREADY_USED') {
+              // Idempotencia: la venta ya estaba procesada en el backend
+              console.log(
+                `ℹ️ [SYNC] Venta ${result.localId} ya estaba sincronizada (TOKEN_ALREADY_USED)`
+              );
+              await offlineDatabase.updateSaleSyncStatus(result.localId, 'SYNCED');
+              syncedCount++;
             } else {
               await offlineDatabase.updateSaleSyncStatus(result.localId, 'FAILED', {
-                error: result.error,
+                error: result.error || result.errorCode || 'Venta rechazada',
               });
             }
           }
@@ -502,11 +677,6 @@ class OfflineSyncService {
             synced: syncedCount,
             total: pendingSales.length,
           });
-
-          // Esperar antes del siguiente lote
-          if (i + this.config.salesBatchSize < pendingSales.length) {
-            await this.delay(this.config.batchDelayMs);
-          }
         } catch (error) {
           // Marcar lote como fallido
           for (const sale of batch) {
@@ -514,6 +684,12 @@ class OfflineSyncService {
               error: error instanceof Error ? error.message : 'Error desconocido',
             });
           }
+        }
+
+        // Esperar antes del siguiente lote, respetando nextBatchAllowedAt
+        if (i + this.config.salesBatchSize < pendingSales.length) {
+          const waitMs = this.computeBatchWaitMs(nextBatchAllowedAt);
+          await this.delay(waitMs);
         }
       }
 
@@ -547,6 +723,16 @@ class OfflineSyncService {
   // ============ PRIVADOS ============
 
   private startPeriodicSync(cashRegisterId: string): void {
+    // Limpiar intervals previos si ya existían (defensa adicional ante doble inicio)
+    if (this.productSyncInterval) {
+      clearInterval(this.productSyncInterval);
+      this.productSyncInterval = null;
+    }
+    if (this.stockSyncInterval) {
+      clearInterval(this.stockSyncInterval);
+      this.stockSyncInterval = null;
+    }
+
     // Sincronización de productos cada 30 minutos
     this.productSyncInterval = setInterval(async () => {
       if (networkMonitor.getStatus()) {
@@ -617,6 +803,28 @@ class OfflineSyncService {
       headers['X-Cash-Register-Id'] = resolvedCashRegisterId;
     }
 
+    // X-Device-Token: requerido en /pos/* (validez 1 año, identifica la caja).
+    // X-Offline-Session: JWT HS256 firmado por el frontend tras login offline.
+    // Ver POS_OFFLINE.MD seccion 3.
+    if (endpoint.startsWith('/pos/')) {
+      const deviceToken = await deviceTokenService.get();
+      if (deviceToken && !headers['X-Device-Token']) {
+        headers['X-Device-Token'] = deviceToken;
+      }
+      const offlineJwt = offlineLoginService.getCurrentJwt();
+      if (offlineJwt && !headers['X-Offline-Session']) {
+        headers['X-Offline-Session'] = offlineJwt;
+      }
+    }
+
+    // Solo presencia (boolean) de headers de auth: nunca loguear los valores (son secretos).
+    const authPresence = {
+      hasAuthorization: !!headers['Authorization'],
+      hasDeviceToken: !!headers['X-Device-Token'],
+      hasOfflineSession: !!headers['X-Offline-Session'],
+      hasSyncToken: !!headers['X-Sync-Token'],
+    };
+
     console.log('📡 [SYNC][request] Request debug:', {
       endpoint,
       cashRegisterIdOriginal: cashRegisterId,
@@ -624,6 +832,7 @@ class OfflineSyncService {
       headerCashRegisterId: headers['X-Cash-Register-Id'],
       headerCompanyId: headers['x-company-id'] || null,
       headerSiteId: headers['x-site-id'] || null,
+      authPresence,
     });
 
     const response = await fetch(`${this.baseURL}${endpoint}`, {
@@ -643,6 +852,14 @@ class OfflineSyncService {
             siteId: headers['x-site-id'] || null,
             cashRegisterId: headers['X-Cash-Register-Id'] || null,
           })}`
+        );
+      }
+
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(
+          `HTTP ${response.status} en ${endpoint}: ${backendMessage} | auth_presence=${JSON.stringify(
+            authPresence
+          )}`
         );
       }
 
@@ -730,6 +947,74 @@ class OfflineSyncService {
 
   private delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Calcula la espera entre lotes respetando nextBatchAllowedAt del backend
+   */
+  private computeBatchWaitMs(nextBatchAllowedAt?: string): number {
+    const minWait = this.config.batchDelayMs;
+    if (!nextBatchAllowedAt) return minWait;
+
+    const serverWait = new Date(nextBatchAllowedAt).getTime() - Date.now();
+    if (Number.isNaN(serverWait)) return minWait;
+
+    return Math.max(minWait, serverWait);
+  }
+
+  /**
+   * Mapea una venta local al shape que espera /pos/sync/sales (sin campos internos)
+   */
+  private toSyncSalePayload(sale: OfflineSale): Record<string, unknown> {
+    return {
+      localId: sale.localId,
+      token: sale.token,
+      offlineTicketCode: sale.offlineTicketCode,
+      items: sale.items.map((item) => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPriceCents: item.unitPriceCents,
+        discountCents: item.discountCents,
+        productSnapshot: {
+          sku: item.productCode,
+          title: item.productName,
+        },
+      })),
+      totalCents: sale.totalCents,
+      subtotalCents: sale.subtotalCents,
+      taxCents: sale.taxCents,
+      discountCents: sale.discountCents,
+      customerDocumentType: sale.customerDocumentType,
+      customerDocumentNumber: sale.customerDocumentNumber,
+      customerSnapshot: sale.customerSnapshot
+        ? {
+            fullName: sale.customerSnapshot.name,
+            documentType: sale.customerSnapshot.documentType,
+            documentNumber: sale.customerSnapshot.documentNumber,
+          }
+        : undefined,
+      payments: sale.payments.map((p) => ({
+        paymentMethodId: p.paymentMethodId,
+        amountCents: p.amountCents,
+      })),
+      documentType: sale.documentType,
+      createdAt: sale.createdAt,
+      sellerId: sale.sellerId,
+    };
+  }
+
+  /**
+   * Información del cliente que viaja en /pos/sync/register
+   */
+  private getClientInfo(): { userAgent: string; appVersion: string } {
+    const ua =
+      typeof navigator !== 'undefined' && navigator.userAgent
+        ? navigator.userAgent
+        : `POS/${pkg.version}`;
+    return {
+      userAgent: ua,
+      appVersion: pkg.version,
+    };
   }
 }
 

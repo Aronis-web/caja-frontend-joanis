@@ -6,6 +6,40 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 console.log('Preload script ejecutándose...');
 
+// Diagnóstico: reenviar errores no atrapados del renderer al main process
+// para que queden en electron-server.log junto con render-process-gone.
+function safeSerialize(value) {
+  if (value instanceof Error) {
+    return { name: value.name, message: value.message, stack: value.stack };
+  }
+  if (typeof value === 'object' && value !== null) {
+    try { return JSON.parse(JSON.stringify(value)); } catch (_) { return String(value); }
+  }
+  return value;
+}
+
+window.addEventListener('error', (event) => {
+  try {
+    ipcRenderer.send('renderer-error', {
+      type: 'window.error',
+      message: event.message,
+      filename: event.filename,
+      lineno: event.lineno,
+      colno: event.colno,
+      error: safeSerialize(event.error),
+    });
+  } catch (_) {}
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  try {
+    ipcRenderer.send('renderer-error', {
+      type: 'unhandledrejection',
+      reason: safeSerialize(event.reason),
+    });
+  } catch (_) {}
+});
+
 // Exponer información del entorno
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
@@ -19,26 +53,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
   printHTML: (htmlContent, filename) => {
     return ipcRenderer.invoke('print-html', { htmlContent, filename });
   },
-  // Funciones para actualizaciones
+  // Versión de la app
   getAppVersion: () => {
     return ipcRenderer.invoke('get-app-version');
   },
-  checkForUpdates: () => {
-    return ipcRenderer.invoke('check-for-updates');
+  // Actualizaciones desde el servidor (svc-pos)
+  // El check lo hace el renderer via HTTP; aquí solo se descarga e instala.
+  downloadAppUpdate: (args) => {
+    return ipcRenderer.invoke('download-app-update', args);
   },
-  downloadUpdate: () => {
-    return ipcRenderer.invoke('download-update');
+  installAppUpdate: (args) => {
+    return ipcRenderer.invoke('install-app-update', args);
   },
-  installUpdate: () => {
-    return ipcRenderer.invoke('install-update');
+  cancelAppUpdate: () => {
+    return ipcRenderer.invoke('cancel-app-update');
   },
-  // Escuchar eventos de actualización
+  // Escuchar eventos de descarga/instalación
   onUpdateStatus: (callback) => {
     ipcRenderer.on('update-status', (event, status) => callback(status));
   },
   onDownloadProgress: (callback) => {
     ipcRenderer.on('download-progress', (event, progress) => callback(progress));
-  }
+  },
+  removeUpdateListeners: () => {
+    ipcRenderer.removeAllListeners('update-status');
+    ipcRenderer.removeAllListeners('download-progress');
+  },
 });
 
 console.log('Preload script completado');

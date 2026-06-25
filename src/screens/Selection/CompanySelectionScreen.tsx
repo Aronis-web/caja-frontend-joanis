@@ -1,13 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  ActivityIndicator,
-  Alert,
-} from 'react-native';
+import { View, StyleSheet, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '@/store/auth';
 import { authService } from '@/services/AuthService';
@@ -15,6 +7,18 @@ import type { Company } from '@/types/auth';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { SelectionStackParamList } from '@/types/navigation';
 import { SELECTION_ROUTES } from '@/constants/routes';
+import {
+  Body,
+  Button,
+  Caption,
+  Card,
+  Heading,
+  StatusBadge,
+  Title,
+  useTheme,
+  useThemedStyles,
+  type Theme,
+} from '@/design-system';
 
 interface CompanySelectionScreenProps {
   navigation?: NativeStackNavigationProp<SelectionStackParamList, 'CompanySelection'>;
@@ -22,6 +26,8 @@ interface CompanySelectionScreenProps {
 
 export const CompanySelectionScreen: React.FC<CompanySelectionScreenProps> = ({ navigation }) => {
   const { setCurrentCompany, user, logout } = useAuthStore();
+  const theme = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
@@ -163,8 +169,10 @@ export const CompanySelectionScreen: React.FC<CompanySelectionScreenProps> = ({ 
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#667eea" />
-          <Text style={styles.loadingText}>Cargando empresas...</Text>
+          <ActivityIndicator size="large" color={theme.color.action.primary.background} />
+          <Body size="medium" color="muted" style={styles.loadingText}>
+            Cargando empresas...
+          </Body>
         </View>
       </SafeAreaView>
     );
@@ -172,273 +180,164 @@ export const CompanySelectionScreen: React.FC<CompanySelectionScreenProps> = ({ 
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>🏢 Seleccionar Empresa</Text>
-          <Text style={styles.headerSubtitle}>Hola, {user?.name || user?.email}</Text>
+          <Heading size="medium" color="heading">
+            🏢 Seleccionar Empresa
+          </Heading>
+          <Body size="small" color="muted">
+            Hola, {user?.name || user?.email}
+          </Body>
         </View>
-        <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-          <Text style={styles.logoutButtonText}>Salir</Text>
-        </TouchableOpacity>
+        <Button title="Salir" onPress={handleLogout} variant="danger" size="small" />
       </View>
 
-      {/* Content */}
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={styles.contentInner}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.infoCard}>
-          <Text style={styles.infoIcon}>ℹ️</Text>
-          <Text style={styles.infoText}>Selecciona la empresa con la que deseas trabajar</Text>
+          <Body size="small" color="link">
+            ℹ️ Selecciona la empresa con la que deseas trabajar
+          </Body>
         </View>
 
         <View style={styles.companiesContainer}>
           {companies.map((company) => (
-            <TouchableOpacity
+            <Card
               key={company.id}
-              style={[
-                styles.companyCard,
-                selectedCompanyId === company.id && styles.companyCardSelected,
-              ]}
+              variant="outlined"
+              padding="medium"
               onPress={() => handleSelectCompany(company)}
-              activeOpacity={0.7}
               disabled={selectedCompanyId === company.id}
+              style={selectedCompanyId === company.id ? styles.companyCardSelected : undefined}
             >
               <View style={styles.companyCardContent}>
                 <View style={styles.companyIconContainer}>
-                  <Text style={styles.companyIcon}>🏢</Text>
+                  <Body size="large">🏢</Body>
                 </View>
                 <View style={styles.companyInfo}>
-                  <Text style={styles.companyName}>{company.alias || company.name}</Text>
-                  {company.ruc && <Text style={styles.companyRuc}>RUC: {company.ruc}</Text>}
+                  <Title size="small" color="heading">
+                    {company.alias || company.name}
+                  </Title>
+                  {company.ruc && (
+                    <Caption color="muted" style={styles.companyRuc}>
+                      RUC: {company.ruc}
+                    </Caption>
+                  )}
                   <View style={styles.companyFooter}>
-                    <View
-                      style={[
-                        styles.statusBadge,
-                        company.isActive ? styles.statusActive : styles.statusInactive,
-                      ]}
-                    >
-                      <View
-                        style={[
-                          styles.statusDot,
-                          company.isActive ? styles.statusDotActive : styles.statusDotInactive,
-                        ]}
-                      />
-                      <Text
-                        style={[
-                          styles.statusText,
-                          company.isActive ? styles.statusTextActive : styles.statusTextInactive,
-                        ]}
-                      >
-                        {company.isActive ? 'Activa' : 'Inactiva'}
-                      </Text>
-                    </View>
+                    <StatusBadge
+                      status={company.isActive ? 'active' : 'cancelled'}
+                      label={company.isActive ? 'Activa' : 'Inactiva'}
+                      size="small"
+                    />
                   </View>
                 </View>
                 {selectedCompanyId === company.id && (
-                  <View style={styles.loadingIndicator}>
-                    <ActivityIndicator size="small" color="#667eea" />
-                  </View>
+                  <ActivityIndicator
+                    size="small"
+                    color={theme.color.action.primary.background}
+                    style={styles.loadingIndicator}
+                  />
                 )}
               </View>
-              <View style={styles.arrowContainer}>
-                <Text style={styles.arrow}>→</Text>
-              </View>
-            </TouchableOpacity>
+            </Card>
           ))}
         </View>
 
         <View style={styles.footer}>
-          <Text style={styles.footerText}>
+          <Caption color="subtle">
             {companies.length}{' '}
             {companies.length === 1 ? 'empresa disponible' : 'empresas disponibles'}
-          </Text>
+          </Caption>
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  header: {
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 20,
-    paddingVertical: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  headerContent: {
-    flex: 1,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1E293B',
-    marginBottom: 4,
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: '#64748B',
-  },
-  logoutButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: '#FEE2E2',
-  },
-  logoutButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#DC2626',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 15,
-    color: '#64748B',
-  },
-  content: {
-    flex: 1,
-    padding: 20,
-  },
-  infoCard: {
-    backgroundColor: '#EFF6FF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  infoIcon: {
-    fontSize: 24,
-    marginRight: 12,
-  },
-  infoText: {
-    flex: 1,
-    fontSize: 14,
-    color: '#1E40AF',
-    lineHeight: 20,
-  },
-  companiesContainer: {
-    gap: 12,
-  },
-  companyCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 2,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  companyCardSelected: {
-    borderColor: '#667eea',
-    backgroundColor: '#F5F7FF',
-  },
-  companyCardContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  companyIconContainer: {
-    width: 56,
-    height: 56,
-    borderRadius: 12,
-    backgroundColor: '#F8FAFC',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  companyIcon: {
-    fontSize: 28,
-  },
-  companyInfo: {
-    flex: 1,
-  },
-  companyName: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1E293B',
-    marginBottom: 4,
-  },
-  companyRuc: {
-    fontSize: 13,
-    color: '#64748B',
-    marginBottom: 8,
-    fontFamily: 'monospace',
-  },
-  companyFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  statusActive: {
-    backgroundColor: '#D1FAE5',
-  },
-  statusInactive: {
-    backgroundColor: '#FEE2E2',
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 6,
-  },
-  statusDotActive: {
-    backgroundColor: '#10B981',
-  },
-  statusDotInactive: {
-    backgroundColor: '#EF4444',
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  statusTextActive: {
-    color: '#059669',
-  },
-  statusTextInactive: {
-    color: '#DC2626',
-  },
-  loadingIndicator: {
-    marginLeft: 12,
-  },
-  arrowContainer: {
-    marginTop: 12,
-    alignItems: 'flex-end',
-  },
-  arrow: {
-    fontSize: 24,
-    color: '#667eea',
-  },
-  footer: {
-    marginTop: 24,
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  footerText: {
-    fontSize: 13,
-    color: '#94A3B8',
-  },
-});
+const createStyles = (theme: Theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.color.background.subtle,
+    },
+    header: {
+      backgroundColor: theme.color.surface.base,
+      paddingHorizontal: theme.space[5],
+      paddingVertical: theme.space[5],
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: theme.space[3],
+    },
+    headerContent: {
+      flex: 1,
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    loadingText: {
+      marginTop: theme.space[3],
+    },
+    content: {
+      flex: 1,
+    },
+    contentInner: {
+      padding: theme.space[5],
+    },
+    infoCard: {
+      backgroundColor: theme.color.state.info.background,
+      borderRadius: theme.radii.lg,
+      padding: theme.space[4],
+      marginBottom: theme.space[6],
+      borderWidth: 1,
+      borderColor: theme.color.state.info.border,
+    },
+    companiesContainer: {
+      gap: theme.space[3],
+    },
+    companyCardSelected: {
+      borderColor: theme.color.action.primary.background,
+      backgroundColor: theme.color.surface.subtle,
+    },
+    companyCardContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    companyIconContainer: {
+      width: 56,
+      height: 56,
+      borderRadius: theme.radii.lg,
+      backgroundColor: theme.color.background.subtle,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: theme.space[4],
+    },
+    companyInfo: {
+      flex: 1,
+    },
+    companyRuc: {
+      marginTop: theme.space[1],
+      marginBottom: theme.space[2],
+    },
+    companyFooter: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    loadingIndicator: {
+      marginLeft: theme.space[3],
+    },
+    footer: {
+      marginTop: theme.space[6],
+      paddingVertical: theme.space[4],
+      alignItems: 'center',
+    },
+  });
 
 export default CompanySelectionScreen;

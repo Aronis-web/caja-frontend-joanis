@@ -38,7 +38,11 @@ class POSService {
     this.baseURL = config.API_URL;
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {},
+    retriedAfterRefresh = false
+  ): Promise<T> {
     const token = authService.getAccessToken();
     const currentCompany = authService.getCurrentCompany();
     const currentSite = authService.getCurrentSite();
@@ -91,9 +95,20 @@ class POSService {
     });
 
     if (!response.ok) {
-      // Si es 401, el token expiró - cerrar sesión automáticamente
+      // Si es 401, intentar refrescar el token una vez antes de cerrar sesión.
       if (response.status === 401) {
-        console.warn('⚠️ Token expirado (401), cerrando sesión...');
+        if (!retriedAfterRefresh) {
+          console.warn('⚠️ Token expirado (401), intentando refresh antes de logout...');
+          const refreshed = await useAuthStore
+            .getState()
+            .refreshAccessToken()
+            .catch(() => false);
+          if (refreshed) {
+            console.log('✅ Token refrescado, reintentando request...');
+            return this.request<T>(endpoint, options, true);
+          }
+        }
+        console.warn('⚠️ Refresh imposible, cerrando sesión...');
         await useAuthStore.getState().logout();
         throw new Error('Tu sesión ha expirado. Por favor, inicia sesión nuevamente.');
       }

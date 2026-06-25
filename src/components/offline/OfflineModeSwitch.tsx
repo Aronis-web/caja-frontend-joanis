@@ -5,6 +5,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { useTheme, useThemedStyles, type Theme } from '@/design-system';
 import { useOfflineStore } from '@/store/offline';
 
 interface OfflineModeSwitchProps {
@@ -17,6 +18,8 @@ export default function OfflineModeSwitch({
   compact = false,
   mini = false,
 }: OfflineModeSwitchProps) {
+  const theme = useTheme();
+  const styles = useThemedStyles(createStyles);
   const {
     connectionStatus,
     isOfflineModeEnabled,
@@ -120,7 +123,7 @@ export default function OfflineModeSwitch({
       <View style={styles.statusRow}>
         <View style={[styles.statusIndicator, isOnline ? styles.online : styles.offline]}>
           {isSyncing ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={theme.color.text.inverse} />
           ) : (
             <Text style={styles.statusIcon}>{isOnline ? '🟢' : '🔴'}</Text>
           )}
@@ -172,215 +175,216 @@ export default function OfflineModeSwitch({
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#e9ecef',
-  },
+const createStyles = (theme: Theme) =>
+  StyleSheet.create({
+    container: {
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.lg,
+      padding: theme.space[3],
+      marginBottom: theme.space[3],
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
 
-  // Status row
-  statusRow: {
-    marginBottom: 10,
-  },
-  statusIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    alignSelf: 'flex-start',
-  },
-  online: {
-    backgroundColor: '#d4edda',
-  },
-  offline: {
-    backgroundColor: '#f8d7da',
-  },
-  statusIcon: {
-    fontSize: 12,
-    marginRight: 6,
-  },
-  statusText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#333',
-  },
+    // Status row
+    statusRow: {
+      marginBottom: theme.space[2.5],
+    },
+    statusIndicator: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: theme.space[1.5],
+      paddingHorizontal: theme.space[3],
+      borderRadius: theme.radii['2xl'],
+      alignSelf: 'flex-start',
+    },
+    online: {
+      backgroundColor: theme.color.state.success.background,
+    },
+    offline: {
+      backgroundColor: theme.color.state.danger.background,
+    },
+    statusIcon: {
+      fontSize: 12,
+      marginRight: theme.space[1.5],
+    },
+    statusText: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+    },
 
-  // Switch row
-  switchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  switchLabelContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  switchIcon: {
-    fontSize: 18,
-    marginRight: 8,
-  },
-  switchLabel: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#333',
-  },
+    // Switch row
+    switchRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: theme.space[2],
+    },
+    switchLabelContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+    },
+    switchIcon: {
+      fontSize: 18,
+      marginRight: theme.space[2],
+    },
+    switchLabel: {
+      fontSize: 15,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+    },
 
-  switchState: {
-    marginLeft: 10,
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#999',
-  },
-  switchStateOn: {
-    color: '#ff9800',
-  },
+    switchState: {
+      marginLeft: theme.space[2.5],
+      fontSize: 13,
+      fontWeight: '700',
+      color: theme.color.text.subtle,
+    },
+    switchStateOn: {
+      color: theme.color.icon.warning,
+    },
 
-  // Hints and warnings
-  hintText: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 6,
-    fontStyle: 'italic',
-  },
+    // Hints and warnings
+    hintText: {
+      fontSize: 12,
+      color: theme.color.text.muted,
+      marginTop: theme.space[1.5],
+      fontStyle: 'italic',
+    },
 
-  // Stats
-  statsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#e9ecef',
-  },
-  statItem: {
-    alignItems: 'center',
-  },
-  statIcon: {
-    fontSize: 16,
-    marginBottom: 2,
-  },
-  statValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#333',
-  },
-  statLabel: {
-    fontSize: 11,
-    color: '#666',
-    marginTop: 2,
-  },
-  statDivider: {
-    width: 1,
-    height: 40,
-    backgroundColor: '#e9ecef',
-  },
+    // Stats
+    statsContainer: {
+      flexDirection: 'row',
+      justifyContent: 'space-around',
+      alignItems: 'center',
+      marginTop: theme.space[3],
+      paddingTop: theme.space[3],
+      borderTopWidth: 1,
+      borderTopColor: theme.color.border.subtle,
+    },
+    statItem: {
+      alignItems: 'center',
+    },
+    statIcon: {
+      fontSize: 16,
+      marginBottom: 2,
+    },
+    statValue: {
+      fontSize: 18,
+      fontWeight: '700',
+      color: theme.color.text.heading,
+    },
+    statLabel: {
+      fontSize: 11,
+      color: theme.color.text.muted,
+      marginTop: 2,
+    },
+    statDivider: {
+      width: 1,
+      height: 40,
+      backgroundColor: theme.color.border.subtle,
+    },
 
-  // Compact mode
-  compactContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 16,
-  },
-  connectionDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  dotOnline: {
-    backgroundColor: '#28a745',
-  },
-  dotOffline: {
-    backgroundColor: '#dc3545',
-  },
-  compactText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#333',
-    marginRight: 8,
-  },
-  tokenBadge: {
-    fontSize: 11,
-    backgroundColor: '#fff3cd',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
-    marginRight: 4,
-  },
-  pendingBadge: {
-    fontSize: 11,
-    backgroundColor: '#cce5ff',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
+    // Compact mode
+    compactContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: theme.space[2],
+      paddingVertical: theme.space[1],
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.xl,
+    },
+    connectionDot: {
+      width: 8,
+      height: 8,
+      borderRadius: theme.radii.xs,
+      marginRight: theme.space[1.5],
+    },
+    dotOnline: {
+      backgroundColor: theme.color.icon.success,
+    },
+    dotOffline: {
+      backgroundColor: theme.color.icon.danger,
+    },
+    compactText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginRight: theme.space[2],
+    },
+    tokenBadge: {
+      fontSize: 11,
+      backgroundColor: theme.color.state.warning.background,
+      paddingHorizontal: theme.space[1.5],
+      paddingVertical: theme.space[0.5],
+      borderRadius: theme.radii.lg,
+      marginRight: theme.space[1],
+    },
+    pendingBadge: {
+      fontSize: 11,
+      backgroundColor: theme.color.state.info.background,
+      paddingHorizontal: theme.space[1.5],
+      paddingVertical: theme.space[0.5],
+      borderRadius: theme.radii.lg,
+    },
 
-  // Mini mode - versión muy discreta para el header
-  miniContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-    borderRadius: 12,
-    marginRight: 8,
-  },
-  miniContainerOffline: {
-    backgroundColor: 'rgba(220, 53, 69, 0.1)',
-  },
-  miniContainerActive: {
-    backgroundColor: 'rgba(255, 152, 0, 0.15)',
-  },
-  miniContainerWaiting: {
-    backgroundColor: 'rgba(255, 193, 7, 0.1)',
-  },
-  miniDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  miniDotOnline: {
-    backgroundColor: '#28a745',
-  },
-  miniDotOffline: {
-    backgroundColor: '#dc3545',
-    marginRight: 4,
-  },
-  miniDotWaiting: {
-    backgroundColor: '#ffc107',
-    marginRight: 2,
-  },
-  miniWaitingText: {
-    fontSize: 10,
-  },
+    // Mini mode - versión muy discreta para el header
+    miniContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: theme.space[1.5],
+      paddingVertical: theme.space[1],
+      borderRadius: theme.radii.lg,
+      marginRight: theme.space[2],
+    },
+    miniContainerOffline: {
+      backgroundColor: theme.color.state.danger.background,
+    },
+    miniContainerActive: {
+      backgroundColor: theme.color.state.warning.background,
+    },
+    miniContainerWaiting: {
+      backgroundColor: theme.color.state.warning.background,
+    },
+    miniDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+    },
+    miniDotOnline: {
+      backgroundColor: theme.color.icon.success,
+    },
+    miniDotOffline: {
+      backgroundColor: theme.color.icon.danger,
+      marginRight: theme.space[1],
+    },
+    miniDotWaiting: {
+      backgroundColor: theme.color.icon.warning,
+      marginRight: theme.space[0.5],
+    },
+    miniWaitingText: {
+      fontSize: 10,
+    },
 
-  miniTokenCount: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#ff9800',
-    marginLeft: 4,
-  },
-  miniPendingBadge: {
-    backgroundColor: '#007AFF',
-    borderRadius: 8,
-    minWidth: 16,
-    height: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 4,
-  },
-  miniPendingText: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#fff',
-  },
-});
+    miniTokenCount: {
+      fontSize: 10,
+      fontWeight: '600',
+      color: theme.color.icon.warning,
+      marginLeft: theme.space[1],
+    },
+    miniPendingBadge: {
+      backgroundColor: theme.color.icon.accent,
+      borderRadius: theme.radii.md,
+      minWidth: 16,
+      height: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginLeft: theme.space[1],
+    },
+    miniPendingText: {
+      fontSize: 9,
+      fontWeight: '700',
+      color: theme.color.text.onAction,
+    },
+  });

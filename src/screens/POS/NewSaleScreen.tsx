@@ -24,11 +24,14 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { usePOSStore } from '@/store/pos';
+import { useAuthStore } from '@/store/auth';
 import { useOfflineStore } from '@/store/offline';
 import { usePinPadStore } from '@/store/pinpad';
 import { useCollectionsStore } from '@/store/collections';
 import { posService } from '@/services/POSService';
 import { networkMonitor } from '@/services/NetworkMonitor';
+import { offlineLoginService } from '@/services/OfflineLoginService';
+import QRCode from 'qrcode';
 import { OfflineModeSwitch } from '@/components/offline';
 import type { PinPadTransactionResponse } from '@/types/pinpad';
 import type {
@@ -45,12 +48,16 @@ import type {
   OfflineSalePayment,
 } from '@/types/offline';
 import { ROUTES } from '@/constants/routes';
+import { mapOfflineProductToProduct } from '@/utils/posMappers';
 import { CashAlertLevel } from '@/types/collections';
 import { calculateRemainingCents, isIzipayAmountValid, toCents } from '@/utils/paymentFlow';
+import { useTheme, useThemedStyles, type Theme } from '@/design-system';
 
 export default function NewSaleScreen() {
   const navigation = useNavigation();
   const { width: windowWidth } = useWindowDimensions();
+  const theme = useTheme();
+  const styles = useThemedStyles(createStyles);
   const {
     selectedCashRegister,
     currentSession,
@@ -92,7 +99,11 @@ export default function NewSaleScreen() {
     getProductByBarcode: getProductByBarcodeOffline,
     createOfflineSale,
     setConnectionStatus,
+    enableOfflineMode,
   } = useOfflineStore();
+
+  // Auth: sesión offline pura (sin caja/turno seleccionados online)
+  const isOfflineSession = useAuthStore((s) => s.isOfflineSession);
 
   // PinPad store
   const {
@@ -107,8 +118,6 @@ export default function NewSaleScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Product[]>([]);
   const [searching, setSearching] = useState(false);
-  const [barcodeBuffer, setBarcodeBuffer] = useState('');
-  const [lastKeyTime, setLastKeyTime] = useState(0);
   const [showBarcodeSelectionModal, setShowBarcodeSelectionModal] = useState(false);
   const [barcodeSelectionProducts, setBarcodeSelectionProducts] = useState<Product[]>([]);
   const [lastScannedBarcode, setLastScannedBarcode] = useState('');
@@ -126,6 +135,16 @@ export default function NewSaleScreen() {
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const customerSearchRequestIdRef = useRef(0);
   const latestCustomerSearchQueryRef = useRef('');
+
+  // Product search - descartar respuestas obsoletas y aplicar debounce
+  const productSearchRequestIdRef = useRef(0);
+  const latestProductSearchQueryRef = useRef('');
+  const productSearchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Barcode scanner - buffer y timing en refs (sin re-renders)
+  const barcodeBufferRef = useRef('');
+  const lastKeyTimeRef = useRef(0);
+  const handleBarcodeScannedRef = useRef<(query: string) => Promise<void> | void>(() => {});
 
   // Add Customer Modal states
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
@@ -187,11 +206,16 @@ export default function NewSaleScreen() {
   const [showCreditNoteManagementModal, setShowCreditNoteManagementModal] = useState(false);
   const [creditNoteType, setCreditNoteType] = useState<'total' | 'partial' | null>(null);
   const [selectedSaleForCreditNote, setSelectedSaleForCreditNote] = useState<any>(null);
-  const [selectedSaleForCreditNoteManagement, setSelectedSaleForCreditNoteManagement] = useState<any>(null);
-  const [creditNoteReturnedQuantities, setCreditNoteReturnedQuantities] = useState<Record<string, number>>({});
+  const [selectedSaleForCreditNoteManagement, setSelectedSaleForCreditNoteManagement] =
+    useState<any>(null);
+  const [creditNoteReturnedQuantities, setCreditNoteReturnedQuantities] = useState<
+    Record<string, number>
+  >({});
   const [loadingCreditNoteManagement, setLoadingCreditNoteManagement] = useState(false);
   const [selectedProductsForCreditNote, setSelectedProductsForCreditNote] = useState<string[]>([]);
-  const [creditNoteProductQuantities, setCreditNoteProductQuantities] = useState<Record<string, string>>({});
+  const [creditNoteProductQuantities, setCreditNoteProductQuantities] = useState<
+    Record<string, string>
+  >({});
   const [creditNoteRemainingMode, setCreditNoteRemainingMode] = useState(false);
   const [creditNoteMotivo, setCreditNoteMotivo] = useState<string>('06');
   const [creditNoteSustento, setCreditNoteSustento] = useState<string>('');
@@ -222,8 +246,9 @@ export default function NewSaleScreen() {
 
       await initializeFromStorage();
 
-      // Si hay una caja registradora seleccionada pero no hay sesión, intentar cargar la sesión activa
-      if (selectedCashRegister && !currentSession) {
+      // Si hay una caja registradora seleccionada pero no hay sesión, intentar cargar la sesión activa.
+      // En sesión offline pura no hay caja seleccionada ni red, así que salteamos esta llamada.
+      if (!isOfflineSession && selectedCashRegister && !currentSession) {
         console.log('🔄 Intentando cargar sesión activa para caja:', selectedCashRegister.code);
         try {
           await loadActiveSession(selectedCashRegister.id);
@@ -239,6 +264,11 @@ export default function NewSaleScreen() {
       // Initialize offline system
       console.log('📴 Inicializando sistema offline...');
       await initializeOffline();
+
+      // En sesión offline pura, activar modo offline para que búsqueda/venta usen la BD local.
+      if (isOfflineSession) {
+        await enableOfflineMode();
+      }
 
       setIsInitializing(false);
     };
@@ -261,12 +291,13 @@ export default function NewSaleScreen() {
   }, []);
 
   useEffect(() => {
-    // Solo redirigir si ya terminó de inicializar y no hay sesión
-    if (!isInitializing && !currentSession) {
+    // Solo redirigir si ya terminó de inicializar y no hay sesión.
+    // En sesión offline pura no existe turno y no debemos redirigir al dashboard.
+    if (!isInitializing && !currentSession && !isOfflineSession) {
       console.log('⚠️ No hay sesión activa después de inicializar, redirigiendo a dashboard');
       navigation.navigate(ROUTES.POS_DASHBOARD as never);
     }
-  }, [currentSession, isInitializing, navigation]);
+  }, [currentSession, isInitializing, isOfflineSession, navigation]);
 
   useEffect(() => {
     if (selectedCashRegister?.id) {
@@ -274,132 +305,164 @@ export default function NewSaleScreen() {
     }
   }, [selectedCashRegister?.id, refreshTopSellersInBackground]);
 
+  // Mantener actualizada la ref al handler de escaneo (evita closures obsoletos
+  // en el listener global, que se monta una sola vez).
+  useEffect(() => {
+    handleBarcodeScannedRef.current = handleBarcodeScanned;
+  });
 
-  // Listener global para capturar escaneo de código de barras
+  // Listener global para capturar escaneo de código de barras.
+  // Distingue escáner (teclas a < 30ms) de tipeo manual; cualquier tecla "lenta"
+  // reinicia el buffer, por lo que tipear en el TextInput no contamina el escáner.
   useEffect(() => {
     if (Platform.OS !== 'web') return;
 
-    let barcodeTimeout: NodeJS.Timeout;
+    let barcodeTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const SCANNER_KEY_INTERVAL_MS = 30;
+    const SCANNER_MIN_LENGTH = 4;
+    const BUFFER_RESET_MS = 200;
 
     const handleKeyPress = (event: KeyboardEvent) => {
       const currentTime = Date.now();
-      const timeDiff = currentTime - lastKeyTime;
+      const timeDiff = currentTime - lastKeyTimeRef.current;
 
-      // Si pasa más de 100ms entre teclas, reiniciar el buffer (nueva entrada)
-      if (timeDiff > 100) {
-        setBarcodeBuffer('');
-      }
-
-      setLastKeyTime(currentTime);
-
-      // Si es Enter, procesar el código de barras
       if (event.key === 'Enter') {
-        event.preventDefault();
-        if (barcodeBuffer.length > 0) {
-          console.log('📷 Código de barras capturado:', barcodeBuffer);
-          handleBarcodeScanned(barcodeBuffer);
-          setBarcodeBuffer('');
+        const buffer = barcodeBufferRef.current;
+        barcodeBufferRef.current = '';
+        lastKeyTimeRef.current = currentTime;
+        if (barcodeTimeout) {
+          clearTimeout(barcodeTimeout);
+          barcodeTimeout = null;
+        }
+        // Solo procesar como escáner si el buffer alcanzó la longitud mínima
+        // (tipeo manual habrá sido reseteado por el chequeo de timing previo).
+        if (buffer.length >= SCANNER_MIN_LENGTH) {
+          event.preventDefault();
+          console.log('📷 Código de barras capturado:', buffer);
+          void handleBarcodeScannedRef.current(buffer);
         }
         return;
       }
 
-      // Ignorar teclas especiales
-      if (event.key.length > 1) return;
+      // Ignorar teclas especiales (modificadores, flechas, etc.)
+      if (event.key.length > 1) {
+        lastKeyTimeRef.current = currentTime;
+        return;
+      }
 
-      // Agregar carácter al buffer
-      setBarcodeBuffer((prev) => prev + event.key);
+      // Tecla "lenta" => tipeo manual o pausa: reiniciar buffer
+      if (timeDiff > SCANNER_KEY_INTERVAL_MS) {
+        barcodeBufferRef.current = '';
+      }
 
-      // Limpiar buffer después de 200ms de inactividad
-      clearTimeout(barcodeTimeout);
+      barcodeBufferRef.current += event.key;
+      lastKeyTimeRef.current = currentTime;
+
+      if (barcodeTimeout) clearTimeout(barcodeTimeout);
       barcodeTimeout = setTimeout(() => {
-        setBarcodeBuffer('');
-      }, 200);
+        barcodeBufferRef.current = '';
+      }, BUFFER_RESET_MS);
     };
 
     window.addEventListener('keypress', handleKeyPress);
 
     return () => {
       window.removeEventListener('keypress', handleKeyPress);
-      clearTimeout(barcodeTimeout);
+      if (barcodeTimeout) clearTimeout(barcodeTimeout);
     };
-  }, [barcodeBuffer, lastKeyTime, currentSession]);
+  }, []);
 
-  const handleSearchProducts = async (query: string) => {
-    console.log('🔍 handleSearchProducts llamado con query:', query);
-    setSearchQuery(query);
-    if (query.length < 2) {
-      console.log('⚠️ Query muy corto, limpiando resultados');
-      setSearchResults([]);
-      return;
-    }
-
-    // Si está en modo offline, buscar en la base de datos local
-    if (isOfflineModeEnabled) {
-      console.log('📴 Buscando en modo OFFLINE...');
-      try {
-        setSearching(true);
-        const offlineResults = await searchProductsOffline(query, 20);
-        console.log('✅ Productos encontrados (offline):', offlineResults.length);
-
-        // Convertir OfflineProduct a Product para compatibilidad
-        const results: Product[] = offlineResults.map((p) => ({
-          id: p.id,
-          sku: p.sku,
-          barcode: p.barcode,
-          name: p.name,
-          code: p.sku || p.barcode,
-          categoryName: p.categoryName,
-          salePriceCents: p.salePriceCents,
-          price: p.salePriceCents / 100,
-          stock: p.localStock,
-          availableStock: p.localStock,
-          taxType: p.taxType,
-          taxRate: p.taxType === 'GRAVADO' ? 18 : 0,
-          imageUrl: p.imageUrl,
-          isActive: true,
-        }));
-
-        setSearchResults(results);
-      } catch (error) {
-        console.error('❌ Error buscando productos offline:', error);
-        Alert.alert('Error', 'Error al buscar productos en modo offline.');
-        setSearchResults([]);
-      } finally {
-        setSearching(false);
+  // Cleanup del debounce de búsqueda al desmontar
+  useEffect(() => {
+    return () => {
+      if (productSearchDebounceRef.current) {
+        clearTimeout(productSearchDebounceRef.current);
+        productSearchDebounceRef.current = null;
       }
-      return;
-    }
+    };
+  }, []);
 
-    // Modo online normal
-    console.log('📋 currentSession:', currentSession);
-    if (!currentSession) {
-      console.error('❌ No hay sesión activa');
-      Alert.alert('Error', 'No hay una sesión activa. Por favor, abre una sesión primero.');
-      return;
-    }
+  // Ejecuta la búsqueda real, descartando respuestas obsoletas y filtrando OOS.
+  const runProductSearch = async (query: string) => {
+    const requestId = productSearchRequestIdRef.current + 1;
+    productSearchRequestIdRef.current = requestId;
 
-    console.log('🔑 cashRegisterId:', currentSession.cashRegisterId);
+    const isStale = () =>
+      requestId !== productSearchRequestIdRef.current ||
+      query !== latestProductSearchQueryRef.current;
 
     try {
-      setSearching(true);
+      if (isOfflineModeEnabled) {
+        console.log('📴 Buscando en modo OFFLINE...');
+        const offlineResults = await searchProductsOffline(query, 20);
+        if (isStale()) return;
+        const mapped: Product[] = offlineResults
+          .filter((p) => p.localStock > 0)
+          .map(mapOfflineProductToProduct);
+        console.log('✅ Productos encontrados (offline):', mapped.length);
+        setSearchResults(mapped);
+        return;
+      }
+
+      if (!currentSession) {
+        console.error('❌ No hay sesión activa');
+        Alert.alert('Error', 'No hay una sesión activa. Por favor, abre una sesión primero.');
+        setSearchResults([]);
+        return;
+      }
+
       console.log('🚀 Iniciando búsqueda de productos...');
       const results = await posService.searchProducts(query, 20, currentSession.cashRegisterId);
-      console.log('✅ Productos encontrados:', results.length);
-      if (results.length > 0) {
-        console.log('📦 Primer producto:', results[0]);
-      }
-      // El backend ya filtra por productos activos, no necesitamos filtrar aquí
-      setSearchResults(results);
+      if (isStale()) return;
+      const filtered = results.filter((p) => (p.stock ?? p.availableStock ?? 0) > 0);
+      console.log(`✅ Productos encontrados: ${results.length} (con stock: ${filtered.length})`);
+      setSearchResults(filtered);
     } catch (error) {
+      if (isStale()) return;
       console.error('❌ Error searching products:', error);
-      Alert.alert('Error', 'No se pudieron buscar productos. Verifica tu conexión.');
+      const msg = ((error as Error)?.message || '').toLowerCase();
+      if (msg.includes('sesi') && msg.includes('expir')) {
+        Alert.alert(
+          'Sesión expirada',
+          'Tu sesión ha expirado. Por favor, inicia sesión nuevamente.'
+        );
+      } else {
+        Alert.alert('Error', 'No se pudieron buscar productos. Verifica tu conexión.');
+      }
       setSearchResults([]);
     } finally {
-      setSearching(false);
+      if (requestId === productSearchRequestIdRef.current) {
+        setSearching(false);
+      }
     }
   };
 
-  // Manejar escaneo de código de barras (cuando se presiona Enter)
+  const handleSearchProducts = (query: string) => {
+    setSearchQuery(query);
+    latestProductSearchQueryRef.current = query;
+
+    if (productSearchDebounceRef.current) {
+      clearTimeout(productSearchDebounceRef.current);
+      productSearchDebounceRef.current = null;
+    }
+
+    if (query.length < 2) {
+      // Invalidar cualquier respuesta en vuelo y limpiar resultados
+      productSearchRequestIdRef.current += 1;
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+
+    setSearching(true);
+    productSearchDebounceRef.current = setTimeout(() => {
+      void runProductSearch(query);
+    }, 250);
+  };
+
+  // Manejar escaneo de código de barras (cuando se presiona Enter en el escáner).
+  // Respeta modo offline para no cruzar stock online con la BD local.
   const handleBarcodeScanned = async (query: string) => {
     console.log('📷 Código escaneado:', query);
 
@@ -408,6 +471,46 @@ export default function NewSaleScreen() {
       return;
     }
 
+    // ============ MODO OFFLINE ============
+    if (isOfflineModeEnabled) {
+      try {
+        setSearching(true);
+        // Primero intentar barcode exacto, luego búsqueda por texto
+        const byBarcode = await getProductByBarcodeOffline(query);
+        const offlineProducts: OfflineProduct[] = byBarcode
+          ? [byBarcode]
+          : await searchProductsOffline(query, 20);
+
+        const inStock = offlineProducts.filter((p) => p.localStock > 0);
+        const mapped: Product[] = inStock.map(mapOfflineProductToProduct);
+
+        if (mapped.length === 0) {
+          Alert.alert(
+            'No encontrado',
+            offlineProducts.length > 0
+              ? `El producto con código "${query}" no tiene stock disponible offline.`
+              : `No se encontró ningún producto con el código: ${query}`
+          );
+        } else if (mapped.length === 1) {
+          await handleAddProduct(mapped[0]);
+          setSearchQuery('');
+          setSearchResults([]);
+        } else {
+          setLastScannedBarcode(query);
+          setBarcodeSelectionProducts(mapped);
+          setShowBarcodeSelectionModal(true);
+          setSearchResults([]);
+        }
+      } catch (error) {
+        console.error('❌ Error al procesar código offline:', error);
+        Alert.alert('Error', 'No se pudo procesar el código en modo offline.');
+      } finally {
+        setSearching(false);
+      }
+      return;
+    }
+
+    // ============ MODO ONLINE ============
     if (!currentSession) {
       console.error('❌ No hay sesión activa');
       Alert.alert('Error', 'No hay una sesión activa. Por favor, abre una sesión primero.');
@@ -424,20 +527,15 @@ export default function NewSaleScreen() {
           const customerResults = await posService.autocompleteCustomers(query, 10);
 
           if (customerResults.data.length > 0) {
-            // Buscar coincidencia exacta por número de documento
             const exactMatch = customerResults.data.find(
               (customer) => customer.documentNumber === query
             );
 
             if (exactMatch) {
               console.log('✅ Cliente encontrado:', exactMatch.fullName || exactMatch.name);
-
-              // Si ya hay un cliente, reemplazarlo
               if (selectedCustomer) {
                 console.log('🔄 Reemplazando cliente anterior:', selectedCustomer.name);
               }
-
-              // Agregar el nuevo cliente
               handleSelectCustomer(exactMatch);
               setSearching(false);
               return;
@@ -445,44 +543,47 @@ export default function NewSaleScreen() {
           }
 
           console.log('ℹ️ No se encontró cliente con DNI:', query);
-          // Si no se encuentra cliente, continuar buscando como producto
         } catch (customerError) {
           console.log('⚠️ Error al buscar cliente, continuando con búsqueda de producto');
         }
       }
 
-      // Buscar como producto (código de barras)
       console.log('🔍 Buscando producto por código de barras...');
       const results = await posService.searchProducts(query, 20, currentSession.cashRegisterId);
+      const inStock = results.filter((p) => (p.stock ?? p.availableStock ?? 0) > 0);
 
-      if (results.length === 0) {
-        console.log('❌ No se encontró ningún producto con ese código');
+      if (inStock.length === 0) {
+        console.log('❌ No se encontró producto con stock para ese código');
         Alert.alert(
           'No encontrado',
-          `No se encontró ningún producto o cliente con el código: ${query}`
+          results.length > 0
+            ? `El producto con código "${query}" no tiene stock disponible.`
+            : `No se encontró ningún producto o cliente con el código: ${query}`
         );
-        setSearchQuery('');
-        setSearchResults([]);
-      } else if (results.length === 1) {
-        // Si hay exactamente 1 resultado, agregarlo automáticamente al carrito
+      } else if (inStock.length === 1) {
         console.log('✅ Producto encontrado, agregando al carrito automáticamente');
-        await handleAddProduct(results[0]);
-        // Limpiar búsqueda para el siguiente escaneo
+        await handleAddProduct(inStock[0]);
         setSearchQuery('');
         setSearchResults([]);
       } else {
-        // Si hay múltiples resultados, mostrar modal grande para seleccionar producto
-        console.log(`⚠️ Se encontraron ${results.length} productos con el mismo código`);
+        console.log(`⚠️ Se encontraron ${inStock.length} productos con el mismo código`);
         setLastScannedBarcode(query);
-        setBarcodeSelectionProducts(results);
+        setBarcodeSelectionProducts(inStock);
         setShowBarcodeSelectionModal(true);
         setSearchResults([]);
       }
     } catch (error) {
       console.error('❌ Error al procesar código escaneado:', error);
-      Alert.alert('Error', 'No se pudo procesar el código. Verifica tu conexión.');
-      setSearchQuery('');
-      setSearchResults([]);
+      const msg = ((error as Error)?.message || '').toLowerCase();
+      if (msg.includes('sesi') && msg.includes('expir')) {
+        Alert.alert(
+          'Sesión expirada',
+          'Tu sesión ha expirado. Por favor, inicia sesión nuevamente.'
+        );
+      } else {
+        Alert.alert('Error', 'No se pudo procesar el código. Verifica tu conexión.');
+      }
+      // No limpiamos searchQuery: preservamos lo tipeado por el usuario
     } finally {
       setSearching(false);
     }
@@ -500,6 +601,16 @@ export default function NewSaleScreen() {
 
       if (!stock || stock <= 0) {
         Alert.alert('Sin Stock', `El producto "${product.name}" no tiene stock disponible.`);
+        return;
+      }
+
+      // Verificar si la cantidad ya en carrito alcanza el stock disponible
+      const currentCartQty = cartItems.find((item) => item.productId === product.id)?.quantity || 0;
+      if (currentCartQty >= stock) {
+        Alert.alert(
+          'Stock máximo alcanzado',
+          `Solo hay ${stock} unidad(es) disponible(s) de "${product.name}" y ya están en el carrito.`
+        );
         return;
       }
 
@@ -843,8 +954,8 @@ export default function NewSaleScreen() {
       );
       console.log('📄 [VENTAS] Página actual:', salesData.pagination?.page || 1);
       console.log('📄 [VENTAS] Total de páginas:', salesData.pagination?.totalPages || 1);
-      console.log('💰 [VENTAS] Total ventas (cents):', salesData.summary?.totalSalesCents || 0);
-      console.log('💳 [VENTAS] Total pagos (cents):', salesData.summary?.totalPaymentsCents || 0);
+      console.log('💰 [VENTAS] Total ventas (cents):', salesData.summary?.totalSales || 0);
+      console.log('💳 [VENTAS] Total pagos (cents):', salesData.summary?.totalPayments || 0);
 
       if (salesData.sales && salesData.sales.length > 0) {
         console.log(
@@ -905,7 +1016,10 @@ export default function NewSaleScreen() {
     if (isOfflineModeEnabled) {
       console.log('📴 Procesando venta en MODO OFFLINE...');
 
-      if (!selectedCashRegister || !currentSession) {
+      // En sesión offline pura no hay caja/turno seleccionados: el store
+      // deriva caja del deviceToken y vendedor del JWT offline, y la venta
+      // queda pendiente de reasignar al abrir turno online.
+      if (!isOfflineSession && (!selectedCashRegister || !currentSession)) {
         Alert.alert('Error', 'No hay sesión activa');
         isConfirmingSaleRef.current = false;
         setIsConfirmingSale(false);
@@ -950,13 +1064,28 @@ export default function NewSaleScreen() {
               }
             : undefined,
           documentType,
-          cashRegisterId: selectedCashRegister.id,
-          sessionId: currentSession.id,
-          sellerId: currentSession.userId,
-          cashRegisterCode: selectedCashRegister.code,
+          // En sesión offline pura van undefined: el store deriva del deviceToken
+          // y marca la venta como pendingReassignment.
+          // Si la app está en modo offline, NUNCA pasamos sessionId aunque haya
+          // currentSession en el store: esa sessionId podría ser un turno ya
+          // cerrado en el backend y bloquearía la sync posterior. La reasignación
+          // al abrir el próximo turno online corrige el sessionId.
+          cashRegisterId: selectedCashRegister?.id,
+          sessionId: isOfflineSession || isOfflineModeEnabled ? undefined : currentSession?.id,
+          // Si hay sesión offline activa, el vendedor real es el sub del JWT offline.
+          sellerId: offlineLoginService.getCurrentSession()?.payload.sub ?? currentSession?.userId,
+          cashRegisterCode: selectedCashRegister?.code,
         });
 
         console.log('✅ Venta offline creada:', offlineSale.offlineTicketCode);
+
+        // Limpiar carrito inmediatamente tras venta offline exitosa (paridad
+        // con online, que limpia dentro de createSale). Esto evita duplicar
+        // la venta si la app se cierra antes de que el usuario cierre el
+        // modal de éxito: al reabrir, no quedará el carrito persistido con
+        // los mismos items ya vendidos.
+        clearCart();
+        clearPayments();
 
         // Cerrar modal de pago
         setShowPaymentModal(false);
@@ -1131,7 +1260,11 @@ export default function NewSaleScreen() {
     }
   };
 
-  const handleGenerateCreditNote = async (saleId: string, remainingOnly = false, sourceSaleData?: any) => {
+  const handleGenerateCreditNote = async (
+    saleId: string,
+    remainingOnly = false,
+    sourceSaleData?: any
+  ) => {
     console.log('🔵 [CREDIT_NOTE] handleGenerateCreditNote llamado');
     console.log('🔵 [CREDIT_NOTE] saleId:', saleId);
     console.log('🔵 [CREDIT_NOTE] remainingOnly:', remainingOnly);
@@ -1156,7 +1289,10 @@ export default function NewSaleScreen() {
         : saleData.sale.items;
 
       if (remainingOnly && availableItems.length === 0) {
-        Alert.alert('Sin saldo disponible', 'Todos los productos de esta venta ya fueron devueltos.');
+        Alert.alert(
+          'Sin saldo disponible',
+          'Todos los productos de esta venta ya fueron devueltos.'
+        );
         return;
       }
 
@@ -1366,18 +1502,27 @@ export default function NewSaleScreen() {
     'Producto sin nombre';
 
   const getCreditNoteProductSku = (item: any) =>
-    item.productCode || item.codigo || item.product?.sku || item.product?.code || item.sku || item.code || '';
+    item.productCode ||
+    item.codigo ||
+    item.product?.sku ||
+    item.product?.code ||
+    item.sku ||
+    item.code ||
+    '';
 
   const centsToAmount = (value: unknown) => Number(value || 0) / 100;
 
   const getCreditNoteProductUnitPrice = (item: any, saleData?: any, index?: number) => {
-    const summaryItem = saleData ? findCreditNoteSummaryForSaleItem(saleData, item, index ?? 0) : null;
+    const summaryItem = saleData
+      ? findCreditNoteSummaryForSaleItem(saleData, item, index ?? 0)
+      : null;
     const sourceItem = summaryItem || item;
 
     if (sourceItem.unitPriceCents != null) return centsToAmount(sourceItem.unitPriceCents);
     if (sourceItem.priceCents != null) return centsToAmount(sourceItem.priceCents);
     if (sourceItem.salePriceCents != null) return centsToAmount(sourceItem.salePriceCents);
-    if (sourceItem.product?.salePriceCents != null) return centsToAmount(sourceItem.product.salePriceCents);
+    if (sourceItem.product?.salePriceCents != null)
+      return centsToAmount(sourceItem.product.salePriceCents);
     if (sourceItem.product?.priceCents != null) return centsToAmount(sourceItem.product.priceCents);
     if (sourceItem.unitPrice != null) return centsToAmount(sourceItem.unitPrice);
     if (sourceItem.price != null) return Number(sourceItem.price || 0);
@@ -1421,7 +1566,9 @@ export default function NewSaleScreen() {
     saleData?.sale?.creditNotes ||
     saleData?.sale?.creditNoteDocuments ||
     saleData?.sale?.documents?.filter((document: any) =>
-      String(document.documentType || document.type || '').toLowerCase().includes('credit')
+      String(document.documentType || document.type || '')
+        .toLowerCase()
+        .includes('credit')
     ) ||
     saleData?.creditNotes ||
     saleData?.creditNoteDocuments ||
@@ -1449,7 +1596,9 @@ export default function NewSaleScreen() {
     const summaryItems = getCreditNoteItemsFromSaleData(saleData);
 
     return summaryItems.find((creditNoteItem: any) => {
-      const creditSaleItemId = String(creditNoteItem.saleItemId || creditNoteItem.id || creditNoteItem.itemId || '');
+      const creditSaleItemId = String(
+        creditNoteItem.saleItemId || creditNoteItem.id || creditNoteItem.itemId || ''
+      );
       const creditProductId = String(creditNoteItem.productId || creditNoteItem.product?.id || '');
       const creditSku = getCreditNoteProductSku(creditNoteItem);
 
@@ -1503,8 +1652,10 @@ export default function NewSaleScreen() {
         return (
           (!!creditProductId && saleProductId === creditProductId) ||
           (!!creditNoteItem.sku && getCreditNoteProductSku(saleItem) === creditNoteItem.sku) ||
-          (!!creditNoteItem.codigo && getCreditNoteProductSku(saleItem) === creditNoteItem.codigo) ||
-          (!!creditNoteItem.productCode && getCreditNoteProductSku(saleItem) === creditNoteItem.productCode) ||
+          (!!creditNoteItem.codigo &&
+            getCreditNoteProductSku(saleItem) === creditNoteItem.codigo) ||
+          (!!creditNoteItem.productCode &&
+            getCreditNoteProductSku(saleItem) === creditNoteItem.productCode) ||
           getCreditNoteProductName(saleItem) === getCreditNoteProductName(creditNoteItem)
         );
       });
@@ -1530,7 +1681,9 @@ export default function NewSaleScreen() {
     returnedQuantities: Record<string, number> = creditNoteReturnedQuantities,
     saleData?: any
   ) => {
-    const summaryItem = saleData ? findCreditNoteSummaryForSaleItem(saleData, item, index ?? 0) : null;
+    const summaryItem = saleData
+      ? findCreditNoteSummaryForSaleItem(saleData, item, index ?? 0)
+      : null;
     if (summaryItem?.returnedQuantity != null) {
       return normalizeCreditNoteQuantity(summaryItem.returnedQuantity, 0);
     }
@@ -1551,14 +1704,20 @@ export default function NewSaleScreen() {
     }
 
     return Math.max(
-      getCreditNoteProductQuantity(item) - getCreditNoteCreditedQuantity(item, index, returnedQuantities, saleData),
+      getCreditNoteProductQuantity(item) -
+        getCreditNoteCreditedQuantity(item, index, returnedQuantities, saleData),
       0
     );
   };
 
   const getCreditNoteItemLimitQuantity = (item: any, index: number) =>
     creditNoteRemainingMode
-      ? getCreditNoteAvailableQuantity(item, index, creditNoteReturnedQuantities, selectedSaleForCreditNote)
+      ? getCreditNoteAvailableQuantity(
+          item,
+          index,
+          creditNoteReturnedQuantities,
+          selectedSaleForCreditNote
+        )
       : getCreditNoteProductQuantity(item);
 
   const getCreditNoteEditedQuantity = (productId: string, defaultQuantity: number) => {
@@ -1566,7 +1725,11 @@ export default function NewSaleScreen() {
     return Number(quantityText.replace(',', '.'));
   };
 
-  const updateCreditNoteProductQuantity = (productId: string, quantity: string, maxQuantity: number) => {
+  const updateCreditNoteProductQuantity = (
+    productId: string,
+    quantity: string,
+    maxQuantity: number
+  ) => {
     const sanitizedQuantity = quantity.replace(/[^0-9.,]/g, '');
     const numericQuantity = Number(sanitizedQuantity.replace(',', '.'));
     const limitedQuantity =
@@ -1628,12 +1791,18 @@ export default function NewSaleScreen() {
         status: detailedSale?.status || saleData.sale.status,
         creditNoteType: detailedSale?.creditNoteType || saleData.sale.creditNoteType,
         hasCreditNote: detailedSale?.hasCreditNote ?? saleData.sale.hasCreditNote,
-        items: pickFirstNonEmptyArray(detailedSale?.items, detailedSale?.sale?.items, saleData.sale.items),
+        items: pickFirstNonEmptyArray(
+          detailedSale?.items,
+          detailedSale?.sale?.items,
+          saleData.sale.items
+        ),
         creditNotes: pickFirstNonEmptyArray(
           detailedSale?.creditNotes,
           detailedSale?.creditNoteDocuments,
           detailedSale?.documents?.filter((document: any) =>
-            String(document.documentType || document.type || '').toLowerCase().includes('credit')
+            String(document.documentType || document.type || '')
+              .toLowerCase()
+              .includes('credit')
           ),
           saleData.sale.creditNotes
         ),
@@ -1723,10 +1892,22 @@ export default function NewSaleScreen() {
           };
 
       // Generar URL del QR para validación posterior
-      const qrUrl = `https://erp-aio-offline-documents.com/public/receipt/${saleData.token}`;
+      const qrUrl = `https://erp-aio-offline-documents.com/public/receipt/view/${saleData.token}`;
+
+      // Generar QR localmente como data URL (sin red, requerido en modo offline)
+      let qrImageDataUrl = '';
+      try {
+        qrImageDataUrl = await QRCode.toDataURL(qrUrl, {
+          margin: 0,
+          width: 200,
+          errorCorrectionLevel: 'M',
+        });
+      } catch (qrError) {
+        console.error('❌ [OFFLINE] Error generando QR local:', qrError);
+      }
 
       // Generar contenido HTML del ticket
-      const ticketHtml = generateOfflineTicketHtml(saleData, companyInfo, qrUrl);
+      const ticketHtml = generateOfflineTicketHtml(saleData, companyInfo, qrUrl, qrImageDataUrl);
 
       // Verificar si estamos en Electron
       const isElectron = !!(window as any).electronAPI?.printHTML;
@@ -1770,7 +1951,8 @@ export default function NewSaleScreen() {
   const generateOfflineTicketHtml = (
     sale: OfflineSale,
     companyInfo: { ruc: string; razonSocial: string; nombreComercial?: string; direccion: string },
-    qrUrl: string
+    qrUrl: string,
+    qrImageDataUrl: string
   ): string => {
     const fechaVenta = new Date(sale.createdAt).toLocaleString('es-PE', {
       day: '2-digit',
@@ -1804,8 +1986,11 @@ export default function NewSaleScreen() {
       )
       .join('');
 
-    // Generar QR como imagen usando API de QR (tamaño grande para impresoras térmicas)
-    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=0&data=${encodeURIComponent(qrUrl)}`;
+    // QR generado localmente (data URL embebida, no requiere red).
+    // Fallback al endpoint público si la generación local falló por alguna razón.
+    const qrImageUrl =
+      qrImageDataUrl ||
+      `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=0&data=${encodeURIComponent(qrUrl)}`;
 
     return `
       <!DOCTYPE html>
@@ -2016,22 +2201,35 @@ export default function NewSaleScreen() {
   );
   const safeTopSellerCardSize = Math.min(Math.max(topSellerCardSize, 90), 280);
 
-  const renderProductItem = ({ item }: { item: Product }) => (
-    <TouchableOpacity style={styles.productItem} onPress={() => handleAddProduct(item)}>
-      {item.imageUrl ? (
-        <Image source={{ uri: item.imageUrl }} style={styles.productImage} resizeMode="cover" />
-      ) : (
-        <View style={styles.productImagePlaceholder}>
-          <Text style={styles.productImagePlaceholderText}>📦</Text>
+  const renderProductItem = ({ item }: { item: Product }) => {
+    const stock = item.availableStock ?? item.stock ?? 0;
+    const isOutOfStock = stock <= 0;
+    const isLowStock = stock > 0 && stock <= 5;
+    const stockStyle = isOutOfStock
+      ? styles.productStockOut
+      : isLowStock
+        ? styles.productStockLow
+        : styles.productStockOk;
+    return (
+      <TouchableOpacity style={styles.productItem} onPress={() => handleAddProduct(item)}>
+        {item.imageUrl ? (
+          <Image source={{ uri: item.imageUrl }} style={styles.productImage} resizeMode="cover" />
+        ) : (
+          <View style={styles.productImagePlaceholder}>
+            <Text style={styles.productImagePlaceholderText}>📦</Text>
+          </View>
+        )}
+        <View style={styles.productInfo}>
+          <Text style={styles.productName}>{item.name}</Text>
+          <Text style={styles.productCode}>Código: {item.code}</Text>
+          <Text style={styles.productPrice}>{formatCurrency(item.price || 0)}</Text>
+          <Text style={[styles.productStock, stockStyle]}>
+            Stock: {stock} {isOutOfStock ? '(sin stock)' : ''}
+          </Text>
         </View>
-      )}
-      <View style={styles.productInfo}>
-        <Text style={styles.productName}>{item.name}</Text>
-        <Text style={styles.productCode}>Código: {item.code}</Text>
-        <Text style={styles.productPrice}>{formatCurrency(item.price || 0)}</Text>
-      </View>
-    </TouchableOpacity>
-  );
+      </TouchableOpacity>
+    );
+  };
 
   const renderTopSellerItem = ({ item }: { item: Product }) => {
     const topSellerSquareSize = Math.round(safeTopSellerCardSize * 0.78);
@@ -2074,10 +2272,27 @@ export default function NewSaleScreen() {
     const taxRate = item.taxRate || 0;
     // El total del item es simplemente cantidad * precio (que ya incluye IGV) - descuento
     const itemTotal = item.quantity * unitPrice - (item.discount || 0);
+    const availableStock: number | undefined =
+      typeof item.availableStock === 'number' ? item.availableStock : undefined;
+    const atStockLimit = typeof availableStock === 'number' && item.quantity >= availableStock;
+
+    const notifyStockLimit = () => {
+      if (typeof availableStock === 'number') {
+        Alert.alert(
+          'Stock máximo alcanzado',
+          `Solo hay ${availableStock} unidad(es) disponible(s) de "${item.productName}".`
+        );
+      }
+    };
 
     const handleQuantityChange = (text: string) => {
       const newQuantity = parseInt(text, 10);
       if (!isNaN(newQuantity) && newQuantity > 0) {
+        if (typeof availableStock === 'number' && newQuantity > availableStock) {
+          notifyStockLimit();
+          updateCartItem(index, availableStock);
+          return;
+        }
         updateCartItem(index, newQuantity);
       } else if (text === '') {
         // Permitir campo vacío temporalmente
@@ -2091,6 +2306,14 @@ export default function NewSaleScreen() {
         // Si el valor no es válido, restaurar a 1
         updateCartItem(index, 1);
       }
+    };
+
+    const handleIncrement = () => {
+      if (atStockLimit) {
+        notifyStockLimit();
+        return;
+      }
+      updateCartItem(index, item.quantity + 1);
     };
 
     return (
@@ -2152,18 +2375,26 @@ export default function NewSaleScreen() {
                   style={styles.quantityInput}
                   value={String(item.quantity)}
                   onChangeText={handleQuantityChange}
-                  onBlur={(e) => handleQuantityBlur(e.nativeEvent.text)}
+                  onBlur={(e) =>
+                    handleQuantityBlur(
+                      (e.nativeEvent as { text?: string }).text ?? String(item.quantity)
+                    )
+                  }
                   keyboardType="numeric"
                   selectTextOnFocus
                   maxLength={4}
                 />
                 <TouchableOpacity
-                  style={styles.quantityButton}
-                  onPress={() => updateCartItem(index, item.quantity + 1)}
+                  style={[styles.quantityButton, atStockLimit && styles.quantityButtonDisabled]}
+                  onPress={handleIncrement}
                 >
                   <Text style={styles.quantityButtonText}>+</Text>
                 </TouchableOpacity>
               </View>
+
+              {typeof availableStock === 'number' && (
+                <Text style={styles.cartItemStock}>Stock disponible: {availableStock}</Text>
+              )}
 
               <Text style={styles.cartItemTotal}>Total: {formatCurrency(itemTotal)}</Text>
             </View>
@@ -2179,7 +2410,10 @@ export default function NewSaleScreen() {
       return;
     }
 
-    navigation.navigate(ROUTES.CASH_COLLECTION as never, { autoStart: true } as never);
+    (navigation.navigate as unknown as (route: string, params?: unknown) => void)(
+      ROUTES.CASH_COLLECTION,
+      { autoStart: true }
+    );
   };
 
   const currentCashCents = cashStatus?.currentCashCents ?? 0;
@@ -2192,13 +2426,13 @@ export default function NewSaleScreen() {
   const getCashCircleColor = () => {
     switch (cashStatus?.alertLevel) {
       case CashAlertLevel.BLOCKED:
-        return '#F44336';
+        return theme.color.action.danger.background;
       case CashAlertLevel.CRITICAL:
-        return '#FF9800';
+        return theme.color.icon.warning;
       case CashAlertLevel.WARNING:
-        return '#FFC107';
+        return theme.color.state.warning.border;
       default:
-        return '#4CAF50';
+        return theme.color.action.success.background;
     }
   };
 
@@ -2249,12 +2483,12 @@ export default function NewSaleScreen() {
                 styles.cashCircularVisible,
                 Platform.OS === 'web'
                   ? ({
-                      background: `conic-gradient(${cashCircleColor} 0deg ${progressDegrees}deg, #D9D9D9 ${progressDegrees}deg 360deg)`,
-                      borderColor: '#1F2937',
+                      background: `conic-gradient(${cashCircleColor} 0deg ${progressDegrees}deg, ${theme.color.border.subtle} ${progressDegrees}deg 360deg)`,
+                      borderColor: theme.color.action.primary.background,
                     } as any)
                   : {
-                      backgroundColor: '#111827',
-                      borderColor: '#111827',
+                      backgroundColor: theme.color.action.primary.background,
+                      borderColor: theme.color.action.primary.background,
                     },
               ]}
             >
@@ -2270,11 +2504,11 @@ export default function NewSaleScreen() {
           <OfflineModeSwitch mini />
           <TouchableOpacity
             style={styles.recentSalesButton}
-            onPress={handleLoadRecentSales}
+            onPress={() => handleLoadRecentSales()}
             disabled={loadingSales || isOfflineModeEnabled}
           >
             {loadingSales ? (
-              <ActivityIndicator size="small" color="#007AFF" />
+              <ActivityIndicator size="small" color={theme.color.text.link} />
             ) : (
               <>
                 <Text style={styles.recentSalesIcon}>📋</Text>
@@ -2282,9 +2516,11 @@ export default function NewSaleScreen() {
               </>
             )}
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => navigation.navigate(ROUTES.POS_DASHBOARD as never)}>
-            <Text style={styles.menuButton}>☰</Text>
-          </TouchableOpacity>
+          {!isOfflineSession && (
+            <TouchableOpacity onPress={() => navigation.navigate(ROUTES.POS_DASHBOARD as never)}>
+              <Text style={styles.menuButton}>☰</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
@@ -2297,7 +2533,7 @@ export default function NewSaleScreen() {
               value={searchQuery}
               onChangeText={handleSearchProducts}
               placeholder="Buscar productos (manual) o escanear código de barras..."
-              placeholderTextColor="#999"
+              placeholderTextColor={theme.color.text.placeholder}
               returnKeyType="search"
             />
             {searching && <ActivityIndicator style={styles.searchLoader} />}
@@ -2316,7 +2552,9 @@ export default function NewSaleScreen() {
             <View style={styles.topSellersSection}>
               <View style={styles.topSellersHeader}>
                 <Text style={styles.topSellersTitle}>Más vendidos</Text>
-                {isTopSellersLoading && <ActivityIndicator size="small" color="#007AFF" />}
+                {isTopSellersLoading && (
+                  <ActivityIndicator size="small" color={theme.color.text.link} />
+                )}
               </View>
 
               <FlatList
@@ -2370,10 +2608,15 @@ export default function NewSaleScreen() {
                       <View
                         style={[
                           styles.offlineCustomerBadge,
-                          { backgroundColor: '#FFF3E0', marginTop: 4 },
+                          {
+                            backgroundColor: theme.color.state.warning.background,
+                            marginTop: theme.space[1],
+                          },
                         ]}
                       >
-                        <Text style={{ fontSize: 11, color: '#E65100' }}>📴 Cliente Offline</Text>
+                        <Text style={{ fontSize: 11, color: theme.color.state.warning.text }}>
+                          📴 Cliente Offline
+                        </Text>
                       </View>
                     </View>
                     <TouchableOpacity
@@ -2433,7 +2676,7 @@ export default function NewSaleScreen() {
                         value={customerSearchQuery}
                         onChangeText={handleSearchCustomers}
                         placeholder="Buscar cliente por DNI, RUC o nombre..."
-                        placeholderTextColor="#999"
+                        placeholderTextColor={theme.color.text.placeholder}
                         onFocus={() => {
                           const normalizedQuery = customerSearchQuery.trim();
                           const isValidDNI = /^\d{8}$/.test(normalizedQuery);
@@ -2447,7 +2690,7 @@ export default function NewSaleScreen() {
                         <ActivityIndicator
                           style={styles.customerSearchLoader}
                           size="small"
-                          color="#007AFF"
+                          color={theme.color.text.link}
                         />
                       )}
                     </View>
@@ -2761,10 +3004,8 @@ export default function NewSaleScreen() {
                       const isIzipay =
                         selectedMethod?.code?.includes('IZIPAY') || selectedMethod?.isIzipay;
                       const amount = parseFloat(paymentAmount);
-                      const remaining = calculateRemainingCents(
-                        getCartTotal(),
-                        getPaymentsTotal()
-                      ) / 100;
+                      const remaining =
+                        calculateRemainingCents(getCartTotal(), getPaymentsTotal()) / 100;
 
                       if (isIzipay && amount > remaining) {
                         return styles.buttonDisabled;
@@ -3050,7 +3291,7 @@ export default function NewSaleScreen() {
                 }}
               >
                 {isLoading || isConfirmingSale ? (
-                  <ActivityIndicator color="#FFFFFF" />
+                  <ActivityIndicator color={theme.color.text.onAction} />
                 ) : (
                   <Text style={styles.modalConfirmButtonText}>Confirmar Venta</Text>
                 )}
@@ -3289,63 +3530,71 @@ export default function NewSaleScreen() {
             </ScrollView>
 
             {/* Paginación */}
-            {activeSalesData && activeSalesData.pagination && (() => {
-              const page = Math.max(1, Number(activeSalesData.pagination.page) || 1);
-              const totalPages = Math.max(1, Number(activeSalesData.pagination.totalPages) || 1);
-              const hasPreviousPage =
-                typeof activeSalesData.pagination.hasPreviousPage === 'boolean'
-                  ? activeSalesData.pagination.hasPreviousPage
-                  : page > 1;
-              const hasNextPage =
-                typeof activeSalesData.pagination.hasNextPage === 'boolean'
-                  ? activeSalesData.pagination.hasNextPage
-                  : page < totalPages;
+            {activeSalesData &&
+              activeSalesData.pagination &&
+              (() => {
+                const page = Math.max(1, Number(activeSalesData.pagination.page) || 1);
+                const totalPages = Math.max(1, Number(activeSalesData.pagination.totalPages) || 1);
+                const hasPreviousPage =
+                  typeof activeSalesData.pagination.hasPreviousPage === 'boolean'
+                    ? activeSalesData.pagination.hasPreviousPage
+                    : page > 1;
+                const hasNextPage =
+                  typeof activeSalesData.pagination.hasNextPage === 'boolean'
+                    ? activeSalesData.pagination.hasNextPage
+                    : page < totalPages;
 
-              if (totalPages <= 1) return null;
+                if (totalPages <= 1) return null;
 
-              return (
-                <View style={styles.paginationContainer}>
-                  <TouchableOpacity
-                    style={[styles.paginationButton, !hasPreviousPage && styles.paginationButtonDisabled]}
-                    onPress={() => handleLoadRecentSales(page - 1)}
-                    disabled={!hasPreviousPage || loadingSales}
-                  >
-                    <Text
+                return (
+                  <View style={styles.paginationContainer}>
+                    <TouchableOpacity
                       style={[
-                        styles.paginationButtonText,
-                        !hasPreviousPage && styles.paginationButtonTextDisabled,
+                        styles.paginationButton,
+                        !hasPreviousPage && styles.paginationButtonDisabled,
                       ]}
+                      onPress={() => handleLoadRecentSales(page - 1)}
+                      disabled={!hasPreviousPage || loadingSales}
                     >
-                      ← Anterior
-                    </Text>
-                  </TouchableOpacity>
+                      <Text
+                        style={[
+                          styles.paginationButtonText,
+                          !hasPreviousPage && styles.paginationButtonTextDisabled,
+                        ]}
+                      >
+                        ← Anterior
+                      </Text>
+                    </TouchableOpacity>
 
-                  <View style={styles.paginationInfo}>
-                    <Text style={styles.paginationText}>
-                      Página {page} de {totalPages}
-                    </Text>
-                    <Text style={styles.paginationSubtext}>
-                      ({activeSalesData.pagination.totalSales} ventas totales)
-                    </Text>
+                    <View style={styles.paginationInfo}>
+                      <Text style={styles.paginationText}>
+                        Página {page} de {totalPages}
+                      </Text>
+                      <Text style={styles.paginationSubtext}>
+                        ({activeSalesData.pagination.totalSales} ventas totales)
+                      </Text>
+                    </View>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.paginationButton,
+                        !hasNextPage && styles.paginationButtonDisabled,
+                      ]}
+                      onPress={() => handleLoadRecentSales(page + 1)}
+                      disabled={!hasNextPage || loadingSales}
+                    >
+                      <Text
+                        style={[
+                          styles.paginationButtonText,
+                          !hasNextPage && styles.paginationButtonTextDisabled,
+                        ]}
+                      >
+                        Siguiente →
+                      </Text>
+                    </TouchableOpacity>
                   </View>
-
-                  <TouchableOpacity
-                    style={[styles.paginationButton, !hasNextPage && styles.paginationButtonDisabled]}
-                    onPress={() => handleLoadRecentSales(page + 1)}
-                    disabled={!hasNextPage || loadingSales}
-                  >
-                    <Text
-                      style={[
-                        styles.paginationButtonText,
-                        !hasNextPage && styles.paginationButtonTextDisabled,
-                      ]}
-                    >
-                      Siguiente →
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              );
-            })()}
+                );
+              })()}
 
             <TouchableOpacity
               style={styles.closeModalButton}
@@ -3405,7 +3654,9 @@ export default function NewSaleScreen() {
                   <Text style={styles.barcodeSelectionProductName} numberOfLines={2}>
                     {item.name}
                   </Text>
-                  <Text style={styles.barcodeSelectionProductCode}>Código: {item.code || item.barcode}</Text>
+                  <Text style={styles.barcodeSelectionProductCode}>
+                    Código: {item.code || item.barcode}
+                  </Text>
                   <Text style={styles.barcodeSelectionProductPrice}>
                     {formatCurrency(item.price || 0)}
                   </Text>
@@ -3494,7 +3745,7 @@ export default function NewSaleScreen() {
 
                 {loadingCreditNoteManagement && (
                   <View style={styles.creditNoteManagementLoadingBox}>
-                    <ActivityIndicator size="small" color="#673AB7" />
+                    <ActivityIndicator size="small" color={theme.color.icon.accent} />
                     <Text style={styles.creditNoteManagementLoadingText}>
                       Cargando detalle de notas de crédito...
                     </Text>
@@ -3553,48 +3804,54 @@ export default function NewSaleScreen() {
 
                 <View style={styles.creditNoteManagementSection}>
                   <Text style={styles.creditNoteManagementSectionTitle}>Productos disponibles</Text>
-                  {selectedSaleForCreditNoteManagement.sale.items.map((item: any, index: number) => {
-                    const summaryItem = findCreditNoteSummaryForSaleItem(
-                      selectedSaleForCreditNoteManagement,
-                      item,
-                      index
-                    );
-                    const purchasedQuantity = summaryItem?.purchasedQuantity ?? getCreditNoteProductQuantity(item);
-                    const creditedQuantity = getCreditNoteCreditedQuantity(
-                      item,
-                      index,
-                      creditNoteReturnedQuantities,
-                      selectedSaleForCreditNoteManagement
-                    );
-                    const availableQuantity = getCreditNoteAvailableQuantity(
-                      item,
-                      index,
-                      creditNoteReturnedQuantities,
-                      selectedSaleForCreditNoteManagement
-                    );
-                    const returns = summaryItem?.returns || [];
+                  {selectedSaleForCreditNoteManagement.sale.items.map(
+                    (item: any, index: number) => {
+                      const summaryItem = findCreditNoteSummaryForSaleItem(
+                        selectedSaleForCreditNoteManagement,
+                        item,
+                        index
+                      );
+                      const purchasedQuantity =
+                        summaryItem?.purchasedQuantity ?? getCreditNoteProductQuantity(item);
+                      const creditedQuantity = getCreditNoteCreditedQuantity(
+                        item,
+                        index,
+                        creditNoteReturnedQuantities,
+                        selectedSaleForCreditNoteManagement
+                      );
+                      const availableQuantity = getCreditNoteAvailableQuantity(
+                        item,
+                        index,
+                        creditNoteReturnedQuantities,
+                        selectedSaleForCreditNoteManagement
+                      );
+                      const returns = summaryItem?.returns || [];
 
-                    return (
-                      <View key={getCreditNoteProductId(item, index)} style={styles.creditNoteAvailableItem}>
-                        <Text style={styles.creditNoteAvailableItemName}>
-                          {summaryItem?.productName || getCreditNoteProductName(item)}
-                        </Text>
-                        <Text style={styles.creditNoteAvailableItemDetail}>
-                          Comprado: {purchasedQuantity} | Devuelto: {creditedQuantity} | Disponible:{' '}
-                          {availableQuantity}
-                        </Text>
-                        {returns.map((returnedItem: any, returnIndex: number) => (
-                          <Text
-                            key={returnedItem.creditNoteId || returnIndex}
-                            style={styles.creditNoteAvailableReturnDetail}
-                          >
-                            {returnedItem.documentNumber || `NC ${returnIndex + 1}`}: {returnedItem.quantity}{' '}
-                            devuelto(s)
+                      return (
+                        <View
+                          key={getCreditNoteProductId(item, index)}
+                          style={styles.creditNoteAvailableItem}
+                        >
+                          <Text style={styles.creditNoteAvailableItemName}>
+                            {summaryItem?.productName || getCreditNoteProductName(item)}
                           </Text>
-                        ))}
-                      </View>
-                    );
-                  })}
+                          <Text style={styles.creditNoteAvailableItemDetail}>
+                            Comprado: {purchasedQuantity} | Devuelto: {creditedQuantity} |
+                            Disponible: {availableQuantity}
+                          </Text>
+                          {returns.map((returnedItem: any, returnIndex: number) => (
+                            <Text
+                              key={returnedItem.creditNoteId || returnIndex}
+                              style={styles.creditNoteAvailableReturnDetail}
+                            >
+                              {returnedItem.documentNumber || `NC ${returnIndex + 1}`}:{' '}
+                              {returnedItem.quantity} devuelto(s)
+                            </Text>
+                          ))}
+                        </View>
+                      );
+                    }
+                  )}
                 </View>
 
                 {!isTotalCreditNoteSale(selectedSaleForCreditNoteManagement.sale) && (
@@ -3715,7 +3972,6 @@ export default function NewSaleScreen() {
                   </View>
                 </View>
 
-
                 {/* Sustento de la Nota de Crédito */}
                 <View style={styles.creditNoteFieldContainer}>
                   <Text style={styles.creditNoteFieldLabel}>Sustento *:</Text>
@@ -3724,7 +3980,7 @@ export default function NewSaleScreen() {
                     value={creditNoteSustento}
                     onChangeText={setCreditNoteSustento}
                     placeholder="Ingrese el motivo de la devolución..."
-                    placeholderTextColor="#999"
+                    placeholderTextColor={theme.color.text.placeholder}
                     multiline
                     numberOfLines={3}
                     maxLength={250}
@@ -3750,7 +4006,8 @@ export default function NewSaleScreen() {
                           item,
                           index
                         );
-                        const purchasedQuantity = summaryItem?.purchasedQuantity ?? getCreditNoteProductQuantity(item);
+                        const purchasedQuantity =
+                          summaryItem?.purchasedQuantity ?? getCreditNoteProductQuantity(item);
                         const creditedQuantity = getCreditNoteCreditedQuantity(
                           item,
                           index,
@@ -3761,7 +4018,11 @@ export default function NewSaleScreen() {
                         const quantityText =
                           creditNoteProductQuantities[productId] ?? String(limitQuantity);
                         const quantity = getCreditNoteEditedQuantity(productId, limitQuantity);
-                        const unitPrice = getCreditNoteProductUnitPrice(item, selectedSaleForCreditNote, index);
+                        const unitPrice = getCreditNoteProductUnitPrice(
+                          item,
+                          selectedSaleForCreditNote,
+                          index
+                        );
                         const isSelected = selectedProductsForCreditNote.includes(productId);
 
                         if (creditNoteRemainingMode && limitQuantity <= 0) {
@@ -3789,7 +4050,8 @@ export default function NewSaleScreen() {
                               <Text style={styles.creditNoteProductDetails}>
                                 Comprado: {purchasedQuantity}
                                 {creditNoteRemainingMode && ` | Devuelto: ${creditedQuantity}`}
-                                {' | '}Disponible: {limitQuantity} | Precio: {formatCurrency(unitPrice)}
+                                {' | '}Disponible: {limitQuantity} | Precio:{' '}
+                                {formatCurrency(unitPrice)}
                               </Text>
                               <View style={styles.creditNoteQuantityRow}>
                                 <Text style={styles.creditNoteQuantityLabel}>Devolver:</Text>
@@ -3805,7 +4067,9 @@ export default function NewSaleScreen() {
                               </View>
                             </View>
                             <Text style={styles.creditNoteProductTotal}>
-                              {formatCurrency((Number.isFinite(quantity) ? quantity : 0) * unitPrice)}
+                              {formatCurrency(
+                                (Number.isFinite(quantity) ? quantity : 0) * unitPrice
+                              )}
                             </Text>
                           </TouchableOpacity>
                         );
@@ -3817,7 +4081,7 @@ export default function NewSaleScreen() {
                 {/* Indicador de Carga */}
                 {generatingCreditNote && (
                   <View style={styles.creditNoteLoadingContainer}>
-                    <ActivityIndicator size="large" color="#FF9800" />
+                    <ActivityIndicator size="large" color={theme.color.icon.warning} />
                     <Text style={styles.creditNoteLoadingText}>Generando nota de crédito...</Text>
                     <Text style={styles.creditNoteLoadingSubtext}>
                       Este proceso puede tardar unos segundos
@@ -3854,7 +4118,7 @@ export default function NewSaleScreen() {
                     disabled={!creditNoteType || !creditNoteSustento.trim() || generatingCreditNote}
                   >
                     {generatingCreditNote ? (
-                      <ActivityIndicator size="small" color="#FFFFFF" />
+                      <ActivityIndicator size="small" color={theme.color.text.onAction} />
                     ) : (
                       <Text style={styles.creditNoteConfirmButtonText}>Generar NC</Text>
                     )}
@@ -3933,7 +4197,7 @@ export default function NewSaleScreen() {
             <View style={styles.successButtons}>
               <TouchableOpacity
                 style={[styles.button, styles.printButton]}
-                onPress={handlePrintPDF}
+                onPress={() => handlePrintPDF()}
               >
                 <Text style={styles.printButtonText}>🖨️ Imprimir PDF</Text>
               </TouchableOpacity>
@@ -4079,7 +4343,7 @@ export default function NewSaleScreen() {
 
             {lookupLoading ? (
               <View style={styles.addCustomerLoading}>
-                <ActivityIndicator size="large" color="#4CAF50" />
+                <ActivityIndicator size="large" color={theme.color.text.success} />
                 <Text style={styles.addCustomerLoadingText}>Consultando datos...</Text>
               </View>
             ) : (
@@ -4120,7 +4384,7 @@ export default function NewSaleScreen() {
                           setNewCustomerData((prev) => ({ ...prev, nombres: text }))
                         }
                         placeholder="Ingrese nombres"
-                        placeholderTextColor="#999"
+                        placeholderTextColor={theme.color.text.placeholder}
                         autoCapitalize="words"
                       />
                     </View>
@@ -4135,7 +4399,7 @@ export default function NewSaleScreen() {
                             setNewCustomerData((prev) => ({ ...prev, apellidoPaterno: text }))
                           }
                           placeholder="Apellido paterno"
-                          placeholderTextColor="#999"
+                          placeholderTextColor={theme.color.text.placeholder}
                           autoCapitalize="words"
                         />
                       </View>
@@ -4149,7 +4413,7 @@ export default function NewSaleScreen() {
                             setNewCustomerData((prev) => ({ ...prev, apellidoMaterno: text }))
                           }
                           placeholder="Apellido materno"
-                          placeholderTextColor="#999"
+                          placeholderTextColor={theme.color.text.placeholder}
                           autoCapitalize="words"
                         />
                       </View>
@@ -4169,7 +4433,7 @@ export default function NewSaleScreen() {
                           setNewCustomerData((prev) => ({ ...prev, razonSocial: text }))
                         }
                         placeholder="Ingrese razón social"
-                        placeholderTextColor="#999"
+                        placeholderTextColor={theme.color.text.placeholder}
                         autoCapitalize="characters"
                       />
                     </View>
@@ -4183,7 +4447,7 @@ export default function NewSaleScreen() {
                           setNewCustomerData((prev) => ({ ...prev, address: text }))
                         }
                         placeholder="Ingrese dirección"
-                        placeholderTextColor="#999"
+                        placeholderTextColor={theme.color.text.placeholder}
                       />
                     </View>
                   </>
@@ -4200,7 +4464,7 @@ export default function NewSaleScreen() {
                         setNewCustomerData((prev) => ({ ...prev, email: text }))
                       }
                       placeholder="correo@ejemplo.com"
-                      placeholderTextColor="#999"
+                      placeholderTextColor={theme.color.text.placeholder}
                       keyboardType="email-address"
                       autoCapitalize="none"
                     />
@@ -4215,7 +4479,7 @@ export default function NewSaleScreen() {
                         setNewCustomerData((prev) => ({ ...prev, phone: text }))
                       }
                       placeholder="999 999 999"
-                      placeholderTextColor="#999"
+                      placeholderTextColor={theme.color.text.placeholder}
                       keyboardType="phone-pad"
                     />
                   </View>
@@ -4229,8 +4493,15 @@ export default function NewSaleScreen() {
                     onValueChange={(value) =>
                       setNewCustomerData((prev) => ({ ...prev, aceptaPublicidad: value }))
                     }
-                    trackColor={{ false: '#E0E0E0', true: '#81C784' }}
-                    thumbColor={newCustomerData.aceptaPublicidad ? '#4CAF50' : '#BDBDBD'}
+                    trackColor={{
+                      false: theme.color.border.subtle,
+                      true: theme.color.state.success.border,
+                    }}
+                    thumbColor={
+                      newCustomerData.aceptaPublicidad
+                        ? theme.color.action.success.background
+                        : theme.color.text.disabled
+                    }
                   />
                 </View>
               </ScrollView>
@@ -4256,7 +4527,7 @@ export default function NewSaleScreen() {
                 disabled={addCustomerLoading || lookupLoading}
               >
                 {addCustomerLoading ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
+                  <ActivityIndicator size="small" color={theme.color.text.onAction} />
                 ) : (
                   <Text style={styles.addCustomerSaveButtonText}>➕ Agregar Cliente</Text>
                 )}
@@ -4350,7 +4621,7 @@ export default function NewSaleScreen() {
                   placeholder={
                     offlineCustomerData.documentType === 'DNI' ? '12345678' : '20123456789'
                   }
-                  placeholderTextColor="#999"
+                  placeholderTextColor={theme.color.text.placeholder}
                   keyboardType="numeric"
                   maxLength={offlineCustomerData.documentType === 'DNI' ? 8 : 11}
                 />
@@ -4370,7 +4641,7 @@ export default function NewSaleScreen() {
                   placeholder={
                     offlineCustomerData.documentType === 'RUC' ? 'EMPRESA SAC' : 'Juan Pérez García'
                   }
-                  placeholderTextColor="#999"
+                  placeholderTextColor={theme.color.text.placeholder}
                   autoCapitalize="characters"
                 />
               </View>
@@ -4431,7 +4702,11 @@ export default function NewSaleScreen() {
               <Text style={styles.pinPadModalAmount}>S/ {pinPadAmountPending.toFixed(2)}</Text>
 
               {pinPadProcessing && (
-                <ActivityIndicator size="large" color="#2196F3" style={{ marginVertical: 20 }} />
+                <ActivityIndicator
+                  size="large"
+                  color={theme.color.icon.accent}
+                  style={{ marginVertical: 20 }}
+                />
               )}
 
               <Text style={styles.pinPadModalMessage}>{pinPadMessage}</Text>
@@ -4452,2474 +4727,2455 @@ export default function NewSaleScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  header: {
-    backgroundColor: '#FFFFFF',
-    padding: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  title: {
-    flex: 1,
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginRight: 8,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flexShrink: 0,
-    zIndex: 10,
-    elevation: 10,
-  },
-  cashCircularButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 52,
-    height: 52,
-    marginRight: 2,
-    zIndex: 20,
-    elevation: 20,
-  },
-  cashCircularVisible: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: '#D9D9D9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#1F2937',
-    overflow: 'hidden',
-  },
-  cashCircularInnerVisible: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-  },
-  cashCircularText: {
-    fontSize: 10,
-    fontWeight: '800',
-    lineHeight: 12,
-  },
-  cashCircularDebugText: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#111827',
-  },
-  recentSalesButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0F0F0',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    gap: 6,
-  },
-  recentSalesIcon: {
-    fontSize: 18,
-  },
-  recentSalesText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#007AFF',
-  },
-  menuButton: {
-    fontSize: 24,
-    color: '#666',
-    padding: 4,
-  },
-  // Offline Status Bar styles
-  offlineStatusBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#343a40',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    gap: 12,
-  },
-  connectionDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  dotOnline: {
-    backgroundColor: '#4caf50',
-  },
-  dotOffline: {
-    backgroundColor: '#f44336',
-  },
-  offlineStatusText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  offlineBadge: {
-    backgroundColor: '#ff9800',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  offlineBadgeText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  offlineTokenCount: {
-    color: '#fff',
-    fontSize: 12,
-  },
-  offlinePendingCount: {
-    color: '#ffeb3b',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  closeButton: {
-    fontSize: 24,
-    color: '#666',
-    padding: 4,
-  },
-  content: {
-    flex: 1,
-    flexDirection: 'row',
-  },
-  leftPanel: {
-    flex: 1,
-    padding: 16,
-  },
-  rightPanel: {
-    flex: 0.4,
-    minWidth: 320,
-    maxWidth: 650,
-    backgroundColor: '#FFFFFF',
-    borderLeftWidth: 1,
-    borderLeftColor: '#E0E0E0',
-    padding: 16,
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  searchInput: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 20,
-    fontSize: 20,
-    borderWidth: 2,
-    borderColor: '#2196F3',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  searchLoader: {
-    marginLeft: 8,
-  },
-  searchResults: {
-    flex: 1,
-  },
-  topSellersSection: {
-    marginTop: 8,
-    flex: 1,
-  },
-  topSellersHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  topSellersTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1F2937',
-  },
-  topSellersList: {
-    paddingVertical: 4,
-    paddingBottom: 24,
-    gap: 12,
-  },
-  topSellersRow: {
-    justifyContent: 'flex-start',
-    gap: 12,
-    marginBottom: 12,
-  },
-  topSellerCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    padding: 10,
-    justifyContent: 'space-between',
-  },
-  topSellerImage: {
-    width: '100%',
-    borderRadius: 10,
-    backgroundColor: '#F3F4F6',
-    marginBottom: 8,
-  },
-  topSellerImagePlaceholder: {
-    width: '100%',
-    borderRadius: 10,
-    backgroundColor: '#F3F4F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  topSellerImagePlaceholderText: {
-    fontSize: 34,
-  },
-  topSellerName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-    minHeight: 36,
-  },
-  topSellerSku: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#374151',
-    marginTop: 2,
-  },
-  topSellerPrice: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#007AFF',
-    marginTop: 6,
-  },
-  topSellersEmptyText: {
-    fontSize: 13,
-    color: '#6B7280',
-    paddingVertical: 10,
-    paddingHorizontal: 4,
-  },
-  productItem: {
-    backgroundColor: '#FFFFFF',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    gap: 12,
-  },
-  productImage: {
-    width: 100,
-    height: 100,
-    borderRadius: 8,
-    backgroundColor: '#F5F5F5',
-  },
-  productImagePlaceholder: {
-    width: 100,
-    height: 100,
-    borderRadius: 8,
-    backgroundColor: '#F5F5F5',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  productImagePlaceholderText: {
-    fontSize: 40,
-  },
-  productInfo: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  productName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 4,
-  },
-  productCode: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 4,
-  },
-  productPrice: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#007AFF',
-  },
-  // Customer Search Styles
-  customerSearchContainer: {
-    marginBottom: 16,
-    position: 'relative',
-    zIndex: 1000,
-  },
-  customerSearchHeader: {
-    marginBottom: 8,
-  },
-  customerSearchLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-  },
-  customerInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    position: 'relative',
-  },
-  customerSearchInput: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 18,
-    fontSize: 18,
-    borderWidth: 2,
-    borderColor: '#4CAF50',
-    paddingRight: 70,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  customerSearchLoader: {
-    position: 'absolute',
-    right: 40,
-  },
-  clearCustomerButton: {
-    position: 'absolute',
-    right: 8,
-    padding: 8,
-  },
-  clearCustomerIcon: {
-    fontSize: 18,
-    color: '#999',
-    fontWeight: 'bold',
-  },
-  customerDropdown: {
-    position: 'absolute',
-    top: '100%',
-    left: 0,
-    right: 0,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    marginTop: 4,
-    maxHeight: 300,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 5,
-    zIndex: 1001,
-  },
-  customerDropdownScroll: {
-    maxHeight: 300,
-  },
-  customerDropdownItem: {
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-  },
-  customerDropdownItemContent: {
-    gap: 4,
-  },
-  customerDropdownItemHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  customerDropdownItemName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    flex: 1,
-  },
-  customerTypeBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    marginLeft: 8,
-  },
-  customerTypeBadgeEmpresa: {
-    backgroundColor: '#E3F2FD',
-  },
-  customerTypeBadgePersona: {
-    backgroundColor: '#F3E5F5',
-  },
-  customerTypeBadgeText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#666',
-  },
-  customerDropdownItemDoc: {
-    fontSize: 12,
-    color: '#666',
-  },
-  customerDropdownItemEmail: {
-    fontSize: 11,
-    color: '#999',
-  },
-  customerDropdownItemPhone: {
-    fontSize: 11,
-    color: '#999',
-  },
-  selectedCustomerCard: {
-    backgroundColor: '#E8F5E9',
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 2,
-    borderColor: '#4CAF50',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  selectedCustomerInfo: {
-    flex: 1,
-    marginRight: 12,
-  },
-  selectedCustomerName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#2E7D32',
-    marginBottom: 4,
-  },
-  selectedCustomerDoc: {
-    fontSize: 14,
-    color: '#388E3C',
-    marginBottom: 2,
-  },
-  selectedCustomerEmail: {
-    fontSize: 12,
-    color: '#66BB6A',
-    marginBottom: 2,
-  },
-  selectedCustomerPhone: {
-    fontSize: 12,
-    color: '#66BB6A',
-  },
-  removeCustomerButton: {
-    backgroundColor: '#FFEBEE',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#F44336',
-  },
-  removeCustomerButtonText: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#F44336',
-  },
-  // Add Customer Dropdown Item Styles
-  addCustomerDropdownItem: {
-    padding: 14,
-    backgroundColor: '#E8F5E9',
-    borderTopWidth: 2,
-    borderTopColor: '#4CAF50',
-  },
-  addCustomerDropdownContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  addCustomerIcon: {
-    fontSize: 24,
-  },
-  addCustomerTextContainer: {
-    flex: 1,
-  },
-  addCustomerTitle: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    color: '#2E7D32',
-  },
-  addCustomerSubtitle: {
-    fontSize: 12,
-    color: '#4CAF50',
-    marginTop: 2,
-  },
-  // Add Customer Modal Styles
-  addCustomerModalContent: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 24,
-    width: '90%',
-    maxWidth: 600,
-    maxHeight: '85%',
-  },
-  addCustomerModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  addCustomerModalTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  addCustomerCloseButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#F5F5F5',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  addCustomerCloseButtonText: {
-    fontSize: 20,
-    color: '#666',
-    fontWeight: 'bold',
-  },
-  addCustomerLoading: {
-    padding: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addCustomerLoadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#666',
-  },
-  addCustomerForm: {
-    flex: 1,
-    marginBottom: 16,
-  },
-  addCustomerFormGroup: {
-    marginBottom: 16,
-  },
-  addCustomerFormRow: {
-    flexDirection: 'row',
-    marginBottom: 16,
-  },
-  addCustomerSwitchRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#F9F9F9',
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  addCustomerSwitchLabel: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#333',
-  },
-  addCustomerLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  addCustomerInput: {
-    backgroundColor: '#F9F9F9',
-    borderRadius: 10,
-    padding: 14,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    color: '#333',
-  },
-  addCustomerDocumentBox: {
-    backgroundColor: '#F5F5F5',
-    borderRadius: 10,
-    padding: 14,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  addCustomerDocumentText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    fontFamily: 'monospace',
-  },
-  addCustomerTypeBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-  },
-  addCustomerTypeBadgeEmpresa: {
-    backgroundColor: '#E3F2FD',
-  },
-  addCustomerTypeBadgePersona: {
-    backgroundColor: '#F3E5F5',
-  },
-  addCustomerTypeBadgeText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#666',
-  },
-  addCustomerButtons: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 8,
-  },
-  addCustomerButton: {
-    flex: 1,
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addCustomerCancelButton: {
-    backgroundColor: '#F5F5F5',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  addCustomerCancelButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#666',
-  },
-  addCustomerSaveButton: {
-    backgroundColor: '#4CAF50',
-  },
-  addCustomerSaveButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  // Offline Customer Styles
-  offlineAddCustomerButton: {
-    backgroundColor: '#FFF3E0',
-    borderRadius: 12,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    borderWidth: 2,
-    borderColor: '#FF9800',
-    borderStyle: 'dashed',
-  },
-  offlineAddCustomerIcon: {
-    fontSize: 24,
-  },
-  offlineAddCustomerText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#E65100',
-  },
-  offlineAddCustomerSubtext: {
-    fontSize: 13,
-    color: '#FF9800',
-  },
-  offlineCustomerBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-    alignSelf: 'flex-start',
-  },
-  offlineCustomerModalContent: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 24,
-    width: '90%',
-    maxWidth: 450,
-  },
-  offlineCustomerModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  offlineCustomerModalTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  offlineCustomerCloseButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F5F5F5',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  offlineCustomerCloseButtonText: {
-    fontSize: 18,
-    color: '#666',
-  },
-  offlineCustomerForm: {
-    marginBottom: 20,
-  },
-  offlineCustomerFormGroup: {
-    marginBottom: 18,
-  },
-  offlineCustomerLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  offlineCustomerDocTypeRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  offlineCustomerDocTypeButton: {
-    flex: 1,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: '#E0E0E0',
-    backgroundColor: '#F9F9F9',
-    alignItems: 'center',
-  },
-  offlineCustomerDocTypeButtonActive: {
-    borderColor: '#FF9800',
-    backgroundColor: '#FFF3E0',
-  },
-  offlineCustomerDocTypeText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#666',
-  },
-  offlineCustomerDocTypeTextActive: {
-    color: '#E65100',
-  },
-  offlineCustomerInput: {
-    backgroundColor: '#F9F9F9',
-    borderRadius: 10,
-    padding: 14,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    color: '#333',
-  },
-  offlineCustomerInfoBox: {
-    backgroundColor: '#FFF8E1',
-    borderRadius: 10,
-    padding: 14,
-    borderLeftWidth: 4,
-    borderLeftColor: '#FF9800',
-  },
-  offlineCustomerInfoText: {
-    fontSize: 13,
-    color: '#E65100',
-    lineHeight: 18,
-  },
-  offlineCustomerInfoSubtext: {
-    fontSize: 12,
-    color: '#FF9800',
-    marginTop: 6,
-    fontWeight: '600',
-  },
-  offlineCustomerButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  offlineCustomerButton: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  offlineCustomerCancelButton: {
-    backgroundColor: '#F5F5F5',
-  },
-  offlineCustomerCancelButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#666',
-  },
-  offlineCustomerSaveButton: {
-    backgroundColor: '#FF9800',
-  },
-  offlineCustomerSaveButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  cartList: {
-    flex: 1,
-    marginBottom: 16,
-  },
-  emptyCart: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 60,
-  },
-  emptyCartText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#999',
-    marginBottom: 8,
-  },
-  emptyCartSubtext: {
-    fontSize: 14,
-    color: '#BBB',
-  },
-  cartItem: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-  },
-  cartItemRow: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-  },
-  cartItemImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 6,
-    backgroundColor: '#F5F5F5',
-  },
-  cartItemImagePlaceholder: {
-    width: 60,
-    height: 60,
-    borderRadius: 6,
-    backgroundColor: '#F5F5F5',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cartItemImagePlaceholderText: {
-    fontSize: 24,
-  },
-  cartItemInfo: {
-    flex: 1,
-    justifyContent: 'space-between',
-  },
-  cartItemHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 0,
-  },
-  cartItemNameContainer: {
-    flex: 1,
-    marginRight: 8,
-  },
-  cartItemName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#333',
-    lineHeight: 18,
-  },
-  cartItemSku: {
-    fontSize: 11,
-    color: '#999',
-    marginTop: 1,
-    lineHeight: 13,
-  },
-  removeButtonContainer: {
-    backgroundColor: '#FFEBEE',
-    borderRadius: 6,
-    padding: 6,
-    minWidth: 36,
-    minHeight: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  removeButton: {
-    fontSize: 24,
-  },
-  cartItemDetails: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  quantityControl: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  quantityButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F0F0F0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  quantityButtonText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-  },
-  quantityText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    minWidth: 30,
-    textAlign: 'center',
-  },
-  quantityInput: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    width: 55,
-    height: 32,
-    textAlign: 'center',
-    backgroundColor: '#FFF',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 6,
-    paddingHorizontal: 4,
-  },
-  cartItemPrice: {
-    fontSize: 13,
-    color: '#666',
-    marginBottom: 2,
-    lineHeight: 16,
-  },
-  cartItemTotal: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#007AFF',
-  },
-  totalsContainer: {
-    padding: 16,
-    backgroundColor: '#F9F9F9',
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  totalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  totalLabel: {
-    fontSize: 14,
-    color: '#666',
-  },
-  totalLabelBold: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  totalValue: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#333',
-  },
-  totalValueBold: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-  },
-  discountValue: {
-    color: '#F44336',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#E0E0E0',
-    marginVertical: 8,
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  button: {
-    flex: 1,
-    paddingVertical: 24,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  clearButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  clearButtonText: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#666',
-  },
-  processButton: {
-    backgroundColor: '#4CAF50',
-  },
-  processButtonText: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 48,
-    width: '98%',
-    maxWidth: 1400,
-    maxHeight: '95%',
-  },
-  modalTitle: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 32,
-    textAlign: 'center',
-  },
-  modalScrollContent: {
-    flex: 1,
-    marginBottom: 24,
-  },
-  modalTotal: {
-    backgroundColor: '#F9F9F9',
-    padding: 32,
-    borderRadius: 16,
-    marginBottom: 32,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  modalTotalLabel: {
-    fontSize: 32,
-    fontWeight: '600',
-    color: '#666',
-  },
-  modalTotalValue: {
-    fontSize: 52,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-  },
-  paymentSelection: {
-    marginBottom: 24,
-  },
-  sectionLabel: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 16,
-  },
-  methodsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 16,
-    marginBottom: 24,
-  },
-  methodButton: {
-    flex: 1,
-    minWidth: 200,
-    padding: 28,
-    backgroundColor: '#F5F5F5',
-    borderRadius: 16,
-    borderWidth: 4,
-    borderColor: '#E0E0E0',
-  },
-  methodButtonSelected: {
-    backgroundColor: '#E3F2FD',
-    borderColor: '#2196F3',
-  },
-  methodButtonText: {
-    fontSize: 26,
-    color: '#333',
-    textAlign: 'center',
-    fontWeight: '600',
-  },
-  methodButtonTextSelected: {
-    color: '#2196F3',
-    fontWeight: 'bold',
-  },
-  submethodContainer: {
-    marginTop: 16,
-  },
-  izipayWarningBox: {
-    backgroundColor: '#FFF3E0',
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 24,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 3,
-    borderColor: '#FF9800',
-    shadowColor: '#FF9800',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  izipayWarningIcon: {
-    fontSize: 40,
-    marginRight: 16,
-  },
-  izipayWarningContent: {
-    flex: 1,
-  },
-  izipayWarningTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#E65100',
-    marginBottom: 8,
-  },
-  izipayWarningText: {
-    fontSize: 18,
-    color: '#F57C00',
-    lineHeight: 24,
-  },
-  amountContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-    marginBottom: 28,
-  },
-  amountInput: {
-    flex: 1,
-    padding: 28,
-    fontSize: 32,
-    borderWidth: 3,
-    borderColor: '#E0E0E0',
-    borderRadius: 16,
-    backgroundColor: '#FFFFFF',
-    fontWeight: 'bold',
-  },
-  fillRemainingButton: {
-    padding: 28,
-    backgroundColor: '#2196F3',
-    borderRadius: 16,
-    minWidth: 180,
-  },
-  fillRemainingButtonText: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    textAlign: 'center',
-  },
-  addPaymentButton: {
-    padding: 32,
-    backgroundColor: '#4CAF50',
-    borderRadius: 16,
-    alignItems: 'center',
-    marginBottom: 28,
-  },
-  addPaymentButtonText: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  selectedPayments: {
-    marginBottom: 28,
-    backgroundColor: '#F9F9F9',
-    padding: 24,
-    borderRadius: 16,
-  },
-  selectedPaymentsTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 20,
-  },
-  paymentRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-    borderRadius: 12,
-  },
-  paymentInfo: {
-    flex: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  paymentName: {
-    fontSize: 24,
-    color: '#333',
-    fontWeight: '600',
-    flex: 1,
-  },
-  paymentAmount: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#2196F3',
-    marginLeft: 16,
-  },
-  removePaymentButton: {
-    backgroundColor: '#FFEBEE',
-    padding: 16,
-    borderRadius: 12,
-    minWidth: 60,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  removePaymentIcon: {
-    fontSize: 32,
-  },
-  paymentSummary: {
-    marginTop: 16,
-    paddingTop: 20,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  summaryLabel: {
-    fontSize: 26,
-    fontWeight: '600',
-    color: '#666',
-  },
-  summaryValue: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  summaryValuePaid: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#2196F3',
-  },
-  summaryValueHighlight: {
-    fontSize: 32,
-    fontWeight: 'bold',
-  },
-  summaryValueMissing: {
-    color: '#F44336',
-  },
-  summaryValueChange: {
-    color: '#4CAF50',
-  },
-  changeHighlightBox: {
-    marginTop: 24,
-    padding: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    borderWidth: 4,
-  },
-  changeHighlightBoxMissing: {
-    backgroundColor: '#FFEBEE',
-    borderColor: '#F44336',
-  },
-  changeHighlightBoxChange: {
-    backgroundColor: '#E8F5E9',
-    borderColor: '#4CAF50',
-  },
-  changeHighlightLabel: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    marginBottom: 16,
-    letterSpacing: 2,
-  },
-  changeHighlightValue: {
-    fontSize: 64,
-    fontWeight: 'bold',
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    gap: 24,
-  },
-  modalCancelButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 3,
-    borderColor: '#E0E0E0',
-    padding: 32,
-  },
-  modalCancelButtonText: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#666',
-  },
-  modalConfirmButton: {
-    backgroundColor: '#4CAF50',
-    padding: 32,
-  },
-  buttonDisabled: {
-    backgroundColor: '#CCCCCC',
-    opacity: 0.6,
-  },
-  modalConfirmButtonText: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  salesModalContent: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 24,
-    width: '90%',
-    maxWidth: 700,
-    maxHeight: '85%',
-  },
-  salesModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  salesSummary: {
-    backgroundColor: '#F5F5F5',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  summaryTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 12,
-  },
-  salesList: {
-    flex: 1,
-    marginBottom: 16,
-  },
-  emptySales: {
-    padding: 40,
-    alignItems: 'center',
-  },
-  emptySalesText: {
-    fontSize: 16,
-    color: '#999',
-  },
-  saleItem: {
-    backgroundColor: '#F9F9F9',
-    borderRadius: 8,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    overflow: 'hidden',
-  },
-  saleItemClickable: {
-    padding: 16,
-  },
-  saleItemHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  saleNumberContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  saleNumber: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  creditNoteBadge: {
-    backgroundColor: '#FF9800',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
-  },
-  creditNoteBadgeText: {
-    fontSize: 10,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  saleStatus: {
-    fontSize: 12,
-    fontWeight: '600',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  // Estilos para estados de venta
-  statusDraft: {
-    backgroundColor: '#F5F5F5',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#BDBDBD',
-  },
-  statusConfirmed: {
-    backgroundColor: '#E8F5E9',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#81C784',
-  },
-  statusDevParcial: {
-    backgroundColor: '#FFF9C4',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#FFD54F',
-  },
-  statusDevTotal: {
-    backgroundColor: '#FFECB3',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#FFB74D',
-  },
-  statusInvoiced: {
-    backgroundColor: '#E1F5FE',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#4FC3F7',
-  },
-  statusPaid: {
-    backgroundColor: '#C8E6C9',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#66BB6A',
-  },
-  statusCancelled: {
-    backgroundColor: '#FFEBEE',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#EF5350',
-  },
-  statusRefunded: {
-    backgroundColor: '#F3E5F5',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#BA68C8',
-  },
-  statusDefault: {
-    backgroundColor: '#EEEEEE',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#BDBDBD',
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#333',
-  },
-  saleItemDetails: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  saleDocType: {
-    fontSize: 14,
-    color: '#666',
-  },
-  saleTotal: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-  },
-  saleCustomer: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 4,
-  },
-  salePaymentsContainer: {
-    backgroundColor: '#F8F9FA',
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 8,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  salePaymentsTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  salePaymentRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-  },
-  salePaymentMethod: {
-    fontSize: 12,
-    color: '#555',
-    flex: 1,
-  },
-  salePaymentAmount: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#007AFF',
-  },
-  salePaymentTotal: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#D0D0D0',
-    paddingHorizontal: 8,
-  },
-  salePaymentTotalLabel: {
-    fontSize: 13,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  salePaymentTotalValue: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-  },
-  saleItemCount: {
-    fontSize: 12,
-    color: '#666',
-  },
-  saleDate: {
-    fontSize: 12,
-    color: '#999',
-  },
-  saleItemActions: {
-    flexDirection: 'row',
-    borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
-  },
-  reprintButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#007AFF',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    gap: 8,
-  },
-  reprintButtonIcon: {
-    fontSize: 18,
-  },
-  reprintButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  generateCreditNoteButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FF9800',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    gap: 8,
-    borderLeftWidth: 1,
-    borderLeftColor: '#FFFFFF',
-  },
-  generateCreditNoteButtonIcon: {
-    fontSize: 18,
-  },
-  generateCreditNoteButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  creditNoteButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#4CAF50',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    gap: 8,
-    borderLeftWidth: 1,
-    borderLeftColor: '#FFFFFF',
-  },
-  manageCreditNoteButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#673AB7',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    gap: 8,
-    borderLeftWidth: 1,
-    borderLeftColor: '#FFFFFF',
-  },
-  creditNoteButtonIcon: {
-    fontSize: 18,
-  },
-  creditNoteButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  closeModalButton: {
-    backgroundColor: '#007AFF',
-    padding: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  closeModalButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  // Pagination Styles
-  paginationContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    backgroundColor: '#F5F5F5',
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  paginationButton: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    minWidth: 120,
-    alignItems: 'center',
-  },
-  paginationButtonDisabled: {
-    backgroundColor: '#CCCCCC',
-    opacity: 0.6,
-  },
-  paginationButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  paginationButtonTextDisabled: {
-    color: '#999999',
-  },
-  paginationInfo: {
-    alignItems: 'center',
-    flex: 1,
-    marginHorizontal: 16,
-  },
-  paginationText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 4,
-  },
-  paginationSubtext: {
-    fontSize: 14,
-    color: '#666666',
-  },
-  // Success Modal Styles
-  successModalContent: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 48,
-    width: '95%',
-    maxWidth: 1200,
-    maxHeight: '90%',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  successHeader: {
-    alignItems: 'center',
-    marginBottom: 32,
-  },
-  successIcon: {
-    fontSize: 100,
-    color: '#4CAF50',
-    marginBottom: 16,
-  },
-  successTitle: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: '#333',
-    textAlign: 'center',
-  },
-  successDetails: {
-    backgroundColor: '#F9F9F9',
-    borderRadius: 16,
-    padding: 32,
-    marginBottom: 32,
-  },
-  successTotalBox: {
-    backgroundColor: '#E3F2FD',
-    padding: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 20,
-    borderWidth: 3,
-    borderColor: '#2196F3',
-  },
-  successTotalLabel: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#1976D2',
-    marginBottom: 8,
-    letterSpacing: 1,
-  },
-  successTotalValue: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: '#1565C0',
-  },
-  successChangeBox: {
-    backgroundColor: '#E8F5E9',
-    padding: 28,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 20,
-    borderWidth: 4,
-    borderColor: '#4CAF50',
-  },
-  successChangeLabel: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#2E7D32',
-    marginBottom: 12,
-    letterSpacing: 1,
-  },
-  successChangeValue: {
-    fontSize: 56,
-    fontWeight: 'bold',
-    color: '#1B5E20',
-  },
-  successRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  successLabel: {
-    fontSize: 20,
-    color: '#666',
-    fontWeight: '600',
-  },
-  successValue: {
-    fontSize: 20,
-    color: '#333',
-    fontWeight: 'bold',
-    textAlign: 'right',
-    flex: 1,
-    marginLeft: 16,
-  },
-  successValueBold: {
-    fontSize: 28,
-    color: '#4CAF50',
-    fontWeight: 'bold',
-    textAlign: 'right',
-    flex: 1,
-    marginLeft: 16,
-  },
-  successButtons: {
-    flexDirection: 'row',
-    gap: 20,
-  },
-  printButton: {
-    flex: 1,
-    backgroundColor: '#2196F3',
-    paddingVertical: 52,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  printButtonText: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  newSaleButton: {
-    flex: 1,
-    backgroundColor: '#4CAF50',
-    paddingVertical: 52,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  newSaleButtonText: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  // Offline Success Modal Styles
-  offlineSuccessModalContent: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 32,
-    width: '90%',
-    maxWidth: 700,
-    maxHeight: '95%',
-    borderWidth: 3,
-    borderColor: '#FF9800',
-  },
-  offlineSuccessHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-    gap: 12,
-  },
-  offlineSuccessIcon: {
-    fontSize: 48,
-  },
-  offlineSuccessTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#FF9800',
-  },
-  offlineWarningBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFF3CD',
-    borderWidth: 2,
-    borderColor: '#FFC107',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-    gap: 12,
-  },
-  offlineWarningIcon: {
-    fontSize: 32,
-  },
-  offlineWarningText: {
-    flex: 1,
-    fontSize: 14,
-    color: '#856404',
-    fontWeight: '600',
-    lineHeight: 20,
-  },
-  offlineSuccessTotalBox: {
-    backgroundColor: '#FFF8E1',
-    borderRadius: 16,
-    padding: 24,
-    alignItems: 'center',
-    marginBottom: 20,
-    borderWidth: 3,
-    borderColor: '#FF9800',
-  },
-  offlineTicketCode: {
-    fontSize: 18,
-    color: '#FF9800',
-    fontWeight: 'bold',
-    fontFamily: 'monospace',
-    textAlign: 'right',
-    flex: 1,
-    marginLeft: 16,
-  },
-  offlinePendingBadge: {
-    backgroundColor: '#FFF3CD',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#FFC107',
-  },
-  offlinePendingText: {
-    fontSize: 14,
-    color: '#856404',
-    fontWeight: '600',
-  },
-  offlinePrintButton: {
-    flex: 1,
-    backgroundColor: '#FF9800',
-    paddingVertical: 52,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // Barcode Duplicate Selection Modal Styles
-  barcodeSelectionModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  barcodeSelectionModalContent: {
-    width: '96%',
-    maxWidth: 1400,
-    maxHeight: '92%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 24,
-  },
-  barcodeSelectionModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  barcodeSelectionTitle: {
-    fontSize: 36,
-    fontWeight: '700',
-    color: '#1F2937',
-  },
-  barcodeSelectionSubtitle: {
-    fontSize: 20,
-    color: '#4B5563',
-    marginBottom: 20,
-  },
-  barcodeSelectionCloseButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#F3F4F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  barcodeSelectionCloseButtonText: {
-    fontSize: 24,
-    color: '#374151',
-    fontWeight: '700',
-  },
-  barcodeSelectionListContent: {
-    paddingBottom: 16,
-  },
-  barcodeSelectionRow: {
-    gap: 16,
-    marginBottom: 16,
-  },
-  barcodeSelectionCard: {
-    flex: 1,
-    minWidth: 0,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    padding: 16,
-  },
-  barcodeSelectionImage: {
-    width: '100%',
-    height: 260,
-    borderRadius: 12,
-    backgroundColor: '#F3F4F6',
-    marginBottom: 12,
-  },
-  barcodeSelectionImagePlaceholder: {
-    width: '100%',
-    height: 260,
-    borderRadius: 12,
-    backgroundColor: '#F3F4F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  barcodeSelectionImagePlaceholderText: {
-    fontSize: 64,
-  },
-  barcodeSelectionProductName: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 8,
-    minHeight: 64,
-  },
-  barcodeSelectionProductCode: {
-    fontSize: 16,
-    color: '#6B7280',
-    marginBottom: 6,
-  },
-  barcodeSelectionProductPrice: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#2563EB',
-    marginBottom: 6,
-  },
-  barcodeSelectionProductStock: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#059669',
-  },
-  // Image Modal Styles
-  imageModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  imageModalContent: {
-    width: '100%',
-    height: '80%',
-    maxWidth: 800,
-    position: 'relative',
-  },
-  imageModalCloseButton: {
-    position: 'absolute',
-    top: -60,
-    right: 10,
-    zIndex: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-    borderRadius: 30,
-    width: 60,
-    height: 60,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  imageModalCloseText: {
-    fontSize: 36,
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-  },
-  imageModalImage: {
-    width: '100%',
-    height: '100%',
-  },
-  // Credit Note Management Modal Styles
-  creditNoteManagementModalContent: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 24,
-    width: '90%',
-    maxWidth: 700,
-    maxHeight: '88%',
-  },
-  creditNoteManagementScroll: {
-    flex: 1,
-  },
-  creditNoteManagementScrollContent: {
-    paddingBottom: 16,
-  },
-  creditNoteManagementSummaryText: {
-    fontSize: 13,
-    color: '#666',
-    marginTop: 6,
-  },
-  creditNoteManagementLoadingBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#F3E5F5',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-  },
-  creditNoteManagementLoadingText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#673AB7',
-  },
-  creditNoteManagementSection: {
-    marginBottom: 20,
-  },
-  creditNoteManagementSectionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#333',
-    marginBottom: 12,
-  },
-  creditNoteManagementEmptyText: {
-    fontSize: 14,
-    color: '#999',
-    backgroundColor: '#F9F9F9',
-    borderRadius: 8,
-    padding: 14,
-  },
-  creditNoteManagementItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    backgroundColor: '#F9F9F9',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 10,
-  },
-  creditNoteManagementItemInfo: {
-    flex: 1,
-  },
-  creditNoteManagementItemTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#333',
-    marginBottom: 4,
-  },
-  creditNoteManagementItemDetail: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 2,
-  },
-  creditNoteManagementDownloadButton: {
-    backgroundColor: '#007AFF',
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-  },
-  creditNoteManagementDownloadButtonText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  creditNoteAvailableItem: {
-    backgroundColor: '#F8F9FA',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
-  },
-  creditNoteAvailableItemName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 4,
-  },
-  creditNoteAvailableItemDetail: {
-    fontSize: 12,
-    color: '#666',
-  },
-  creditNoteAvailableReturnDetail: {
-    fontSize: 11,
-    color: '#7E57C2',
-    marginTop: 3,
-  },
-  creditNoteManagementGenerateButton: {
-    backgroundColor: '#FF9800',
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  creditNoteManagementGenerateButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  // Credit Note Modal Styles
-  creditNoteModalContent: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 24,
-    width: '90%',
-    maxWidth: 600,
-    maxHeight: '88%',
-  },
-  creditNoteModalScroll: {
-    flex: 1,
-  },
-  creditNoteModalScrollContent: {
-    paddingBottom: 16,
-  },
-  creditNoteModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  creditNoteSaleInfo: {
-    backgroundColor: '#F5F5F5',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 20,
-  },
-  creditNoteSaleNumber: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 8,
-  },
-  creditNoteSaleTotal: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-  },
-  creditNoteTypeContainer: {
-    marginBottom: 20,
-  },
-  creditNoteTypeLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 12,
-  },
-  creditNoteTypeButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  creditNoteTypeButton: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#E0E0E0',
-  },
-  creditNoteTypeButtonActive: {
-    backgroundColor: '#E3F2FD',
-    borderColor: '#2196F3',
-  },
-  creditNoteTypeButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#666',
-  },
-  creditNoteTypeButtonTextActive: {
-    color: '#2196F3',
-  },
-  creditNoteFieldContainer: {
-    marginBottom: 20,
-  },
-  creditNoteFieldLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  creditNoteSustentoInput: {
-    backgroundColor: '#F9F9F9',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 14,
-    color: '#333',
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-  creditNoteCharCount: {
-    fontSize: 12,
-    color: '#999',
-    textAlign: 'right',
-    marginTop: 4,
-  },
-  creditNoteProductsContainer: {
-    marginBottom: 20,
-  },
-  creditNoteProductsLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 12,
-  },
-  creditNoteProductsList: {
-    maxHeight: 260,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 8,
-    padding: 8,
-  },
-  creditNoteProductItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    backgroundColor: '#F9F9F9',
-    borderRadius: 8,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  creditNoteProductItemSelected: {
-    backgroundColor: '#E3F2FD',
-    borderColor: '#2196F3',
-  },
-  creditNoteProductCheckbox: {
-    marginRight: 12,
-  },
-  creditNoteProductCheckboxIcon: {
-    fontSize: 24,
-    color: '#2196F3',
-  },
-  creditNoteProductInfo: {
-    flex: 1,
-  },
-  creditNoteProductName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 4,
-  },
-  creditNoteProductSku: {
-    fontSize: 11,
-    color: '#999',
-    marginBottom: 4,
-  },
-  creditNoteProductDetails: {
-    fontSize: 12,
-    color: '#666',
-  },
-  creditNoteQuantityRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 8,
-  },
-  creditNoteQuantityLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#333',
-  },
-  creditNoteQuantityInput: {
-    width: 70,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D0D0D0',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    textAlign: 'center',
-  },
-  creditNoteProductTotal: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-  },
-  creditNoteLoadingContainer: {
-    backgroundColor: '#FFF3E0',
-    padding: 20,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#FFB74D',
-  },
-  creditNoteLoadingText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#F57C00',
-    marginTop: 12,
-  },
-  creditNoteLoadingSubtext: {
-    fontSize: 12,
-    color: '#FF9800',
-    marginTop: 4,
-  },
-  creditNoteActions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 20,
-  },
-  creditNoteCancelButton: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  creditNoteCancelButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#666',
-  },
-  creditNoteConfirmButton: {
-    flex: 1,
-    backgroundColor: '#FF9800',
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  creditNoteConfirmButtonDisabled: {
-    backgroundColor: '#E0E0E0',
-  },
-  creditNoteButtonDisabled: {
-    opacity: 0.5,
-  },
-  creditNoteConfirmButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  // PinPad Modal Styles
-  pinPadModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  pinPadModalContent: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 24,
-    width: '90%',
-    maxWidth: 400,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 10,
-  },
-  pinPadModalHeader: {
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  pinPadModalIcon: {
-    fontSize: 48,
-    marginBottom: 12,
-  },
-  pinPadModalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  pinPadModalBody: {
-    alignItems: 'center',
-    width: '100%',
-    paddingVertical: 16,
-  },
-  pinPadModalAmount: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    color: '#2196F3',
-    marginBottom: 16,
-  },
-  pinPadModalMessage: {
-    fontSize: 16,
-    color: '#666',
-    textAlign: 'center',
-    lineHeight: 24,
-    paddingHorizontal: 16,
-  },
-  pinPadModalCloseButton: {
-    marginTop: 20,
-    paddingVertical: 12,
-    paddingHorizontal: 32,
-    backgroundColor: '#E0E0E0',
-    borderRadius: 8,
-  },
-  pinPadModalCloseButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-  },
-});
+const createStyles = (theme: Theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.color.background.subtle,
+    },
+    header: {
+      backgroundColor: theme.color.surface.base,
+      padding: theme.space[4],
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+    },
+    title: {
+      flex: 1,
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+      marginRight: theme.space[2],
+    },
+    headerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[2.5],
+      flexShrink: 0,
+      zIndex: 10,
+      elevation: 10,
+    },
+    cashCircularButton: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 52,
+      height: 52,
+      marginRight: 2,
+      zIndex: 20,
+      elevation: 20,
+    },
+    cashCircularVisible: {
+      width: 46,
+      height: 46,
+      borderRadius: 23,
+      backgroundColor: theme.color.border.subtle,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: theme.color.action.primary.background,
+      overflow: 'hidden',
+    },
+    cashCircularInnerVisible: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      backgroundColor: theme.color.surface.base,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: theme.color.border.default,
+    },
+    cashCircularText: {
+      fontSize: 10,
+      fontWeight: '800',
+      lineHeight: 12,
+    },
+    cashCircularDebugText: {
+      fontSize: 16,
+      fontWeight: '900',
+      color: theme.color.action.primary.background,
+    },
+    recentSalesButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.color.surface.muted,
+      paddingHorizontal: theme.space[3],
+      paddingVertical: theme.space[2],
+      borderRadius: theme.radii.md,
+      gap: theme.space[1.5],
+    },
+    recentSalesIcon: {
+      fontSize: 18,
+    },
+    recentSalesText: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.link,
+    },
+    menuButton: {
+      fontSize: 24,
+      color: theme.color.text.muted,
+      padding: theme.space[1],
+    },
+    offlineStatusBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.color.background.inverse,
+      paddingVertical: theme.space[1.5],
+      paddingHorizontal: theme.space[3],
+      gap: theme.space[3],
+    },
+    connectionDot: {
+      width: 8,
+      height: 8,
+      borderRadius: theme.radii.full,
+    },
+    dotOnline: {
+      backgroundColor: theme.color.action.success.background,
+    },
+    dotOffline: {
+      backgroundColor: theme.color.action.danger.background,
+    },
+    offlineStatusText: {
+      color: theme.color.text.inverse,
+      fontSize: 12,
+      fontWeight: '500',
+    },
+    offlineBadge: {
+      backgroundColor: theme.color.icon.warning,
+      paddingHorizontal: theme.space[2],
+      paddingVertical: theme.space[0.5],
+      borderRadius: theme.radii.md,
+    },
+    offlineBadgeText: {
+      color: theme.color.text.inverse,
+      fontSize: 11,
+      fontWeight: '700',
+    },
+    offlineTokenCount: {
+      color: theme.color.text.inverse,
+      fontSize: 12,
+    },
+    offlinePendingCount: {
+      color: theme.color.state.warning.border,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    closeButton: {
+      fontSize: 24,
+      color: theme.color.text.muted,
+      padding: theme.space[1],
+    },
+    content: {
+      flex: 1,
+      flexDirection: 'row',
+    },
+    leftPanel: {
+      flex: 1,
+      padding: theme.space[4],
+    },
+    rightPanel: {
+      flex: 0.4,
+      minWidth: 320,
+      maxWidth: 650,
+      backgroundColor: theme.color.surface.base,
+      borderLeftWidth: 1,
+      borderLeftColor: theme.color.border.subtle,
+      padding: theme.space[4],
+    },
+    searchContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: theme.space[4],
+    },
+    searchInput: {
+      flex: 1,
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.lg,
+      padding: theme.space[5],
+      fontSize: 20,
+      borderWidth: 2,
+      borderColor: theme.color.icon.accent,
+      ...theme.shadow.sm,
+    },
+    searchLoader: {
+      marginLeft: theme.space[2],
+    },
+    searchResults: {
+      flex: 1,
+    },
+    topSellersSection: {
+      marginTop: theme.space[2],
+      flex: 1,
+    },
+    topSellersHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: theme.space[2],
+    },
+    topSellersTitle: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: theme.color.text.heading,
+    },
+    topSellersList: {
+      paddingVertical: theme.space[1],
+      paddingBottom: theme.space[6],
+      gap: theme.space[3],
+    },
+    topSellersRow: {
+      justifyContent: 'flex-start',
+      gap: theme.space[3],
+      marginBottom: theme.space[3],
+    },
+    topSellerCard: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.lg,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+      padding: theme.space[2.5],
+      justifyContent: 'space-between',
+    },
+    topSellerImage: {
+      width: '100%',
+      borderRadius: theme.radii.md,
+      backgroundColor: theme.color.surface.muted,
+      marginBottom: theme.space[2],
+    },
+    topSellerImagePlaceholder: {
+      width: '100%',
+      borderRadius: theme.radii.md,
+      backgroundColor: theme.color.surface.muted,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: theme.space[2],
+    },
+    topSellerImagePlaceholderText: {
+      fontSize: 34,
+    },
+    topSellerName: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      minHeight: 36,
+    },
+    topSellerSku: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: theme.color.text.body,
+      marginTop: 2,
+    },
+    topSellerPrice: {
+      fontSize: 18,
+      fontWeight: '700',
+      color: theme.color.text.link,
+      marginTop: theme.space[1.5],
+    },
+    topSellersEmptyText: {
+      fontSize: 13,
+      color: theme.color.text.muted,
+      paddingVertical: theme.space[2.5],
+      paddingHorizontal: theme.space[1],
+    },
+    productItem: {
+      backgroundColor: theme.color.surface.base,
+      padding: theme.space[3],
+      borderRadius: theme.radii.md,
+      marginBottom: theme.space[3],
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+      gap: theme.space[3],
+    },
+    productImage: {
+      width: 100,
+      height: 100,
+      borderRadius: theme.radii.md,
+      backgroundColor: theme.color.surface.subtle,
+    },
+    productImagePlaceholder: {
+      width: 100,
+      height: 100,
+      borderRadius: theme.radii.md,
+      backgroundColor: theme.color.surface.subtle,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    productImagePlaceholderText: {
+      fontSize: 40,
+    },
+    productInfo: {
+      flex: 1,
+      justifyContent: 'center',
+    },
+    productName: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[1],
+    },
+    productCode: {
+      fontSize: 12,
+      color: theme.color.text.muted,
+      marginBottom: theme.space[1],
+    },
+    productPrice: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      color: theme.color.text.link,
+    },
+    productStock: {
+      fontSize: 12,
+      fontWeight: '600',
+      marginTop: theme.space[1],
+    },
+    productStockOk: {
+      color: theme.color.text.success,
+    },
+    productStockLow: {
+      color: theme.color.icon.warning,
+    },
+    productStockOut: {
+      color: theme.color.action.danger.background,
+    },
+    customerSearchContainer: {
+      marginBottom: theme.space[4],
+      position: 'relative',
+      zIndex: 1000,
+    },
+    customerSearchHeader: {
+      marginBottom: theme.space[2],
+    },
+    customerSearchLabel: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+    },
+    customerInputContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      position: 'relative',
+    },
+    customerSearchInput: {
+      flex: 1,
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.lg,
+      padding: 18,
+      fontSize: 18,
+      borderWidth: 2,
+      borderColor: theme.color.action.success.background,
+      paddingRight: 70,
+      ...theme.shadow.sm,
+    },
+    customerSearchLoader: {
+      position: 'absolute',
+      right: 40,
+    },
+    clearCustomerButton: {
+      position: 'absolute',
+      right: theme.space[2],
+      padding: theme.space[2],
+    },
+    clearCustomerIcon: {
+      fontSize: 18,
+      color: theme.color.text.placeholder,
+      fontWeight: 'bold',
+    },
+    customerDropdown: {
+      position: 'absolute',
+      top: '100%',
+      left: 0,
+      right: 0,
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.md,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+      marginTop: theme.space[1],
+      maxHeight: 300,
+      ...theme.shadow.md,
+      zIndex: 1001,
+    },
+    customerDropdownScroll: {
+      maxHeight: 300,
+    },
+    customerDropdownItem: {
+      padding: theme.space[3],
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+    },
+    customerDropdownItemContent: {
+      gap: theme.space[1],
+    },
+    customerDropdownItemHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[1],
+    },
+    customerDropdownItemName: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      flex: 1,
+    },
+    customerTypeBadge: {
+      paddingHorizontal: theme.space[2],
+      paddingVertical: theme.space[1],
+      borderRadius: theme.radii.sm,
+      marginLeft: theme.space[2],
+    },
+    customerTypeBadgeEmpresa: {
+      backgroundColor: theme.color.state.info.background,
+    },
+    customerTypeBadgePersona: {
+      backgroundColor: theme.color.surface.muted,
+    },
+    customerTypeBadgeText: {
+      fontSize: 10,
+      fontWeight: '600',
+      color: theme.color.text.muted,
+    },
+    customerDropdownItemDoc: {
+      fontSize: 12,
+      color: theme.color.text.muted,
+    },
+    customerDropdownItemEmail: {
+      fontSize: 11,
+      color: theme.color.text.placeholder,
+    },
+    customerDropdownItemPhone: {
+      fontSize: 11,
+      color: theme.color.text.placeholder,
+    },
+    selectedCustomerCard: {
+      backgroundColor: theme.color.state.success.background,
+      borderRadius: theme.radii.lg,
+      padding: theme.space[4],
+      borderWidth: 2,
+      borderColor: theme.color.action.success.background,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      ...theme.shadow.sm,
+    },
+    selectedCustomerInfo: {
+      flex: 1,
+      marginRight: theme.space[3],
+    },
+    selectedCustomerName: {
+      fontSize: 16,
+      fontWeight: 'bold',
+      color: theme.color.state.success.text,
+      marginBottom: theme.space[1],
+    },
+    selectedCustomerDoc: {
+      fontSize: 14,
+      color: theme.color.state.success.text,
+      marginBottom: 2,
+    },
+    selectedCustomerEmail: {
+      fontSize: 12,
+      color: theme.color.state.success.text,
+      marginBottom: 2,
+    },
+    selectedCustomerPhone: {
+      fontSize: 12,
+      color: theme.color.state.success.text,
+    },
+    removeCustomerButton: {
+      backgroundColor: theme.color.state.danger.background,
+      paddingHorizontal: theme.space[4],
+      paddingVertical: theme.space[2.5],
+      borderRadius: theme.radii.md,
+      borderWidth: 1,
+      borderColor: theme.color.action.danger.background,
+    },
+    removeCustomerButtonText: {
+      fontSize: 14,
+      fontWeight: 'bold',
+      color: theme.color.state.danger.text,
+    },
+    addCustomerDropdownItem: {
+      padding: theme.space[3.5],
+      backgroundColor: theme.color.state.success.background,
+      borderTopWidth: 2,
+      borderTopColor: theme.color.action.success.background,
+    },
+    addCustomerDropdownContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[3],
+    },
+    addCustomerIcon: {
+      fontSize: 24,
+    },
+    addCustomerTextContainer: {
+      flex: 1,
+    },
+    addCustomerTitle: {
+      fontSize: 15,
+      fontWeight: 'bold',
+      color: theme.color.state.success.text,
+    },
+    addCustomerSubtitle: {
+      fontSize: 12,
+      color: theme.color.action.success.background,
+      marginTop: 2,
+    },
+    addCustomerModalContent: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii['2xl'],
+      padding: theme.space[6],
+      width: '90%',
+      maxWidth: 600,
+      maxHeight: '85%',
+    },
+    addCustomerModalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[5],
+      paddingBottom: theme.space[4],
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+    },
+    addCustomerModalTitle: {
+      fontSize: 24,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+    },
+    addCustomerCloseButton: {
+      width: 40,
+      height: 40,
+      borderRadius: theme.radii.full,
+      backgroundColor: theme.color.surface.subtle,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    addCustomerCloseButtonText: {
+      fontSize: 20,
+      color: theme.color.text.muted,
+      fontWeight: 'bold',
+    },
+    addCustomerLoading: {
+      padding: theme.space[10],
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    addCustomerLoadingText: {
+      marginTop: theme.space[4],
+      fontSize: 16,
+      color: theme.color.text.muted,
+    },
+    addCustomerForm: {
+      flex: 1,
+      marginBottom: theme.space[4],
+    },
+    addCustomerFormGroup: {
+      marginBottom: theme.space[4],
+    },
+    addCustomerFormRow: {
+      flexDirection: 'row',
+      marginBottom: theme.space[4],
+    },
+    addCustomerSwitchRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.md,
+      padding: theme.space[3.5],
+      marginBottom: theme.space[4],
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    addCustomerSwitchLabel: {
+      fontSize: 15,
+      fontWeight: '500',
+      color: theme.color.text.heading,
+    },
+    addCustomerLabel: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[2],
+    },
+    addCustomerInput: {
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.md,
+      padding: theme.space[3.5],
+      fontSize: 16,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+      color: theme.color.text.heading,
+    },
+    addCustomerDocumentBox: {
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.md,
+      padding: theme.space[3.5],
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    addCustomerDocumentText: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+      fontFamily: theme.fonts.mono,
+    },
+    addCustomerTypeBadge: {
+      paddingHorizontal: theme.space[3],
+      paddingVertical: theme.space[1.5],
+      borderRadius: theme.radii.sm,
+    },
+    addCustomerTypeBadgeEmpresa: {
+      backgroundColor: theme.color.state.info.background,
+    },
+    addCustomerTypeBadgePersona: {
+      backgroundColor: theme.color.surface.muted,
+    },
+    addCustomerTypeBadgeText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: theme.color.text.muted,
+    },
+    addCustomerButtons: {
+      flexDirection: 'row',
+      gap: theme.space[3],
+      marginTop: theme.space[2],
+    },
+    addCustomerButton: {
+      flex: 1,
+      paddingVertical: theme.space[4],
+      borderRadius: theme.radii.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    addCustomerCancelButton: {
+      backgroundColor: theme.color.surface.subtle,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    addCustomerCancelButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.muted,
+    },
+    addCustomerSaveButton: {
+      backgroundColor: theme.color.action.success.background,
+    },
+    addCustomerSaveButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.onAction,
+    },
+    offlineAddCustomerButton: {
+      backgroundColor: theme.color.state.warning.background,
+      borderRadius: theme.radii.lg,
+      padding: theme.space[4],
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: theme.space[2.5],
+      borderWidth: 2,
+      borderColor: theme.color.icon.warning,
+      borderStyle: 'dashed',
+    },
+    offlineAddCustomerIcon: {
+      fontSize: 24,
+    },
+    offlineAddCustomerText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.state.warning.text,
+    },
+    offlineAddCustomerSubtext: {
+      fontSize: 13,
+      color: theme.color.icon.warning,
+    },
+    offlineCustomerBadge: {
+      paddingHorizontal: theme.space[2],
+      paddingVertical: theme.space[0.5],
+      borderRadius: theme.radii.sm,
+      alignSelf: 'flex-start',
+    },
+    offlineCustomerModalContent: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii['2xl'],
+      padding: theme.space[6],
+      width: '90%',
+      maxWidth: 450,
+    },
+    offlineCustomerModalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[5],
+      paddingBottom: theme.space[4],
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+    },
+    offlineCustomerModalTitle: {
+      fontSize: 22,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+    },
+    offlineCustomerCloseButton: {
+      width: 32,
+      height: 32,
+      borderRadius: theme.radii.full,
+      backgroundColor: theme.color.surface.subtle,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    offlineCustomerCloseButtonText: {
+      fontSize: 18,
+      color: theme.color.text.muted,
+    },
+    offlineCustomerForm: {
+      marginBottom: theme.space[5],
+    },
+    offlineCustomerFormGroup: {
+      marginBottom: 18,
+    },
+    offlineCustomerLabel: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[2],
+    },
+    offlineCustomerDocTypeRow: {
+      flexDirection: 'row',
+      gap: theme.space[3],
+    },
+    offlineCustomerDocTypeButton: {
+      flex: 1,
+      paddingVertical: theme.space[3.5],
+      paddingHorizontal: theme.space[5],
+      borderRadius: theme.radii.md,
+      borderWidth: 2,
+      borderColor: theme.color.border.subtle,
+      backgroundColor: theme.color.surface.subtle,
+      alignItems: 'center',
+    },
+    offlineCustomerDocTypeButtonActive: {
+      borderColor: theme.color.icon.warning,
+      backgroundColor: theme.color.state.warning.background,
+    },
+    offlineCustomerDocTypeText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.muted,
+    },
+    offlineCustomerDocTypeTextActive: {
+      color: theme.color.state.warning.text,
+    },
+    offlineCustomerInput: {
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.md,
+      padding: theme.space[3.5],
+      fontSize: 16,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+      color: theme.color.text.heading,
+    },
+    offlineCustomerInfoBox: {
+      backgroundColor: theme.color.state.warning.background,
+      borderRadius: theme.radii.md,
+      padding: theme.space[3.5],
+      borderLeftWidth: 4,
+      borderLeftColor: theme.color.icon.warning,
+    },
+    offlineCustomerInfoText: {
+      fontSize: 13,
+      color: theme.color.state.warning.text,
+      lineHeight: 18,
+    },
+    offlineCustomerInfoSubtext: {
+      fontSize: 12,
+      color: theme.color.icon.warning,
+      marginTop: theme.space[1.5],
+      fontWeight: '600',
+    },
+    offlineCustomerButtons: {
+      flexDirection: 'row',
+      gap: theme.space[3],
+    },
+    offlineCustomerButton: {
+      flex: 1,
+      paddingVertical: theme.space[3.5],
+      borderRadius: theme.radii.md,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    offlineCustomerCancelButton: {
+      backgroundColor: theme.color.surface.subtle,
+    },
+    offlineCustomerCancelButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.muted,
+    },
+    offlineCustomerSaveButton: {
+      backgroundColor: theme.color.icon.warning,
+    },
+    offlineCustomerSaveButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.onAction,
+    },
+    cartList: {
+      flex: 1,
+      marginBottom: theme.space[4],
+    },
+    emptyCart: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingVertical: 60,
+    },
+    emptyCartText: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: theme.color.text.placeholder,
+      marginBottom: theme.space[2],
+    },
+    emptyCartSubtext: {
+      fontSize: 14,
+      color: theme.color.text.disabled,
+    },
+    cartItem: {
+      paddingVertical: theme.space[1],
+      paddingHorizontal: theme.space[2.5],
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+    },
+    cartItemRow: {
+      flexDirection: 'row',
+      gap: theme.space[2],
+      alignItems: 'center',
+    },
+    cartItemImage: {
+      width: 60,
+      height: 60,
+      borderRadius: theme.radii.sm,
+      backgroundColor: theme.color.surface.subtle,
+    },
+    cartItemImagePlaceholder: {
+      width: 60,
+      height: 60,
+      borderRadius: theme.radii.sm,
+      backgroundColor: theme.color.surface.subtle,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    cartItemImagePlaceholderText: {
+      fontSize: 24,
+    },
+    cartItemInfo: {
+      flex: 1,
+      justifyContent: 'space-between',
+    },
+    cartItemHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      marginBottom: 0,
+    },
+    cartItemNameContainer: {
+      flex: 1,
+      marginRight: theme.space[2],
+    },
+    cartItemName: {
+      fontSize: 15,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      lineHeight: 18,
+    },
+    cartItemSku: {
+      fontSize: 11,
+      color: theme.color.text.placeholder,
+      marginTop: 1,
+      lineHeight: 13,
+    },
+    removeButtonContainer: {
+      backgroundColor: theme.color.state.danger.background,
+      borderRadius: theme.radii.sm,
+      padding: theme.space[1.5],
+      minWidth: 36,
+      minHeight: 36,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    removeButton: {
+      fontSize: 24,
+    },
+    cartItemDetails: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: 2,
+    },
+    quantityControl: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[2],
+    },
+    quantityButton: {
+      width: 32,
+      height: 32,
+      borderRadius: theme.radii.full,
+      backgroundColor: theme.color.surface.muted,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    quantityButtonDisabled: {
+      opacity: 0.4,
+    },
+    cartItemStock: {
+      fontSize: 12,
+      color: theme.color.text.muted,
+      marginTop: theme.space[1],
+    },
+    quantityButtonText: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+    },
+    quantityText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      minWidth: 30,
+      textAlign: 'center',
+    },
+    quantityInput: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      width: 55,
+      height: 32,
+      textAlign: 'center',
+      backgroundColor: theme.color.surface.base,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+      borderRadius: theme.radii.sm,
+      paddingHorizontal: theme.space[1],
+    },
+    cartItemPrice: {
+      fontSize: 13,
+      color: theme.color.text.muted,
+      marginBottom: 2,
+      lineHeight: 16,
+    },
+    cartItemTotal: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: theme.color.text.link,
+    },
+    totalsContainer: {
+      padding: theme.space[4],
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.md,
+      marginBottom: theme.space[4],
+    },
+    totalRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginBottom: theme.space[2],
+    },
+    totalLabel: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+    },
+    totalLabelBold: {
+      fontSize: 24,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+    },
+    totalValue: {
+      fontSize: 14,
+      fontWeight: '500',
+      color: theme.color.text.heading,
+    },
+    totalValueBold: {
+      fontSize: 32,
+      fontWeight: 'bold',
+      color: theme.color.action.success.background,
+    },
+    discountValue: {
+      color: theme.color.action.danger.background,
+    },
+    divider: {
+      height: 1,
+      backgroundColor: theme.color.border.subtle,
+      marginVertical: theme.space[2],
+    },
+    actionButtons: {
+      flexDirection: 'row',
+      gap: theme.space[3],
+    },
+    button: {
+      flex: 1,
+      paddingVertical: theme.space[6],
+      paddingHorizontal: theme.space[5],
+      borderRadius: theme.radii.md,
+      alignItems: 'center',
+    },
+    clearButton: {
+      backgroundColor: theme.color.surface.base,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    clearButtonText: {
+      fontSize: 20,
+      fontWeight: '600',
+      color: theme.color.text.muted,
+    },
+    processButton: {
+      backgroundColor: theme.color.action.success.background,
+    },
+    processButtonText: {
+      fontSize: 20,
+      fontWeight: '600',
+      color: theme.color.text.onAction,
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: theme.color.overlay.medium,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    modalContent: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii['2xl'],
+      padding: theme.space[12],
+      width: '98%',
+      maxWidth: 1400,
+      maxHeight: '95%',
+    },
+    modalTitle: {
+      fontSize: 48,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[8],
+      textAlign: 'center',
+    },
+    modalScrollContent: {
+      flex: 1,
+      marginBottom: theme.space[6],
+    },
+    modalTotal: {
+      backgroundColor: theme.color.surface.subtle,
+      padding: theme.space[8],
+      borderRadius: theme.radii.xl,
+      marginBottom: theme.space[8],
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    modalTotalLabel: {
+      fontSize: 32,
+      fontWeight: '600',
+      color: theme.color.text.muted,
+    },
+    modalTotalValue: {
+      fontSize: 52,
+      fontWeight: 'bold',
+      color: theme.color.action.success.background,
+    },
+    paymentSelection: {
+      marginBottom: theme.space[6],
+    },
+    sectionLabel: {
+      fontSize: 28,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[4],
+    },
+    methodsGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: theme.space[4],
+      marginBottom: theme.space[6],
+    },
+    methodButton: {
+      flex: 1,
+      minWidth: 200,
+      padding: 28,
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.xl,
+      borderWidth: 4,
+      borderColor: theme.color.border.subtle,
+    },
+    methodButtonSelected: {
+      backgroundColor: theme.color.state.info.background,
+      borderColor: theme.color.icon.accent,
+    },
+    methodButtonText: {
+      fontSize: 26,
+      color: theme.color.text.heading,
+      textAlign: 'center',
+      fontWeight: '600',
+    },
+    methodButtonTextSelected: {
+      color: theme.color.text.link,
+      fontWeight: 'bold',
+    },
+    submethodContainer: {
+      marginTop: theme.space[4],
+    },
+    izipayWarningBox: {
+      backgroundColor: theme.color.state.warning.background,
+      borderRadius: theme.radii.lg,
+      padding: theme.space[5],
+      marginBottom: theme.space[6],
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderWidth: 3,
+      borderColor: theme.color.icon.warning,
+      ...theme.shadow.md,
+    },
+    izipayWarningIcon: {
+      fontSize: 40,
+      marginRight: theme.space[4],
+    },
+    izipayWarningContent: {
+      flex: 1,
+    },
+    izipayWarningTitle: {
+      fontSize: 22,
+      fontWeight: 'bold',
+      color: theme.color.state.warning.text,
+      marginBottom: theme.space[2],
+    },
+    izipayWarningText: {
+      fontSize: 18,
+      color: theme.color.state.warning.text,
+      lineHeight: 24,
+    },
+    amountContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[4],
+      marginBottom: theme.space[7],
+    },
+    amountInput: {
+      flex: 1,
+      padding: 28,
+      fontSize: 32,
+      borderWidth: 3,
+      borderColor: theme.color.border.subtle,
+      borderRadius: theme.radii.xl,
+      backgroundColor: theme.color.surface.base,
+      fontWeight: 'bold',
+    },
+    fillRemainingButton: {
+      padding: 28,
+      backgroundColor: theme.color.icon.accent,
+      borderRadius: theme.radii.xl,
+      minWidth: 180,
+    },
+    fillRemainingButtonText: {
+      fontSize: 26,
+      fontWeight: 'bold',
+      color: theme.color.text.onAction,
+      textAlign: 'center',
+    },
+    addPaymentButton: {
+      padding: theme.space[8],
+      backgroundColor: theme.color.action.success.background,
+      borderRadius: theme.radii.xl,
+      alignItems: 'center',
+      marginBottom: theme.space[7],
+    },
+    addPaymentButtonText: {
+      fontSize: 28,
+      fontWeight: 'bold',
+      color: theme.color.text.onAction,
+    },
+    selectedPayments: {
+      marginBottom: theme.space[7],
+      backgroundColor: theme.color.surface.subtle,
+      padding: theme.space[6],
+      borderRadius: theme.radii.xl,
+    },
+    selectedPaymentsTitle: {
+      fontSize: 28,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[5],
+    },
+    paymentRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[4],
+      backgroundColor: theme.color.surface.base,
+      padding: theme.space[5],
+      borderRadius: theme.radii.lg,
+    },
+    paymentInfo: {
+      flex: 1,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginRight: theme.space[4],
+    },
+    paymentName: {
+      fontSize: 24,
+      color: theme.color.text.heading,
+      fontWeight: '600',
+      flex: 1,
+    },
+    paymentAmount: {
+      fontSize: 28,
+      fontWeight: 'bold',
+      color: theme.color.text.link,
+      marginLeft: theme.space[4],
+    },
+    removePaymentButton: {
+      backgroundColor: theme.color.state.danger.background,
+      padding: theme.space[4],
+      borderRadius: theme.radii.lg,
+      minWidth: 60,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    removePaymentIcon: {
+      fontSize: 32,
+    },
+    paymentSummary: {
+      marginTop: theme.space[4],
+      paddingTop: theme.space[5],
+    },
+    summaryRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[4],
+    },
+    summaryLabel: {
+      fontSize: 26,
+      fontWeight: '600',
+      color: theme.color.text.muted,
+    },
+    summaryValue: {
+      fontSize: 28,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+    },
+    summaryValuePaid: {
+      fontSize: 28,
+      fontWeight: 'bold',
+      color: theme.color.text.link,
+    },
+    summaryValueHighlight: {
+      fontSize: 32,
+      fontWeight: 'bold',
+    },
+    summaryValueMissing: {
+      color: theme.color.action.danger.background,
+    },
+    summaryValueChange: {
+      color: theme.color.action.success.background,
+    },
+    changeHighlightBox: {
+      marginTop: theme.space[6],
+      padding: theme.space[8],
+      borderRadius: theme.radii.xl,
+      alignItems: 'center',
+      borderWidth: 4,
+    },
+    changeHighlightBoxMissing: {
+      backgroundColor: theme.color.state.danger.background,
+      borderColor: theme.color.action.danger.background,
+    },
+    changeHighlightBoxChange: {
+      backgroundColor: theme.color.state.success.background,
+      borderColor: theme.color.action.success.background,
+    },
+    changeHighlightLabel: {
+      fontSize: 32,
+      fontWeight: 'bold',
+      marginBottom: theme.space[4],
+      letterSpacing: 2,
+    },
+    changeHighlightValue: {
+      fontSize: 64,
+      fontWeight: 'bold',
+    },
+    modalButtons: {
+      flexDirection: 'row',
+      gap: theme.space[6],
+    },
+    modalCancelButton: {
+      backgroundColor: theme.color.surface.base,
+      borderWidth: 3,
+      borderColor: theme.color.border.subtle,
+      padding: theme.space[8],
+    },
+    modalCancelButtonText: {
+      fontSize: 28,
+      fontWeight: 'bold',
+      color: theme.color.text.muted,
+    },
+    modalConfirmButton: {
+      backgroundColor: theme.color.action.success.background,
+      padding: theme.space[8],
+    },
+    buttonDisabled: {
+      backgroundColor: theme.color.action.primary.backgroundDisabled,
+      opacity: 0.6,
+    },
+    modalConfirmButtonText: {
+      fontSize: 28,
+      fontWeight: 'bold',
+      color: theme.color.text.onAction,
+    },
+    salesModalContent: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.lg,
+      padding: theme.space[6],
+      width: '90%',
+      maxWidth: 700,
+      maxHeight: '85%',
+    },
+    salesModalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[4],
+    },
+    salesSummary: {
+      backgroundColor: theme.color.surface.subtle,
+      padding: theme.space[4],
+      borderRadius: theme.radii.md,
+      marginBottom: theme.space[4],
+    },
+    summaryTitle: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[3],
+    },
+    salesList: {
+      flex: 1,
+      marginBottom: theme.space[4],
+    },
+    emptySales: {
+      padding: theme.space[10],
+      alignItems: 'center',
+    },
+    emptySalesText: {
+      fontSize: 16,
+      color: theme.color.text.placeholder,
+    },
+    saleItem: {
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.md,
+      marginBottom: theme.space[3],
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+      overflow: 'hidden',
+    },
+    saleItemClickable: {
+      padding: theme.space[4],
+    },
+    saleItemHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[2],
+    },
+    saleNumberContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[2],
+    },
+    saleNumber: {
+      fontSize: 16,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+    },
+    creditNoteBadge: {
+      backgroundColor: theme.color.icon.warning,
+      paddingHorizontal: theme.space[2],
+      paddingVertical: theme.space[0.5],
+      borderRadius: theme.radii.lg,
+    },
+    creditNoteBadgeText: {
+      fontSize: 10,
+      fontWeight: 'bold',
+      color: theme.color.text.onAction,
+    },
+    saleStatus: {
+      fontSize: 12,
+      fontWeight: '600',
+      paddingHorizontal: theme.space[2],
+      paddingVertical: theme.space[1],
+      borderRadius: theme.radii.sm,
+    },
+    statusDraft: {
+      backgroundColor: theme.color.state.draft.background,
+      paddingHorizontal: theme.space[2.5],
+      paddingVertical: 5,
+      borderRadius: theme.radii.sm,
+      borderWidth: 1,
+      borderColor: theme.color.state.draft.border,
+    },
+    statusConfirmed: {
+      backgroundColor: theme.color.state.success.background,
+      paddingHorizontal: theme.space[2.5],
+      paddingVertical: 5,
+      borderRadius: theme.radii.sm,
+      borderWidth: 1,
+      borderColor: theme.color.state.success.border,
+    },
+    statusDevParcial: {
+      backgroundColor: theme.color.state.warning.background,
+      paddingHorizontal: theme.space[2.5],
+      paddingVertical: 5,
+      borderRadius: theme.radii.sm,
+      borderWidth: 1,
+      borderColor: theme.color.state.warning.border,
+    },
+    statusDevTotal: {
+      backgroundColor: theme.color.state.warning.background,
+      paddingHorizontal: theme.space[2.5],
+      paddingVertical: 5,
+      borderRadius: theme.radii.sm,
+      borderWidth: 1,
+      borderColor: theme.color.state.warning.border,
+    },
+    statusInvoiced: {
+      backgroundColor: theme.color.state.info.background,
+      paddingHorizontal: theme.space[2.5],
+      paddingVertical: 5,
+      borderRadius: theme.radii.sm,
+      borderWidth: 1,
+      borderColor: theme.color.state.info.border,
+    },
+    statusPaid: {
+      backgroundColor: theme.color.state.paid.background,
+      paddingHorizontal: theme.space[2.5],
+      paddingVertical: 5,
+      borderRadius: theme.radii.sm,
+      borderWidth: 1,
+      borderColor: theme.color.state.paid.border,
+    },
+    statusCancelled: {
+      backgroundColor: theme.color.state.cancelled.background,
+      paddingHorizontal: theme.space[2.5],
+      paddingVertical: 5,
+      borderRadius: theme.radii.sm,
+      borderWidth: 1,
+      borderColor: theme.color.state.cancelled.border,
+    },
+    statusRefunded: {
+      backgroundColor: theme.color.surface.muted,
+      paddingHorizontal: theme.space[2.5],
+      paddingVertical: 5,
+      borderRadius: theme.radii.sm,
+      borderWidth: 1,
+      borderColor: theme.color.border.default,
+    },
+    statusDefault: {
+      backgroundColor: theme.color.state.draft.background,
+      paddingHorizontal: theme.space[2.5],
+      paddingVertical: 5,
+      borderRadius: theme.radii.sm,
+      borderWidth: 1,
+      borderColor: theme.color.state.draft.border,
+    },
+    statusText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.color.text.heading,
+    },
+    saleItemDetails: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[1],
+    },
+    saleDocType: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+    },
+    saleTotal: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      color: theme.color.action.success.background,
+    },
+    saleCustomer: {
+      fontSize: 12,
+      color: theme.color.text.muted,
+      marginBottom: theme.space[1],
+    },
+    salePaymentsContainer: {
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.md,
+      padding: theme.space[3],
+      marginTop: theme.space[2],
+      marginBottom: theme.space[2],
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    salePaymentsTitle: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[2],
+    },
+    salePaymentRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: theme.space[1],
+      paddingHorizontal: theme.space[2],
+    },
+    salePaymentMethod: {
+      fontSize: 12,
+      color: theme.color.text.body,
+      flex: 1,
+    },
+    salePaymentAmount: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: theme.color.text.link,
+    },
+    salePaymentTotal: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: theme.space[2],
+      paddingTop: theme.space[2],
+      borderTopWidth: 1,
+      borderTopColor: theme.color.border.default,
+      paddingHorizontal: theme.space[2],
+    },
+    salePaymentTotalLabel: {
+      fontSize: 13,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+    },
+    salePaymentTotalValue: {
+      fontSize: 14,
+      fontWeight: 'bold',
+      color: theme.color.action.success.background,
+    },
+    saleItemCount: {
+      fontSize: 12,
+      color: theme.color.text.muted,
+    },
+    saleDate: {
+      fontSize: 12,
+      color: theme.color.text.placeholder,
+    },
+    saleItemActions: {
+      flexDirection: 'row',
+      borderTopWidth: 1,
+      borderTopColor: theme.color.border.subtle,
+    },
+    reprintButton: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.color.text.link,
+      paddingVertical: theme.space[3],
+      paddingHorizontal: theme.space[4],
+      gap: theme.space[2],
+    },
+    reprintButtonIcon: {
+      fontSize: 18,
+    },
+    reprintButtonText: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.onAction,
+    },
+    generateCreditNoteButton: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.color.icon.warning,
+      paddingVertical: theme.space[3],
+      paddingHorizontal: theme.space[4],
+      gap: theme.space[2],
+      borderLeftWidth: 1,
+      borderLeftColor: theme.color.surface.base,
+    },
+    generateCreditNoteButtonIcon: {
+      fontSize: 18,
+    },
+    generateCreditNoteButtonText: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.onAction,
+    },
+    creditNoteButton: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.color.action.success.background,
+      paddingVertical: theme.space[3],
+      paddingHorizontal: theme.space[4],
+      gap: theme.space[2],
+      borderLeftWidth: 1,
+      borderLeftColor: theme.color.surface.base,
+    },
+    manageCreditNoteButton: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.color.icon.accent,
+      paddingVertical: theme.space[3],
+      paddingHorizontal: theme.space[4],
+      gap: theme.space[2],
+      borderLeftWidth: 1,
+      borderLeftColor: theme.color.surface.base,
+    },
+    creditNoteButtonIcon: {
+      fontSize: 18,
+    },
+    creditNoteButtonText: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.onAction,
+    },
+    closeModalButton: {
+      backgroundColor: theme.color.text.link,
+      padding: theme.space[3.5],
+      borderRadius: theme.radii.md,
+      alignItems: 'center',
+    },
+    closeModalButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.onAction,
+    },
+    paginationContainer: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: theme.space[4],
+      paddingHorizontal: theme.space[5],
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.md,
+      marginBottom: theme.space[4],
+    },
+    paginationButton: {
+      backgroundColor: theme.color.text.link,
+      paddingVertical: theme.space[3],
+      paddingHorizontal: theme.space[5],
+      borderRadius: theme.radii.md,
+      minWidth: 120,
+      alignItems: 'center',
+    },
+    paginationButtonDisabled: {
+      backgroundColor: theme.color.action.primary.backgroundDisabled,
+      opacity: 0.6,
+    },
+    paginationButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.onAction,
+    },
+    paginationButtonTextDisabled: {
+      color: theme.color.text.placeholder,
+    },
+    paginationInfo: {
+      alignItems: 'center',
+      flex: 1,
+      marginHorizontal: theme.space[4],
+    },
+    paginationText: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[1],
+    },
+    paginationSubtext: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+    },
+    successModalContent: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii['3xl'],
+      padding: theme.space[12],
+      width: '95%',
+      maxWidth: 1200,
+      maxHeight: '90%',
+      ...theme.shadow.lg,
+    },
+    successHeader: {
+      alignItems: 'center',
+      marginBottom: theme.space[8],
+    },
+    successIcon: {
+      fontSize: 100,
+      color: theme.color.action.success.background,
+      marginBottom: theme.space[4],
+    },
+    successTitle: {
+      fontSize: 48,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+      textAlign: 'center',
+    },
+    successDetails: {
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.xl,
+      padding: theme.space[8],
+      marginBottom: theme.space[8],
+    },
+    successTotalBox: {
+      backgroundColor: theme.color.state.info.background,
+      padding: theme.space[6],
+      borderRadius: theme.radii.lg,
+      alignItems: 'center',
+      marginBottom: theme.space[5],
+      borderWidth: 3,
+      borderColor: theme.color.icon.accent,
+    },
+    successTotalLabel: {
+      fontSize: 24,
+      fontWeight: 'bold',
+      color: theme.color.state.info.text,
+      marginBottom: theme.space[2],
+      letterSpacing: 1,
+    },
+    successTotalValue: {
+      fontSize: 48,
+      fontWeight: 'bold',
+      color: theme.color.state.info.text,
+    },
+    successChangeBox: {
+      backgroundColor: theme.color.state.success.background,
+      padding: 28,
+      borderRadius: theme.radii.lg,
+      alignItems: 'center',
+      marginBottom: theme.space[5],
+      borderWidth: 4,
+      borderColor: theme.color.action.success.background,
+    },
+    successChangeLabel: {
+      fontSize: 28,
+      fontWeight: 'bold',
+      color: theme.color.state.success.text,
+      marginBottom: theme.space[3],
+      letterSpacing: 1,
+    },
+    successChangeValue: {
+      fontSize: 56,
+      fontWeight: 'bold',
+      color: theme.color.state.success.text,
+    },
+    successRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[4],
+    },
+    successLabel: {
+      fontSize: 20,
+      color: theme.color.text.muted,
+      fontWeight: '600',
+    },
+    successValue: {
+      fontSize: 20,
+      color: theme.color.text.heading,
+      fontWeight: 'bold',
+      textAlign: 'right',
+      flex: 1,
+      marginLeft: theme.space[4],
+    },
+    successValueBold: {
+      fontSize: 28,
+      color: theme.color.action.success.background,
+      fontWeight: 'bold',
+      textAlign: 'right',
+      flex: 1,
+      marginLeft: theme.space[4],
+    },
+    successButtons: {
+      flexDirection: 'row',
+      gap: theme.space[5],
+    },
+    printButton: {
+      flex: 1,
+      backgroundColor: theme.color.icon.accent,
+      paddingVertical: 52,
+      paddingHorizontal: theme.space[6],
+      borderRadius: theme.radii.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    printButtonText: {
+      fontSize: 28,
+      fontWeight: 'bold',
+      color: theme.color.text.onAction,
+    },
+    newSaleButton: {
+      flex: 1,
+      backgroundColor: theme.color.action.success.background,
+      paddingVertical: 52,
+      paddingHorizontal: theme.space[6],
+      borderRadius: theme.radii.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    newSaleButtonText: {
+      fontSize: 28,
+      fontWeight: 'bold',
+      color: theme.color.text.onAction,
+    },
+    offlineSuccessModalContent: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii['3xl'],
+      padding: theme.space[8],
+      width: '90%',
+      maxWidth: 700,
+      maxHeight: '95%',
+      borderWidth: 3,
+      borderColor: theme.color.icon.warning,
+    },
+    offlineSuccessHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: theme.space[4],
+      gap: theme.space[3],
+    },
+    offlineSuccessIcon: {
+      fontSize: 48,
+    },
+    offlineSuccessTitle: {
+      fontSize: 28,
+      fontWeight: 'bold',
+      color: theme.color.icon.warning,
+    },
+    offlineWarningBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.color.state.warning.background,
+      borderWidth: 2,
+      borderColor: theme.color.state.warning.border,
+      borderRadius: theme.radii.lg,
+      padding: theme.space[4],
+      marginBottom: theme.space[5],
+      gap: theme.space[3],
+    },
+    offlineWarningIcon: {
+      fontSize: 32,
+    },
+    offlineWarningText: {
+      flex: 1,
+      fontSize: 14,
+      color: theme.color.state.warning.text,
+      fontWeight: '600',
+      lineHeight: 20,
+    },
+    offlineSuccessTotalBox: {
+      backgroundColor: theme.color.state.warning.background,
+      borderRadius: theme.radii.xl,
+      padding: theme.space[6],
+      alignItems: 'center',
+      marginBottom: theme.space[5],
+      borderWidth: 3,
+      borderColor: theme.color.icon.warning,
+    },
+    offlineTicketCode: {
+      fontSize: 18,
+      color: theme.color.icon.warning,
+      fontWeight: 'bold',
+      fontFamily: theme.fonts.mono,
+      textAlign: 'right',
+      flex: 1,
+      marginLeft: theme.space[4],
+    },
+    offlinePendingBadge: {
+      backgroundColor: theme.color.state.warning.background,
+      paddingHorizontal: theme.space[3],
+      paddingVertical: theme.space[1.5],
+      borderRadius: theme.radii.xl,
+      borderWidth: 1,
+      borderColor: theme.color.state.warning.border,
+    },
+    offlinePendingText: {
+      fontSize: 14,
+      color: theme.color.state.warning.text,
+      fontWeight: '600',
+    },
+    offlinePrintButton: {
+      flex: 1,
+      backgroundColor: theme.color.icon.warning,
+      paddingVertical: 52,
+      paddingHorizontal: theme.space[6],
+      borderRadius: theme.radii.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    barcodeSelectionModalOverlay: {
+      flex: 1,
+      backgroundColor: theme.color.overlay.strong,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: theme.space[6],
+    },
+    barcodeSelectionModalContent: {
+      width: '96%',
+      maxWidth: 1400,
+      maxHeight: '92%',
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii['2xl'],
+      padding: theme.space[6],
+    },
+    barcodeSelectionModalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[2],
+    },
+    barcodeSelectionTitle: {
+      fontSize: 36,
+      fontWeight: '700',
+      color: theme.color.text.heading,
+    },
+    barcodeSelectionSubtitle: {
+      fontSize: 20,
+      color: theme.color.text.body,
+      marginBottom: theme.space[5],
+    },
+    barcodeSelectionCloseButton: {
+      width: 44,
+      height: 44,
+      borderRadius: theme.radii.full,
+      backgroundColor: theme.color.surface.muted,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    barcodeSelectionCloseButtonText: {
+      fontSize: 24,
+      color: theme.color.text.body,
+      fontWeight: '700',
+    },
+    barcodeSelectionListContent: {
+      paddingBottom: theme.space[4],
+    },
+    barcodeSelectionRow: {
+      gap: theme.space[4],
+      marginBottom: theme.space[4],
+    },
+    barcodeSelectionCard: {
+      flex: 1,
+      minWidth: 0,
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.xl,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+      padding: theme.space[4],
+    },
+    barcodeSelectionImage: {
+      width: '100%',
+      height: 260,
+      borderRadius: theme.radii.lg,
+      backgroundColor: theme.color.surface.muted,
+      marginBottom: theme.space[3],
+    },
+    barcodeSelectionImagePlaceholder: {
+      width: '100%',
+      height: 260,
+      borderRadius: theme.radii.lg,
+      backgroundColor: theme.color.surface.muted,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: theme.space[3],
+    },
+    barcodeSelectionImagePlaceholderText: {
+      fontSize: 64,
+    },
+    barcodeSelectionProductName: {
+      fontSize: 24,
+      fontWeight: '700',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[2],
+      minHeight: 64,
+    },
+    barcodeSelectionProductCode: {
+      fontSize: 16,
+      color: theme.color.text.muted,
+      marginBottom: theme.space[1.5],
+    },
+    barcodeSelectionProductPrice: {
+      fontSize: 28,
+      fontWeight: '700',
+      color: theme.color.text.link,
+      marginBottom: theme.space[1.5],
+    },
+    barcodeSelectionProductStock: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: theme.color.text.success,
+    },
+    imageModalOverlay: {
+      flex: 1,
+      backgroundColor: theme.color.overlay.strong,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: theme.space[5],
+    },
+    imageModalContent: {
+      width: '100%',
+      height: '80%',
+      maxWidth: 800,
+      position: 'relative',
+    },
+    imageModalCloseButton: {
+      position: 'absolute',
+      top: -60,
+      right: theme.space[2.5],
+      zIndex: 10,
+      backgroundColor: theme.color.overlay.subtle,
+      borderRadius: theme.radii.full,
+      width: 60,
+      height: 60,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    imageModalCloseText: {
+      fontSize: 36,
+      color: theme.color.text.inverse,
+      fontWeight: 'bold',
+    },
+    imageModalImage: {
+      width: '100%',
+      height: '100%',
+    },
+    creditNoteManagementModalContent: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.xl,
+      padding: theme.space[6],
+      width: '90%',
+      maxWidth: 700,
+      maxHeight: '88%',
+    },
+    creditNoteManagementScroll: {
+      flex: 1,
+    },
+    creditNoteManagementScrollContent: {
+      paddingBottom: theme.space[4],
+    },
+    creditNoteManagementSummaryText: {
+      fontSize: 13,
+      color: theme.color.text.muted,
+      marginTop: theme.space[1.5],
+    },
+    creditNoteManagementLoadingBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[2.5],
+      backgroundColor: theme.color.surface.muted,
+      borderRadius: theme.radii.md,
+      padding: theme.space[3],
+      marginBottom: theme.space[4],
+    },
+    creditNoteManagementLoadingText: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: theme.color.icon.accent,
+    },
+    creditNoteManagementSection: {
+      marginBottom: theme.space[5],
+    },
+    creditNoteManagementSectionTitle: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[3],
+    },
+    creditNoteManagementEmptyText: {
+      fontSize: 14,
+      color: theme.color.text.placeholder,
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.md,
+      padding: theme.space[3.5],
+    },
+    creditNoteManagementItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: theme.space[3],
+      backgroundColor: theme.color.surface.subtle,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+      borderRadius: theme.radii.md,
+      padding: theme.space[3],
+      marginBottom: theme.space[2.5],
+    },
+    creditNoteManagementItemInfo: {
+      flex: 1,
+    },
+    creditNoteManagementItemTitle: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[1],
+    },
+    creditNoteManagementItemDetail: {
+      fontSize: 12,
+      color: theme.color.text.muted,
+      marginBottom: 2,
+    },
+    creditNoteManagementDownloadButton: {
+      backgroundColor: theme.color.text.link,
+      borderRadius: theme.radii.md,
+      paddingVertical: theme.space[2.5],
+      paddingHorizontal: theme.space[3],
+    },
+    creditNoteManagementDownloadButtonText: {
+      color: theme.color.text.onAction,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    creditNoteAvailableItem: {
+      backgroundColor: theme.color.surface.subtle,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+      borderRadius: theme.radii.md,
+      padding: theme.space[3],
+      marginBottom: theme.space[2],
+    },
+    creditNoteAvailableItemName: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[1],
+    },
+    creditNoteAvailableItemDetail: {
+      fontSize: 12,
+      color: theme.color.text.muted,
+    },
+    creditNoteAvailableReturnDetail: {
+      fontSize: 11,
+      color: theme.color.icon.accent,
+      marginTop: 3,
+    },
+    creditNoteManagementGenerateButton: {
+      backgroundColor: theme.color.icon.warning,
+      borderRadius: theme.radii.md,
+      paddingVertical: theme.space[3.5],
+      alignItems: 'center',
+    },
+    creditNoteManagementGenerateButtonText: {
+      color: theme.color.text.onAction,
+      fontSize: 15,
+      fontWeight: '700',
+    },
+    creditNoteModalContent: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.xl,
+      padding: theme.space[6],
+      width: '90%',
+      maxWidth: 600,
+      maxHeight: '88%',
+    },
+    creditNoteModalScroll: {
+      flex: 1,
+    },
+    creditNoteModalScrollContent: {
+      paddingBottom: theme.space[4],
+    },
+    creditNoteModalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[5],
+    },
+    creditNoteSaleInfo: {
+      backgroundColor: theme.color.surface.subtle,
+      padding: theme.space[4],
+      borderRadius: theme.radii.md,
+      marginBottom: theme.space[5],
+    },
+    creditNoteSaleNumber: {
+      fontSize: 16,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[2],
+    },
+    creditNoteSaleTotal: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      color: theme.color.action.success.background,
+    },
+    creditNoteTypeContainer: {
+      marginBottom: theme.space[5],
+    },
+    creditNoteTypeLabel: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[3],
+    },
+    creditNoteTypeButtons: {
+      flexDirection: 'row',
+      gap: theme.space[3],
+    },
+    creditNoteTypeButton: {
+      flex: 1,
+      backgroundColor: theme.color.surface.subtle,
+      paddingVertical: theme.space[4],
+      paddingHorizontal: theme.space[5],
+      borderRadius: theme.radii.md,
+      alignItems: 'center',
+      borderWidth: 2,
+      borderColor: theme.color.border.subtle,
+    },
+    creditNoteTypeButtonActive: {
+      backgroundColor: theme.color.state.info.background,
+      borderColor: theme.color.icon.accent,
+    },
+    creditNoteTypeButtonText: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.muted,
+    },
+    creditNoteTypeButtonTextActive: {
+      color: theme.color.text.link,
+    },
+    creditNoteFieldContainer: {
+      marginBottom: theme.space[5],
+    },
+    creditNoteFieldLabel: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[2],
+    },
+    creditNoteSustentoInput: {
+      backgroundColor: theme.color.surface.subtle,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+      borderRadius: theme.radii.md,
+      padding: theme.space[3],
+      fontSize: 14,
+      color: theme.color.text.heading,
+      minHeight: 80,
+      textAlignVertical: 'top',
+    },
+    creditNoteCharCount: {
+      fontSize: 12,
+      color: theme.color.text.placeholder,
+      textAlign: 'right',
+      marginTop: theme.space[1],
+    },
+    creditNoteProductsContainer: {
+      marginBottom: theme.space[5],
+    },
+    creditNoteProductsLabel: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[3],
+    },
+    creditNoteProductsList: {
+      maxHeight: 260,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+      borderRadius: theme.radii.md,
+      padding: theme.space[2],
+    },
+    creditNoteProductItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: theme.space[3],
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.md,
+      marginBottom: theme.space[2],
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    creditNoteProductItemSelected: {
+      backgroundColor: theme.color.state.info.background,
+      borderColor: theme.color.icon.accent,
+    },
+    creditNoteProductCheckbox: {
+      marginRight: theme.space[3],
+    },
+    creditNoteProductCheckboxIcon: {
+      fontSize: 24,
+      color: theme.color.icon.accent,
+    },
+    creditNoteProductInfo: {
+      flex: 1,
+    },
+    creditNoteProductName: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[1],
+    },
+    creditNoteProductSku: {
+      fontSize: 11,
+      color: theme.color.text.placeholder,
+      marginBottom: theme.space[1],
+    },
+    creditNoteProductDetails: {
+      fontSize: 12,
+      color: theme.color.text.muted,
+    },
+    creditNoteQuantityRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[2],
+      marginTop: theme.space[2],
+    },
+    creditNoteQuantityLabel: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+    },
+    creditNoteQuantityInput: {
+      width: 70,
+      backgroundColor: theme.color.surface.base,
+      borderWidth: 1,
+      borderColor: theme.color.border.default,
+      borderRadius: theme.radii.sm,
+      paddingHorizontal: theme.space[2],
+      paddingVertical: theme.space[1.5],
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      textAlign: 'center',
+    },
+    creditNoteProductTotal: {
+      fontSize: 14,
+      fontWeight: 'bold',
+      color: theme.color.action.success.background,
+    },
+    creditNoteLoadingContainer: {
+      backgroundColor: theme.color.state.warning.background,
+      padding: theme.space[5],
+      borderRadius: theme.radii.md,
+      alignItems: 'center',
+      marginBottom: theme.space[5],
+      borderWidth: 1,
+      borderColor: theme.color.state.warning.border,
+    },
+    creditNoteLoadingText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.state.warning.text,
+      marginTop: theme.space[3],
+    },
+    creditNoteLoadingSubtext: {
+      fontSize: 12,
+      color: theme.color.icon.warning,
+      marginTop: theme.space[1],
+    },
+    creditNoteActions: {
+      flexDirection: 'row',
+      gap: theme.space[3],
+      marginTop: theme.space[5],
+    },
+    creditNoteCancelButton: {
+      flex: 1,
+      backgroundColor: theme.color.surface.subtle,
+      paddingVertical: theme.space[3.5],
+      borderRadius: theme.radii.md,
+      alignItems: 'center',
+    },
+    creditNoteCancelButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.muted,
+    },
+    creditNoteConfirmButton: {
+      flex: 1,
+      backgroundColor: theme.color.icon.warning,
+      paddingVertical: theme.space[3.5],
+      borderRadius: theme.radii.md,
+      alignItems: 'center',
+    },
+    creditNoteConfirmButtonDisabled: {
+      backgroundColor: theme.color.border.subtle,
+    },
+    creditNoteButtonDisabled: {
+      opacity: 0.5,
+    },
+    creditNoteConfirmButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.onAction,
+    },
+    pinPadModalOverlay: {
+      flex: 1,
+      backgroundColor: theme.color.overlay.strong,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    pinPadModalContent: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.xl,
+      padding: theme.space[6],
+      width: '90%',
+      maxWidth: 400,
+      alignItems: 'center',
+      ...theme.shadow.lg,
+    },
+    pinPadModalHeader: {
+      alignItems: 'center',
+      marginBottom: theme.space[5],
+    },
+    pinPadModalIcon: {
+      fontSize: 48,
+      marginBottom: theme.space[3],
+    },
+    pinPadModalTitle: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+    },
+    pinPadModalBody: {
+      alignItems: 'center',
+      width: '100%',
+      paddingVertical: theme.space[4],
+    },
+    pinPadModalAmount: {
+      fontSize: 36,
+      fontWeight: 'bold',
+      color: theme.color.icon.accent,
+      marginBottom: theme.space[4],
+    },
+    pinPadModalMessage: {
+      fontSize: 16,
+      color: theme.color.text.muted,
+      textAlign: 'center',
+      lineHeight: 24,
+      paddingHorizontal: theme.space[4],
+    },
+    pinPadModalCloseButton: {
+      marginTop: theme.space[5],
+      paddingVertical: theme.space[3],
+      paddingHorizontal: theme.space[8],
+      backgroundColor: theme.color.border.subtle,
+      borderRadius: theme.radii.md,
+    },
+    pinPadModalCloseButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+    },
+  });

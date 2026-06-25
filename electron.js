@@ -14,21 +14,20 @@ if (typeof electronModule === 'string') {
   process.exit(relaunchResult.status ?? 0);
 }
 
-const { app, BrowserWindow, protocol, dialog, ipcMain } = electronModule;
+const { app, BrowserWindow, protocol, dialog, ipcMain, shell } = electronModule;
 const path = require('path');
 const url = require('url');
 const fs = require('fs');
 const http = require('http');
+const https = require('https');
+const crypto = require('crypto');
+const { spawn } = require('child_process');
 const mime = require('mime-types');
 const os = require('os');
 const ptp = require('pdf-to-printer');
 const { PDFDocument } = require('pdf-lib');
 
 console.log('[ELECTRON] ✅ Módulos básicos cargados');
-
-let autoUpdater = null;
-
-console.log('[ELECTRON] ⏳ electron-updater se inicializará al arrancar la app');
 
 const isExplicitDev = process.env.NODE_ENV === 'development';
 const isDev = isExplicitDev || !app.isPackaged;
@@ -390,6 +389,31 @@ function createWindow(port) {
     }
   });
 
+  // Diagnóstico: detectar caídas del proceso renderer (causa común de "se cierra de la nada")
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.error('[ELECTRON] 💥 render-process-gone:', JSON.stringify(details));
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        dialog.showErrorBox(
+          'La aplicación dejó de responder',
+          `El proceso del renderer terminó inesperadamente.\n` +
+          `Razón: ${details.reason} (exitCode=${details.exitCode}).\n` +
+          `Reinicia la aplicación. Si el problema persiste, revisa el log en %APPDATA%/erp-aio-electron/electron-server.log`
+        );
+      }
+    } catch (e) {
+      console.error('[ELECTRON] Error mostrando aviso de render-process-gone:', e.message);
+    }
+  });
+
+  mainWindow.on('unresponsive', () => {
+    console.error('[ELECTRON] ⚠️ Ventana no responde (unresponsive)');
+  });
+
+  mainWindow.on('responsive', () => {
+    console.log('[ELECTRON] ✅ Ventana volvió a responder');
+  });
+
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
     console.error('Failed to load:', errorCode, errorDescription, validatedURL);
   });
@@ -680,291 +704,234 @@ ipcMain.handle('print-html', async (event, { htmlContent, filename }) => {
   }
 });
 
-// ===== HANDLERS IPC PARA ACTUALIZACIONES MANUALES =====
+// ===== ACTUALIZACIONES DESDE EL SERVIDOR (svc-pos /api/pos/app-updates) =====
+// El check lo hace el renderer vía HTTP. Aquí solo descargamos el binario,
+// validamos checksum (sha256) opcional y lanzamos el instalador.
 
-// Variable para almacenar el estado de la actualización
-let updateInfo = null;
-let updateDownloaded = false;
+let activeDownload = null; // { req, filePath, aborted }
+let downloadedUpdatePath = null;
 
-// Obtener versión de la app
-ipcMain.handle('get-app-version', async () => {
-  return {
-    version: app.getVersion(),
-    name: app.getName()
-  };
-});
-
-// Verificar actualizaciones manualmente
-ipcMain.handle('check-for-updates', async () => {
-  if (isDev) {
-    return {
-      updateAvailable: false,
-      currentVersion: app.getVersion(),
-      message: 'Las actualizaciones no están disponibles en modo desarrollo'
-    };
+function getUpdatesDir() {
+  const dir = path.join(app.getPath('userData'), 'updates');
+  try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); } catch (e) {
+    console.error('[UPDATE] No se pudo crear updates dir:', e.message);
   }
+  return dir;
+}
 
-  if (!autoUpdater) {
-    return {
-      updateAvailable: false,
-      currentVersion: app.getVersion(),
-      error: 'Sistema de actualizaciones no inicializado'
-    };
-  }
-
-  try {
-    console.log('[UPDATE] Verificando actualizaciones manualmente...');
-    const result = await autoUpdater.checkForUpdates();
-
-    if (result && result.updateInfo) {
-      updateInfo = result.updateInfo;
-      const currentVersion = app.getVersion();
-      const latestVersion = result.updateInfo.version;
-
-      // Comparar versiones
-      const updateAvailable = latestVersion !== currentVersion;
-
-      return {
-        updateAvailable,
-        currentVersion,
-        latestVersion,
-        releaseDate: result.updateInfo.releaseDate,
-        updateDownloaded
-      };
+function safeSendToRenderer(channel, payload) {
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+    try { mainWindow.webContents.send(channel, payload); } catch (e) {
+      console.error('[UPDATE] Error enviando IPC', channel, e.message);
     }
-
-    return {
-      updateAvailable: false,
-      currentVersion: app.getVersion(),
-      message: 'No se pudo obtener información de actualizaciones'
-    };
-  } catch (error) {
-    console.error('[UPDATE] Error al verificar actualizaciones:', error);
-    return {
-      updateAvailable: false,
-      currentVersion: app.getVersion(),
-      error: error.message
-    };
   }
-});
+}
 
-// Descargar actualización
-ipcMain.handle('download-update', async () => {
-  if (isDev) {
-    return { success: false, message: 'No disponible en modo desarrollo' };
-  }
-
-  if (!autoUpdater) {
-    return { success: false, error: 'Sistema de actualizaciones no inicializado' };
-  }
-
+function inferFilename(downloadUrl, version) {
   try {
-    console.log('[UPDATE] Iniciando descarga de actualización...');
-    await autoUpdater.downloadUpdate();
-    return { success: true, message: 'Descarga iniciada' };
-  } catch (error) {
-    console.error('[UPDATE] Error al descargar:', error);
-    return { success: false, error: error.message };
+    const u = new URL(downloadUrl);
+    const base = path.basename(u.pathname);
+    if (base && /\.[a-z0-9]{2,5}$/i.test(base)) return base;
+  } catch (_) {}
+  const ext = process.platform === 'win32' ? 'exe' : process.platform === 'darwin' ? 'dmg' : 'AppImage';
+  return `CajaGrit-${version || Date.now()}-installer.${ext}`;
+}
+
+function parseChecksum(value) {
+  if (!value || typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed.includes(':')) {
+    const [algo, hex] = trimmed.split(':');
+    return { algorithm: algo.toLowerCase(), expected: hex.toLowerCase() };
   }
-});
+  return { algorithm: 'sha256', expected: trimmed.toLowerCase() };
+}
 
-// Instalar actualización
-ipcMain.handle('install-update', async () => {
-  if (!autoUpdater) {
-    return { success: false, error: 'Sistema de actualizaciones no inicializado' };
-  }
-
-  if (updateDownloaded) {
-    console.log('[UPDATE] Instalando actualización...');
-    autoUpdater.quitAndInstall(false, true);
-    return { success: true };
-  }
-  return { success: false, message: 'No hay actualización descargada' };
-});
-
-// ===== SISTEMA DE ACTUALIZACIONES AUTOMÁTICAS =====
-
-// Configurar eventos del auto-updater
-function setupAutoUpdater() {
-  // Solo verificar actualizaciones en producción
-  if (isDev) {
-    console.log('Auto-updater deshabilitado en modo desarrollo');
-    return;
-  }
-
-  if (!autoUpdater) {
-    console.error('Auto-updater no disponible: no se pudo inicializar electron-updater');
-    return;
-  }
-
-  console.log('Configurando auto-updater...');
-
-  // Cuando hay una actualización disponible
-  autoUpdater.on('update-available', (info) => {
-    console.log('Actualización disponible:', info.version);
-    updateInfo = info;
-
-    // Enviar evento al renderer
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send('update-status', {
-        status: 'available',
-        version: info.version,
-        releaseDate: info.releaseDate
-      });
-    }
-
-    dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: 'Actualización Disponible',
-      message: `Nueva versión ${info.version} disponible`,
-      detail: '¿Deseas descargar e instalar la actualización ahora?',
-      buttons: ['Descargar', 'Más tarde'],
-      defaultId: 0,
-      cancelId: 1
-    }).then((result) => {
-      if (result.response === 0) {
-        // Usuario eligió descargar
-        autoUpdater.downloadUpdate();
-
-        // Mostrar progreso de descarga
-        dialog.showMessageBox(mainWindow, {
-          type: 'info',
-          title: 'Descargando Actualización',
-          message: 'La actualización se está descargando en segundo plano...',
-          buttons: ['OK']
-        });
+function httpGet(reqUrl, redirectsLeft = 5) {
+  return new Promise((resolve, reject) => {
+    let parsed;
+    try { parsed = new URL(reqUrl); } catch (e) { return reject(e); }
+    const lib = parsed.protocol === 'https:' ? https : http;
+    const req = lib.get(reqUrl, { headers: { 'User-Agent': `CajaGrit/${app.getVersion()}` } }, (res) => {
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        if (redirectsLeft <= 0) {
+          res.resume();
+          return reject(new Error('Demasiados redirects'));
+        }
+        const next = new URL(res.headers.location, reqUrl).toString();
+        res.resume();
+        httpGet(next, redirectsLeft - 1).then(resolve, reject);
+        return;
       }
+      if (!res.statusCode || res.statusCode >= 400) {
+        res.resume();
+        return reject(new Error(`HTTP ${res.statusCode || 'desconocido'} descargando ${reqUrl}`));
+      }
+      resolve({ res, req });
     });
+    req.on('error', reject);
   });
+}
 
-  // Cuando NO hay actualizaciones disponibles
-  autoUpdater.on('update-not-available', (info) => {
-    console.log('No hay actualizaciones disponibles');
-  });
+ipcMain.handle('get-app-version', async () => ({
+  version: app.getVersion(),
+  name: app.getName(),
+}));
 
-  // Error al verificar actualizaciones
-  autoUpdater.on('error', (err) => {
-    console.error('Error en auto-updater:', err);
+ipcMain.handle('download-app-update', async (_event, args = {}) => {
+  const { url: downloadUrl, version, expectedChecksum, expectedBytes, filename } = args;
+  if (!downloadUrl || typeof downloadUrl !== 'string') {
+    return { success: false, error: 'downloadUrl requerido' };
+  }
+  if (activeDownload) {
+    return { success: false, error: 'Ya hay una descarga en curso' };
+  }
+  if (isDev) {
+    console.warn('[UPDATE] Descarga real omitida en desarrollo');
+    return { success: false, error: 'Descarga no disponible en modo desarrollo' };
+  }
 
-    // Mostrar error al usuario solo si es un error crítico durante la descarga
-    if (err.message && err.message.includes('download')) {
-      dialog.showMessageBox(mainWindow, {
-        type: 'error',
-        title: 'Error de Actualización',
-        message: 'No se pudo descargar la actualización',
-        detail: 'Por favor, intenta nuevamente más tarde o descarga la actualización manualmente desde GitHub.',
-        buttons: ['OK']
-      });
-    }
-  });
+  const finalName = filename || inferFilename(downloadUrl, version);
+  const filePath = path.join(getUpdatesDir(), finalName);
+  const tmpPath = `${filePath}.part`;
 
-  // Progreso de descarga
-  autoUpdater.on('download-progress', (progressObj) => {
-    const percent = Math.round(progressObj.percent);
-    console.log(`Descargando actualización: ${percent}%`);
+  // Limpiar archivo previo si existe
+  try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (_) {}
 
-    // Enviar progreso al renderer
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send('download-progress', {
-        percent,
-        bytesPerSecond: progressObj.bytesPerSecond,
-        transferred: progressObj.transferred,
-        total: progressObj.total
-      });
-    }
-  });
+  const checksumSpec = parseChecksum(expectedChecksum);
+  const hash = checksumSpec ? crypto.createHash(checksumSpec.algorithm) : null;
 
-  // Actualización descargada y lista para instalar
-  autoUpdater.on('update-downloaded', (info) => {
-    console.log('Actualización descargada:', info.version);
-    updateDownloaded = true;
+  console.log('[UPDATE] ⬇️ Descargando', downloadUrl, '->', filePath);
+  safeSendToRenderer('update-status', { status: 'downloading', version });
 
-    // Enviar evento al renderer
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send('update-status', {
-        status: 'downloaded',
-        version: info.version
-      });
-    }
+  try {
+    const { res, req } = await httpGet(downloadUrl);
+    const total = expectedBytes && Number(expectedBytes) > 0
+      ? Number(expectedBytes)
+      : Number(res.headers['content-length']) || 0;
 
-    dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: 'Actualización Lista',
-      message: 'La actualización ha sido descargada',
-      detail: 'La aplicación se cerrará e instalará la actualización automáticamente.',
-      buttons: ['Instalar Ahora', 'Instalar al Cerrar'],
-      defaultId: 0,
-      cancelId: 1
-    }).then((result) => {
-      if (result.response === 0) {
-        console.log('Usuario eligió instalar ahora');
+    activeDownload = { req, filePath: tmpPath, aborted: false };
 
-        // Cerrar el servidor HTTP primero
-        if (server) {
-          server.close(() => {
-            console.log('Servidor HTTP cerrado');
+    let transferred = 0;
+    let lastTick = Date.now();
+    let lastBytes = 0;
+    const fileStream = fs.createWriteStream(tmpPath);
+
+    await new Promise((resolve, reject) => {
+      res.on('data', (chunk) => {
+        transferred += chunk.length;
+        if (hash) hash.update(chunk);
+        const now = Date.now();
+        if (now - lastTick >= 250) {
+          const bytesPerSecond = ((transferred - lastBytes) * 1000) / (now - lastTick);
+          lastTick = now;
+          lastBytes = transferred;
+          safeSendToRenderer('download-progress', {
+            percent: total > 0 ? Math.min(100, (transferred / total) * 100) : 0,
+            transferred,
+            total,
+            bytesPerSecond,
           });
         }
+      });
+      res.on('error', reject);
+      fileStream.on('error', reject);
+      fileStream.on('finish', resolve);
+      res.pipe(fileStream);
+    });
 
-        // Cerrar todas las ventanas
-        if (mainWindow) {
-          mainWindow.removeAllListeners('close');
-          mainWindow.close();
-        }
+    if (activeDownload && activeDownload.aborted) {
+      try { fs.unlinkSync(tmpPath); } catch (_) {}
+      activeDownload = null;
+      return { success: false, error: 'Descarga cancelada' };
+    }
 
-        // Esperar un momento para asegurar que todo se cierre
-        setTimeout(() => {
-          console.log('Instalando actualización...');
-          // isSilent = false (mostrar instalador), isForceRunAfter = true (ejecutar después)
-          autoUpdater.quitAndInstall(false, true);
-        }, 500);
-      } else {
-        console.log('Usuario eligió instalar al cerrar');
-        // Si elige "Más tarde", se instalará al cerrar la app (autoInstallOnAppQuit = true)
+    if (checksumSpec && hash) {
+      const actual = hash.digest('hex').toLowerCase();
+      if (actual !== checksumSpec.expected) {
+        try { fs.unlinkSync(tmpPath); } catch (_) {}
+        activeDownload = null;
+        const msg = `Checksum ${checksumSpec.algorithm} no coincide (esperado ${checksumSpec.expected}, obtenido ${actual})`;
+        console.error('[UPDATE] ❌', msg);
+        safeSendToRenderer('update-status', { status: 'error', error: msg });
+        return { success: false, error: msg };
       }
-    });
-  });
+    }
 
-  // Verificar actualizaciones al iniciar (después de 3 segundos)
-  setTimeout(() => {
-    console.log('Verificando actualizaciones...');
-    autoUpdater.checkForUpdates().catch(err => {
-      console.error('Error al verificar actualizaciones:', err);
-    });
-  }, 3000);
+    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (_) {}
+    fs.renameSync(tmpPath, filePath);
+    downloadedUpdatePath = filePath;
+    activeDownload = null;
 
-  // Verificar actualizaciones cada 4 horas
-  setInterval(() => {
-    console.log('Verificación periódica de actualizaciones...');
-    autoUpdater.checkForUpdates().catch(err => {
-      console.error('Error al verificar actualizaciones:', err);
+    safeSendToRenderer('download-progress', {
+      percent: 100, transferred, total: total || transferred, bytesPerSecond: 0,
     });
-  }, 4 * 60 * 60 * 1000); // 4 horas
-}
+    safeSendToRenderer('update-status', { status: 'downloaded', version, filePath });
+
+    console.log('[UPDATE] ✅ Descarga completada:', filePath);
+    return { success: true, filePath };
+  } catch (error) {
+    try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (_) {}
+    activeDownload = null;
+    const message = error && error.message ? error.message : String(error);
+    console.error('[UPDATE] ❌ Error descargando:', message);
+    safeSendToRenderer('update-status', { status: 'error', error: message });
+    return { success: false, error: message };
+  }
+});
+
+ipcMain.handle('cancel-app-update', async () => {
+  if (!activeDownload) return { success: false, error: 'No hay descarga activa' };
+  try {
+    activeDownload.aborted = true;
+    if (activeDownload.req && typeof activeDownload.req.destroy === 'function') {
+      activeDownload.req.destroy(new Error('Cancelada por el usuario'));
+    }
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('install-app-update', async (_event, args = {}) => {
+  const filePath = (args && args.filePath) || downloadedUpdatePath;
+  if (!filePath || !fs.existsSync(filePath)) {
+    return { success: false, error: 'No hay actualización descargada' };
+  }
+  console.log('[UPDATE] ⚙️ Lanzando instalador:', filePath);
+  safeSendToRenderer('update-status', { status: 'installing', filePath });
+
+  try {
+    if (server) { try { server.close(); } catch (_) {} }
+
+    if (process.platform === 'win32') {
+      const child = spawn(filePath, [], { detached: true, stdio: 'ignore' });
+      child.unref();
+    } else if (process.platform === 'darwin') {
+      await shell.openPath(filePath);
+    } else {
+      try { fs.chmodSync(filePath, 0o755); } catch (_) {}
+      const child = spawn(filePath, [], { detached: true, stdio: 'ignore' });
+      child.unref();
+    }
+
+    setTimeout(() => {
+      try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.removeAllListeners('close'); } catch (_) {}
+      app.quit();
+    }, 500);
+
+    return { success: true };
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    console.error('[UPDATE] ❌ Error lanzando instalador:', message);
+    safeSendToRenderer('update-status', { status: 'error', error: message });
+    return { success: false, error: message };
+  }
+});
 
 app.on('ready', () => {
   // Inicializar isPackaged ahora que app está listo
   isPackaged = app.isPackaged;
-
-  // Inicializar electron-updater solo cuando app ya está listo
-  try {
-    ({ autoUpdater } = require('electron-updater'));
-
-    // Configurar auto-updater
-    autoUpdater.autoDownload = false; // No descargar automáticamente
-    autoUpdater.autoInstallOnAppQuit = true; // Instalar al cerrar la app
-    autoUpdater.allowDowngrade = false; // No permitir downgrades
-    autoUpdater.allowPrerelease = false; // No permitir pre-releases
-
-    // Configuración adicional para Windows
-    if (process.platform === 'win32') {
-      autoUpdater.forceDevUpdateConfig = false;
-    }
-
-    console.log('[ELECTRON] ✅ electron-updater cargado');
-  } catch (updaterInitError) {
-    console.error('[ELECTRON] ❌ Error cargando electron-updater:', updaterInitError);
-  }
 
   console.log('[ELECTRON] 🚀 App ready event triggered');
   console.log('[ELECTRON] 📦 Is packaged:', isPackaged);
@@ -972,6 +939,22 @@ app.on('ready', () => {
 
   // Configurar logging después de que la app esté lista
   const logFile = path.join(app.getPath('userData'), 'electron-server.log');
+
+  // Rotación básica del log: si supera 5MB, mover a .1 antes de abrir
+  try {
+    const MAX_LOG_BYTES = 5 * 1024 * 1024;
+    if (fs.existsSync(logFile)) {
+      const { size } = fs.statSync(logFile);
+      if (size > MAX_LOG_BYTES) {
+        const rotated = logFile + '.1';
+        try { if (fs.existsSync(rotated)) fs.unlinkSync(rotated); } catch (_) {}
+        fs.renameSync(logFile, rotated);
+      }
+    }
+  } catch (rotateErr) {
+    console.error('[ELECTRON] ⚠️ No se pudo rotar el log:', rotateErr.message);
+  }
+
   logStream = fs.createWriteStream(logFile, { flags: 'a' });
   const originalLog = console.log;
   const originalError = console.error;
@@ -1001,9 +984,6 @@ app.on('ready', () => {
     console.log('[ELECTRON] 🎯 Modo producción - creando servidor');
     createServer();
   }
-
-  // Inicializar sistema de actualizaciones automáticas
-  setupAutoUpdater();
 });
 
 app.on('before-quit', (event) => {
@@ -1057,5 +1037,24 @@ app.on('activate', () => {
 
 // Manejar errores no capturados
 process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
+  console.error('Uncaught Exception:', error && error.stack ? error.stack : error);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection:', reason && reason.stack ? reason.stack : reason);
+});
+
+// Diagnóstico: cualquier child-process (GPU, utility, etc.) que caiga queda registrado
+app.on('child-process-gone', (event, details) => {
+  console.error('[ELECTRON] 💥 child-process-gone:', JSON.stringify(details));
+});
+
+// Recibir reportes de errores desde el renderer (preload los reenvía vía IPC)
+ipcMain.on('renderer-error', (_event, payload) => {
+  try {
+    console.error('[RENDERER] ' + (payload && payload.type ? payload.type : 'error') + ':',
+      typeof payload === 'object' ? JSON.stringify(payload) : String(payload));
+  } catch (e) {
+    console.error('[RENDERER] error (no serializable)');
+  }
 });

@@ -1,282 +1,255 @@
 /**
  * useAppUpdater Hook
- * Hook personalizado para manejar el ciclo de vida de actualizaciones
- * Integrado con Electron y estado global
+ * Maneja el ciclo de vida de actualizaciones contra el servidor (/api/pos/app-updates/*).
+ * - Check: HTTP a svc-pos (funciona en cualquier plataforma).
+ * - Descarga/instalacion: depende de la plataforma.
+ *   - Electron: IPC para descargar binario y lanzar instalador.
+ *   - Android: abre la URL del APK con Linking; el SO instala.
+ *   - iOS/Web: muestra info; no se puede sideload.
  */
 
-import { useState, useCallback, useEffect } from 'react';
-
-interface UpdateInfo {
-  version: string;
-  releaseDate?: string;
-  releaseNotes?: string;
-}
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { Linking, Platform } from 'react-native';
+import { appUpdatesService } from '@/services/AppUpdatesService';
+import { APP_SLUG, getUpdatePlatform } from '@/utils/config';
+import type { CheckUpdateResponse } from '@/types/appUpdates';
 
 interface DownloadProgress {
   percent: number;
   transferred?: number;
   total?: number;
   bytesPerSecond?: number;
-  estimatedTimeRemaining?: string;
 }
 
-interface UpdateStatus {
+type UpdateStage =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'downloaded'
+  | 'installing'
+  | 'up-to-date'
+  | 'error';
+
+interface UpdateState {
   currentVersion: string;
   latestVersion?: string;
   updateAvailable: boolean;
-  status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error';
+  status: UpdateStage;
   downloadProgress?: DownloadProgress;
-  error?: string;
   releaseNotes?: string;
+  releasedAt?: string;
+  downloadUrl?: string;
+  checksum?: string;
+  sizeBytes?: number;
+  mandatory?: boolean;
+  filePath?: string;
+  error?: string;
 }
 
 declare global {
   interface Window {
     electronAPI?: {
       isElectron: boolean;
+      platform?: string;
       getAppVersion: () => Promise<{ version: string; name: string }>;
-      checkForUpdates: () => Promise<any>;
-      downloadUpdate: () => Promise<any>;
-      installUpdate: () => Promise<any>;
-      getDownloadProgress: () => Promise<DownloadProgress>;
-      getUpdateStats: () => Promise<any>;
-      getTelemetryData: () => Promise<any>;
-      onUpdateStatus: (callback: (data: any) => void) => void;
-      onDownloadProgress: (callback: (data: DownloadProgress) => void) => void;
+      downloadAppUpdate: (args: {
+        url: string;
+        version?: string;
+        filename?: string;
+        expectedChecksum?: string;
+        expectedBytes?: number;
+      }) => Promise<{ success: boolean; filePath?: string; error?: string }>;
+      installAppUpdate: (args?: { filePath?: string }) => Promise<{ success: boolean; error?: string }>;
+      cancelAppUpdate: () => Promise<{ success: boolean; error?: string }>;
+      onUpdateStatus: (
+        cb: (data: { status: string; version?: string; filePath?: string; error?: string }) => void
+      ) => void;
+      onDownloadProgress: (cb: (data: DownloadProgress) => void) => void;
+      removeUpdateListeners?: () => void;
+      // legacy (preload viejo); ya no se usan
+      checkForUpdates?: () => Promise<unknown>;
+      downloadUpdate?: () => Promise<unknown>;
+      installUpdate?: () => Promise<unknown>;
     };
   }
 }
 
-const defaultStatus: UpdateStatus = {
+const initialState: UpdateState = {
   currentVersion: '0.0.0',
   status: 'idle',
-  updateAvailable: false
+  updateAvailable: false,
 };
 
 export const useAppUpdater = () => {
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>(defaultStatus);
+  const [state, setState] = useState<UpdateState>(initialState);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [isElectron, setIsElectron] = useState(false);
+  const filePathRef = useRef<string | undefined>(undefined);
 
-  // Detectar si está ejecutándose en Electron
+  const isElectron =
+    typeof window !== 'undefined' && !!window.electronAPI && window.electronAPI.isElectron;
+
   useEffect(() => {
-    const hasElectronAPI = typeof window !== 'undefined' && !!window.electronAPI;
-    setIsElectron(hasElectronAPI);
+    if (!isElectron || !window.electronAPI) return;
 
-    if (hasElectronAPI && window.electronAPI) {
-      // Cargar versión actual
-      initializeVersionInfo();
+    window.electronAPI
+      .getAppVersion()
+      .then(({ version }) => setState((s) => ({ ...s, currentVersion: version })))
+      .catch(() => undefined);
 
-      // Escuchar eventos de actualización
-      setupElectronListeners();
-    }
-  }, []);
+    window.electronAPI.onDownloadProgress?.((progress) => {
+      setState((s) => ({ ...s, status: 'downloading', downloadProgress: progress }));
+    });
 
-  /**
-   * Inicializar información de versión
-   */
-  const initializeVersionInfo = async () => {
-    if (!window.electronAPI) return;
-
-    try {
-      const { version } = await window.electronAPI.getAppVersion();
-      setUpdateStatus(prev => ({
-        ...prev,
-        currentVersion: version
-      }));
-    } catch (error) {
-      console.error('[UPDATE HOOK] Error getting app version:', error);
-    }
-  };
-
-  /**
-   * Configurar escuchadores de Electron
-   */
-  const setupElectronListeners = () => {
-    if (!window.electronAPI) return;
-
-    // Escuchar cambios de estado de actualización
-    window.electronAPI.onUpdateStatus?.((data: any) => {
-      console.log('[UPDATE HOOK] Status change:', data);
-
-      const statusMap: Record<string, UpdateStatus['status']> = {
-        'checking': 'checking',
-        'available': 'available',
-        'downloading': 'downloading',
-        'downloaded': 'downloaded',
-        'error': 'error'
-      };
-
-      setUpdateStatus(prev => ({
-        ...prev,
-        status: statusMap[data.status] || prev.status,
-        latestVersion: data.version || prev.latestVersion,
-        releaseNotes: data.releaseNotes || prev.releaseNotes,
-        error: data.error || undefined,
-        updateAvailable: data.status === 'available' || data.status === 'downloaded'
-      }));
-
-      // Mostrar modal automáticamente para disponible o descargado
-      if (data.status === 'available' || data.status === 'downloaded') {
-        setShowUpdateModal(true);
+    window.electronAPI.onUpdateStatus?.((data) => {
+      if (data.status === 'downloaded') {
+        filePathRef.current = data.filePath;
+        setState((s) => ({ ...s, status: 'downloaded', filePath: data.filePath }));
+      } else if (data.status === 'installing') {
+        setState((s) => ({ ...s, status: 'installing' }));
+      } else if (data.status === 'error') {
+        setState((s) => ({ ...s, status: 'error', error: data.error || 'Error desconocido' }));
       }
     });
 
-    // Escuchar progreso de descarga
-    window.electronAPI.onDownloadProgress?.((progress: DownloadProgress) => {
-      setUpdateStatus(prev => ({
-        ...prev,
-        status: 'downloading',
-        downloadProgress: progress
-      }));
-    });
-  };
+    return () => {
+      window.electronAPI?.removeUpdateListeners?.();
+    };
+  }, [isElectron]);
 
-  /**
-   * Verificar actualizaciones manualmente
-   */
-  const checkForUpdates = useCallback(async () => {
-    if (!window.electronAPI) {
-      console.warn('[UPDATE HOOK] Electron API no disponible');
-      return;
-    }
-
+  const checkForUpdates = useCallback(async (): Promise<CheckUpdateResponse | null> => {
+    setState((s) => ({ ...s, status: 'checking', error: undefined }));
     try {
-      setUpdateStatus(prev => ({ ...prev, status: 'checking' }));
+      const currentVersion =
+        isElectron && window.electronAPI
+          ? (await window.electronAPI.getAppVersion()).version
+          : state.currentVersion;
 
-      const result = await window.electronAPI.checkForUpdates();
+      const result = await appUpdatesService.check({
+        appId: APP_SLUG,
+        platform: getUpdatePlatform(),
+        currentVersion,
+      });
 
-      setUpdateStatus(prev => ({
-        ...prev,
-        status: result.updateAvailable ? 'available' : 'idle',
+      setState((s) => ({
+        ...s,
+        currentVersion,
         latestVersion: result.latestVersion,
-        updateAvailable: result.updateAvailable,
-        releaseNotes: result.releaseNotes
+        updateAvailable: !!result.updateAvailable,
+        status: result.updateAvailable ? 'available' : 'up-to-date',
+        downloadUrl: result.downloadUrl,
+        checksum: result.checksum,
+        sizeBytes: result.sizeBytes,
+        releaseNotes: result.releaseNotes,
+        releasedAt: result.releasedAt,
+        mandatory: result.mandatory,
       }));
 
-      if (result.updateAvailable) {
-        setShowUpdateModal(true);
-      }
-
+      if (result.updateAvailable) setShowUpdateModal(true);
       return result;
     } catch (error) {
-      console.error('[UPDATE HOOK] Error checking for updates:', error);
-      setUpdateStatus(prev => ({
-        ...prev,
-        status: 'error',
-        error: 'Error al verificar actualizaciones'
-      }));
-      throw error;
+      const message = error instanceof Error ? error.message : 'Error al verificar actualizaciones';
+      setState((s) => ({ ...s, status: 'error', error: message }));
+      return null;
     }
-  }, []);
+  }, [isElectron, state.currentVersion]);
 
-  /**
-   * Descargar actualización
-   */
   const downloadUpdate = useCallback(async () => {
-    if (!window.electronAPI) {
-      console.warn('[UPDATE HOOK] Electron API no disponible');
-      return;
+    const downloadUrl = state.downloadUrl;
+    const version = state.latestVersion;
+    if (!downloadUrl) {
+      setState((s) => ({ ...s, status: 'error', error: 'No hay URL de descarga' }));
+      return { success: false, error: 'No hay URL de descarga' };
     }
 
-    try {
-      setUpdateStatus(prev => ({ ...prev, status: 'downloading' }));
+    // Forzar svc-pos como origen de descarga si tenemos los datos necesarios
+    const forcedUrl =
+      version && state.updateAvailable
+        ? appUpdatesService.buildDownloadUrl(APP_SLUG, getUpdatePlatform(), version)
+        : downloadUrl;
 
-      const result = await window.electronAPI.downloadUpdate();
-
-      if (!result.success) {
-        setUpdateStatus(prev => ({
-          ...prev,
-          status: 'error',
-          error: result.error || 'Error desconocido al descargar'
-        }));
-        throw new Error(result.error || 'Error al descargar');
+    if (isElectron && window.electronAPI) {
+      setState((s) => ({ ...s, status: 'downloading', error: undefined }));
+      try {
+        const result = await window.electronAPI.downloadAppUpdate({
+          url: forcedUrl,
+          version,
+          expectedChecksum: state.checksum,
+          expectedBytes: state.sizeBytes,
+        });
+        if (!result.success) {
+          setState((s) => ({ ...s, status: 'error', error: result.error || 'Error al descargar' }));
+        } else {
+          filePathRef.current = result.filePath;
+          setState((s) => ({ ...s, status: 'downloaded', filePath: result.filePath }));
+        }
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Error al descargar';
+        setState((s) => ({ ...s, status: 'error', error: message }));
+        return { success: false, error: message };
       }
-
-      return result;
-    } catch (error) {
-      console.error('[UPDATE HOOK] Error downloading update:', error);
-      setUpdateStatus(prev => ({
-        ...prev,
-        status: 'error',
-        error: error instanceof Error ? error.message : 'Error desconocido'
-      }));
-      throw error;
     }
-  }, []);
 
-  /**
-   * Instalar actualización
-   */
+    if (Platform.OS === 'android') {
+      try {
+        await Linking.openURL(forcedUrl);
+        return { success: true };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'No se pudo abrir la descarga';
+        setState((s) => ({ ...s, status: 'error', error: message }));
+        return { success: false, error: message };
+      }
+    }
+
+    // iOS / Web: solo abrir la URL en el navegador
+    try {
+      await Linking.openURL(forcedUrl);
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo abrir la descarga';
+      setState((s) => ({ ...s, status: 'error', error: message }));
+      return { success: false, error: message };
+    }
+  }, [isElectron, state.downloadUrl, state.latestVersion, state.checksum, state.sizeBytes, state.updateAvailable]);
+
   const installUpdate = useCallback(async () => {
-    if (!window.electronAPI) {
-      console.warn('[UPDATE HOOK] Electron API no disponible');
-      return;
+    if (!isElectron || !window.electronAPI) {
+      return { success: false, error: 'Solo disponible en Electron' };
     }
-
     try {
-      const result = await window.electronAPI.installUpdate();
-
+      setState((s) => ({ ...s, status: 'installing' }));
+      const result = await window.electronAPI.installAppUpdate({ filePath: filePathRef.current });
       if (!result.success) {
-        setUpdateStatus(prev => ({
-          ...prev,
-          status: 'error',
-          error: result.message || 'Error al instalar'
-        }));
-        throw new Error(result.message || 'Error al instalar');
+        setState((s) => ({ ...s, status: 'error', error: result.error || 'Error al instalar' }));
       }
-
-      // La app se reiniciará después de instalar
       return result;
     } catch (error) {
-      console.error('[UPDATE HOOK] Error installing update:', error);
-      setUpdateStatus(prev => ({
-        ...prev,
-        status: 'error',
-        error: error instanceof Error ? error.message : 'Error desconocido'
-      }));
-      throw error;
+      const message = error instanceof Error ? error.message : 'Error al instalar';
+      setState((s) => ({ ...s, status: 'error', error: message }));
+      return { success: false, error: message };
     }
-  }, []);
+  }, [isElectron]);
 
-  /**
-   * Obtener estadísticas de actualización
-   */
-  const getUpdateStats = useCallback(async () => {
-    if (!window.electronAPI) return null;
+  const cancelDownload = useCallback(async () => {
+    if (!isElectron || !window.electronAPI) return { success: false };
+    return window.electronAPI.cancelAppUpdate();
+  }, [isElectron]);
 
-    try {
-      return await window.electronAPI.getUpdateStats();
-    } catch (error) {
-      console.error('[UPDATE HOOK] Error getting stats:', error);
-      return null;
-    }
-  }, []);
+  const dismissUpdateModal = useCallback(() => setShowUpdateModal(false), []);
 
-  /**
-   * Obtener telemetría
-   */
-  const getTelemetryData = useCallback(async () => {
-    if (!window.electronAPI) return null;
-
-    try {
-      return await window.electronAPI.getTelemetryData();
-    } catch (error) {
-      console.error('[UPDATE HOOK] Error getting telemetry:', error);
-      return null;
-    }
-  }, []);
-
-  /**
-   * Cerrar modal
-   */
-  const dismissUpdateModal = useCallback(() => {
-    setShowUpdateModal(false);
+  const resetUpdateState = useCallback(() => {
+    filePathRef.current = undefined;
+    setState((s) => ({
+      currentVersion: s.currentVersion,
+      status: 'idle',
+      updateAvailable: false,
+    }));
   }, []);
 
   return {
     // Estado
-    updateStatus,
+    updateStatus: state,
     showUpdateModal,
     isElectron,
 
@@ -284,14 +257,17 @@ export const useAppUpdater = () => {
     checkForUpdates,
     downloadUpdate,
     installUpdate,
-    getUpdateStats,
-    getTelemetryData,
+    cancelDownload,
     dismissUpdateModal,
+    setShowUpdateModal,
+    resetUpdateState,
 
     // Helpers
-    hasUpdateAvailable: updateStatus.updateAvailable,
-    isDownloading: updateStatus.status === 'downloading',
-    isChecking: updateStatus.status === 'checking',
-    hasError: updateStatus.status === 'error'
+    hasUpdateAvailable: state.updateAvailable,
+    isDownloading: state.status === 'downloading',
+    isChecking: state.status === 'checking',
+    isDownloaded: state.status === 'downloaded',
+    isInstalling: state.status === 'installing',
+    hasError: state.status === 'error',
   };
 };

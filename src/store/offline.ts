@@ -7,6 +7,9 @@ import { create } from 'zustand';
 import { offlineDatabase } from '@/services/OfflineDatabase';
 import { offlineSyncService } from '@/services/OfflineSyncService';
 import { networkMonitor } from '@/services/NetworkMonitor';
+import { deviceTokenService } from '@/services/DeviceTokenService';
+import { offlineLoginService } from '@/services/OfflineLoginService';
+import { useAuthStore } from '@/store/auth';
 import type {
   ConnectionStatus,
   OfflineSystemState,
@@ -52,12 +55,21 @@ interface OfflineStoreState extends OfflineSystemState {
     customerDocumentNumber?: string;
     customerSnapshot?: { name: string; documentNumber: string; documentType: string };
     documentType: '01' | '03';
+    // Cuando hay sesión online activa, vienen poblados.
+    // En sesión offline pura, se derivan del deviceToken / auth store y la
+    // venta se guarda con pendingReassignment=true.
+    cashRegisterId?: string;
+    sessionId?: string;
+    sellerId?: string;
+    cashRegisterCode?: string;
+  }) => Promise<OfflineSale>;
+  refreshPendingSalesCount: () => Promise<void>;
+  reassignPendingSales: (params: {
     cashRegisterId: string;
     sessionId: string;
     sellerId: string;
-    cashRegisterCode: string;
-  }) => Promise<OfflineSale>;
-  refreshPendingSalesCount: () => Promise<void>;
+    cashRegisterCode?: string;
+  }) => Promise<number>;
 
   // Acciones de sincronización
   syncProducts: (products: OfflineProduct[], syncId: string) => Promise<void>;
@@ -340,6 +352,55 @@ export const useOfflineStore = create<OfflineStoreState>((set, get) => ({
       throw new Error('Base de datos offline no inicializada');
     }
 
+    // Resolver identidad de caja/sesión/vendedor.
+    // En sesión online activa los params traen todo. En sesión offline pura
+    // (sin selección de caja ni turno abierto) derivamos del deviceToken
+    // y del usuario autenticado; la venta queda pendingReassignment.
+    let cashRegisterId = params.cashRegisterId;
+    let cashRegisterCode = params.cashRegisterCode;
+    let sellerId = params.sellerId;
+    const sessionId = params.sessionId;
+
+    if (!cashRegisterId || !cashRegisterCode) {
+      // 1) Pareja persistida en el device (mismo origen que usa loginOffline).
+      const provisioned = await deviceTokenService.getProvisionedCashRegister().catch(() => null);
+      if (provisioned?.id && provisioned?.code) {
+        cashRegisterId = cashRegisterId || provisioned.id;
+        cashRegisterCode = cashRegisterCode || provisioned.code;
+      }
+    }
+
+    if (!cashRegisterId || !cashRegisterCode) {
+      // 2) Claims del JWT offline emitido al loguear (contiene cashRegisterId/Code).
+      const offlinePayload = offlineLoginService.getCurrentSession()?.payload;
+      if (offlinePayload?.cashRegisterId && offlinePayload?.cashRegisterCode) {
+        cashRegisterId = cashRegisterId || offlinePayload.cashRegisterId;
+        cashRegisterCode = cashRegisterCode || offlinePayload.cashRegisterCode;
+      }
+    }
+
+    if (!cashRegisterId || !cashRegisterCode) {
+      // 3) Best effort: claims del deviceToken (si el backend los incluye).
+      const claims = await deviceTokenService.getClaims().catch(() => null);
+      if (claims?.cashRegisterId && claims?.cashRegisterCode) {
+        cashRegisterId = cashRegisterId || claims.cashRegisterId;
+        cashRegisterCode = cashRegisterCode || claims.cashRegisterCode;
+      }
+    }
+
+    if (!sellerId) {
+      sellerId = useAuthStore.getState().user?.id;
+    }
+
+    if (!cashRegisterId || !cashRegisterCode) {
+      throw new Error('Caja no provisionada: no se puede crear venta offline');
+    }
+    if (!sellerId) {
+      throw new Error('No hay usuario autenticado para registrar la venta');
+    }
+
+    const pendingReassignment = !sessionId;
+
     // Obtener token
     const token = await offlineDatabase.getNextAvailableToken();
     if (!token) {
@@ -367,7 +428,7 @@ export const useOfflineStore = create<OfflineStoreState>((set, get) => ({
 
     // Generar IDs
     const localId = generateLocalSaleId();
-    const offlineTicketCode = generateOfflineTicketCode(params.cashRegisterCode);
+    const offlineTicketCode = generateOfflineTicketCode(cashRegisterCode);
 
     // Crear objeto de venta
     const sale: OfflineSale = {
@@ -385,12 +446,14 @@ export const useOfflineStore = create<OfflineStoreState>((set, get) => ({
       customerSnapshot: params.customerSnapshot,
       payments: params.payments,
       documentType: params.documentType,
-      cashRegisterId: params.cashRegisterId,
-      sessionId: params.sessionId,
-      sellerId: params.sellerId,
+      cashRegisterId,
+      cashRegisterCode,
+      sessionId: sessionId || null,
+      sellerId,
       createdAt: new Date().toISOString(),
       syncStatus: 'PENDING',
       syncAttempts: 0,
+      pendingReassignment,
     };
 
     // Guardar venta
@@ -408,9 +471,30 @@ export const useOfflineStore = create<OfflineStoreState>((set, get) => ({
     await get().refreshTokenCount();
     await get().refreshPendingSalesCount();
 
-    console.log(`✅ [OFFLINE_STORE] Venta offline creada: ${offlineTicketCode}`);
+    console.log(
+      `✅ [OFFLINE_STORE] Venta offline creada: ${offlineTicketCode}${pendingReassignment ? ' (pendiente de reasignar caja/sesión)' : ''}`
+    );
 
     return sale;
+  },
+
+  reassignPendingSales: async ({ cashRegisterId, sessionId, sellerId, cashRegisterCode }) => {
+    if (!offlineDatabase.isReady()) return 0;
+    try {
+      const count = await offlineDatabase.reassignPendingSales(
+        cashRegisterId,
+        sessionId,
+        sellerId,
+        cashRegisterCode
+      );
+      if (count > 0) {
+        await get().refreshPendingSalesCount();
+      }
+      return count;
+    } catch (error) {
+      console.error('❌ [OFFLINE_STORE] Error reasignando ventas pendientes:', error);
+      return 0;
+    }
   },
 
   refreshPendingSalesCount: async () => {

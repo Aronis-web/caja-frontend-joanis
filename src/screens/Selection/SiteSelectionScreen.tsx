@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
   View,
-  Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
@@ -15,6 +14,17 @@ import { config } from '@/utils/config';
 import type { Site } from '@/types/auth';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { SelectionStackParamList } from '@/types/navigation';
+import {
+  Body,
+  Caption,
+  Card,
+  Heading,
+  StatusBadge,
+  Title,
+  useTheme,
+  useThemedStyles,
+  type Theme,
+} from '@/design-system';
 
 interface ResolvedScope {
   id: string;
@@ -42,6 +52,8 @@ interface SiteSelectionScreenProps {
 
 export const SiteSelectionScreen: React.FC<SiteSelectionScreenProps> = ({ navigation }) => {
   const { setCurrentSite, currentCompany, setCurrentCompany, user, logout } = useAuthStore();
+  const theme = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
@@ -221,8 +233,10 @@ export const SiteSelectionScreen: React.FC<SiteSelectionScreenProps> = ({ naviga
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#667eea" />
-          <Text style={styles.loadingText}>Cargando sedes...</Text>
+          <ActivityIndicator size="large" color={theme.color.action.primary.background} />
+          <Body size="medium" color="muted" style={styles.loadingText}>
+            Cargando sedes...
+          </Body>
         </View>
       </SafeAreaView>
     );
@@ -230,264 +244,160 @@ export const SiteSelectionScreen: React.FC<SiteSelectionScreenProps> = ({ naviga
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
       <View style={styles.header}>
-        <View style={styles.headerContent}>
-          <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-            <Text style={styles.backButtonText}>← Cambiar Empresa</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>🏪 Seleccionar Sede</Text>
-          <Text style={styles.headerSubtitle}>{currentCompany?.alias || currentCompany?.name}</Text>
-        </View>
+        <TouchableOpacity onPress={handleBack} style={styles.backButton} activeOpacity={0.7}>
+          <Body size="small" color="link">
+            ← Cambiar Empresa
+          </Body>
+        </TouchableOpacity>
+        <Heading size="medium" color="heading">
+          🏪 Seleccionar Sede
+        </Heading>
+        <Body size="small" color="muted">
+          {currentCompany?.alias || currentCompany?.name}
+        </Body>
       </View>
 
-      {/* Content */}
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={styles.contentInner}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.infoCard}>
-          <Text style={styles.infoIcon}>ℹ️</Text>
-          <Text style={styles.infoText}>Selecciona la sede con la que deseas trabajar</Text>
+          <Body size="small" color="link">
+            ℹ️ Selecciona la sede con la que deseas trabajar
+          </Body>
         </View>
 
         <View style={styles.sitesContainer}>
           {sites.map((site) => (
-            <TouchableOpacity
+            <Card
               key={site.id}
-              style={[styles.siteCard, selectedSiteId === site.id && styles.siteCardSelected]}
+              variant="outlined"
+              padding="medium"
               onPress={() => handleSelectSite(site)}
-              activeOpacity={0.7}
               disabled={selectedSiteId === site.id}
+              style={selectedSiteId === site.id ? styles.siteCardSelected : undefined}
             >
               <View style={styles.siteCardContent}>
                 <View style={styles.siteIconContainer}>
-                  <Text style={styles.siteIcon}>🏪</Text>
+                  <Body size="large">🏪</Body>
                 </View>
                 <View style={styles.siteInfo}>
-                  <Text style={styles.siteName}>{site.name}</Text>
-                  <Text style={styles.siteCode}>Código: {site.code}</Text>
+                  <Title size="small" color="heading">
+                    {site.name}
+                  </Title>
+                  <Caption color="muted" style={styles.siteCode}>
+                    Código: {site.code}
+                  </Caption>
                   <View style={styles.siteFooter}>
-                    <View
-                      style={[
-                        styles.statusBadge,
-                        site.isActive ? styles.statusActive : styles.statusInactive,
-                      ]}
-                    >
-                      <View
-                        style={[
-                          styles.statusDot,
-                          site.isActive ? styles.statusDotActive : styles.statusDotInactive,
-                        ]}
-                      />
-                      <Text
-                        style={[
-                          styles.statusText,
-                          site.isActive ? styles.statusTextActive : styles.statusTextInactive,
-                        ]}
-                      >
-                        {site.isActive ? 'Activa' : 'Inactiva'}
-                      </Text>
-                    </View>
+                    <StatusBadge
+                      status={site.isActive ? 'active' : 'cancelled'}
+                      label={site.isActive ? 'Activa' : 'Inactiva'}
+                      size="small"
+                    />
                   </View>
                 </View>
                 {selectedSiteId === site.id && (
-                  <View style={styles.loadingIndicator}>
-                    <ActivityIndicator size="small" color="#667eea" />
-                  </View>
+                  <ActivityIndicator
+                    size="small"
+                    color={theme.color.action.primary.background}
+                    style={styles.loadingIndicator}
+                  />
                 )}
               </View>
-              <View style={styles.arrowContainer}>
-                <Text style={styles.arrow}>→</Text>
-              </View>
-            </TouchableOpacity>
+            </Card>
           ))}
         </View>
 
         <View style={styles.footer}>
-          <Text style={styles.footerText}>
+          <Caption color="subtle">
             {sites.length} {sites.length === 1 ? 'sede disponible' : 'sedes disponibles'}
-          </Text>
+          </Caption>
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  header: {
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 20,
-    paddingVertical: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-  },
-  headerContent: {
-    flex: 1,
-  },
-  backButton: {
-    marginBottom: 12,
-    alignSelf: 'flex-start',
-  },
-  backButtonText: {
-    fontSize: 14,
-    color: '#667eea',
-    fontWeight: '600',
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1E293B',
-    marginBottom: 4,
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: '#64748B',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 15,
-    color: '#64748B',
-  },
-  content: {
-    flex: 1,
-    padding: 20,
-  },
-  infoCard: {
-    backgroundColor: '#EFF6FF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  infoIcon: {
-    fontSize: 24,
-    marginRight: 12,
-  },
-  infoText: {
-    flex: 1,
-    fontSize: 14,
-    color: '#1E40AF',
-    lineHeight: 20,
-  },
-  sitesContainer: {
-    gap: 12,
-  },
-  siteCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 2,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  siteCardSelected: {
-    borderColor: '#667eea',
-    backgroundColor: '#F5F7FF',
-  },
-  siteCardContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  siteIconContainer: {
-    width: 56,
-    height: 56,
-    borderRadius: 12,
-    backgroundColor: '#F8FAFC',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  siteIcon: {
-    fontSize: 28,
-  },
-  siteInfo: {
-    flex: 1,
-  },
-  siteName: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1E293B',
-    marginBottom: 4,
-  },
-  siteCode: {
-    fontSize: 13,
-    color: '#64748B',
-    marginBottom: 8,
-    fontFamily: 'monospace',
-  },
-  siteFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  statusActive: {
-    backgroundColor: '#D1FAE5',
-  },
-  statusInactive: {
-    backgroundColor: '#FEE2E2',
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 6,
-  },
-  statusDotActive: {
-    backgroundColor: '#10B981',
-  },
-  statusDotInactive: {
-    backgroundColor: '#EF4444',
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  statusTextActive: {
-    color: '#059669',
-  },
-  statusTextInactive: {
-    color: '#DC2626',
-  },
-  loadingIndicator: {
-    marginLeft: 12,
-  },
-  arrowContainer: {
-    marginTop: 12,
-    alignItems: 'flex-end',
-  },
-  arrow: {
-    fontSize: 24,
-    color: '#667eea',
-  },
-  footer: {
-    marginTop: 24,
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  footerText: {
-    fontSize: 13,
-    color: '#94A3B8',
-  },
-});
+const createStyles = (theme: Theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.color.background.subtle,
+    },
+    header: {
+      backgroundColor: theme.color.surface.base,
+      paddingHorizontal: theme.space[5],
+      paddingVertical: theme.space[5],
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+    },
+    backButton: {
+      marginBottom: theme.space[3],
+      alignSelf: 'flex-start',
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    loadingText: {
+      marginTop: theme.space[3],
+    },
+    content: {
+      flex: 1,
+    },
+    contentInner: {
+      padding: theme.space[5],
+    },
+    infoCard: {
+      backgroundColor: theme.color.state.info.background,
+      borderRadius: theme.radii.lg,
+      padding: theme.space[4],
+      marginBottom: theme.space[6],
+      borderWidth: 1,
+      borderColor: theme.color.state.info.border,
+    },
+    sitesContainer: {
+      gap: theme.space[3],
+    },
+    siteCardSelected: {
+      borderColor: theme.color.action.primary.background,
+      backgroundColor: theme.color.surface.subtle,
+    },
+    siteCardContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    siteIconContainer: {
+      width: 56,
+      height: 56,
+      borderRadius: theme.radii.lg,
+      backgroundColor: theme.color.background.subtle,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: theme.space[4],
+    },
+    siteInfo: {
+      flex: 1,
+    },
+    siteCode: {
+      marginTop: theme.space[1],
+      marginBottom: theme.space[2],
+    },
+    siteFooter: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    loadingIndicator: {
+      marginLeft: theme.space[3],
+    },
+    footer: {
+      marginTop: theme.space[6],
+      paddingVertical: theme.space[4],
+      alignItems: 'center',
+    },
+  });
 
 export default SiteSelectionScreen;

@@ -17,6 +17,8 @@ import {
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { usePOSStore } from '@/store/pos';
 import { posService } from '@/services/POSService';
+import { cashCentsToSoles } from '@/utils/posMappers';
+import { useTheme, useThemedStyles, type Theme } from '@/design-system';
 
 type RouteParams = {
   CashTransaction: {
@@ -28,6 +30,8 @@ export default function CashTransactionScreen() {
   const navigation = useNavigation();
   const route = useRoute<RouteProp<RouteParams, 'CashTransaction'>>();
   const { currentSession, refreshSession } = usePOSStore();
+  const theme = useTheme();
+  const styles = useThemedStyles(createStyles);
 
   const transactionType = route.params?.type || 'cash_in';
   const isCashIn = transactionType === 'cash_in';
@@ -111,7 +115,7 @@ export default function CashTransactionScreen() {
           {isCashIn ? '💵 Ingreso de Efectivo' : '💸 Retiro de Efectivo'}
         </Text>
         <Text style={styles.subtitle}>
-          Balance actual: {formatCurrency(currentSession?.currentBalance || 0)}
+          Balance actual: {formatCurrency(cashCentsToSoles(currentSession?.currentCashCents))}
         </Text>
       </View>
 
@@ -128,7 +132,7 @@ export default function CashTransactionScreen() {
               onChangeText={setAmount}
               keyboardType="decimal-pad"
               placeholder="0.00"
-              placeholderTextColor="#999"
+              placeholderTextColor={theme.color.text.placeholder}
             />
           </View>
         </View>
@@ -142,7 +146,7 @@ export default function CashTransactionScreen() {
             value={reason}
             onChangeText={setReason}
             placeholder={isCashIn ? 'Ej: Cambio de billetes grandes' : 'Ej: Depósito bancario'}
-            placeholderTextColor="#999"
+            placeholderTextColor={theme.color.text.placeholder}
           />
         </View>
 
@@ -157,7 +161,7 @@ export default function CashTransactionScreen() {
                 ? 'Ej: Cambio de billete de 500 soles'
                 : 'Ej: Depósito en Banco BCP - Cuenta 123456789'
             }
-            placeholderTextColor="#999"
+            placeholderTextColor={theme.color.text.placeholder}
             multiline
             numberOfLines={3}
           />
@@ -170,7 +174,7 @@ export default function CashTransactionScreen() {
             <View style={styles.previewRow}>
               <Text style={styles.previewLabel}>Balance actual:</Text>
               <Text style={styles.previewValue}>
-                {formatCurrency(currentSession?.currentBalance || 0)}
+                {formatCurrency(cashCentsToSoles(currentSession?.currentCashCents))}
               </Text>
             </View>
             <View style={styles.previewRow}>
@@ -189,7 +193,7 @@ export default function CashTransactionScreen() {
               <Text style={styles.previewLabelBold}>Nuevo balance:</Text>
               <Text style={styles.previewValueBold}>
                 {formatCurrency(
-                  (currentSession?.currentBalance || 0) +
+                  cashCentsToSoles(currentSession?.currentCashCents) +
                     (isCashIn ? parseFloat(amount) : -parseFloat(amount))
                 )}
               </Text>
@@ -212,7 +216,7 @@ export default function CashTransactionScreen() {
             disabled={isLoading || !amount || !reason}
           >
             {isLoading ? (
-              <ActivityIndicator color="#FFFFFF" />
+              <ActivityIndicator color={theme.color.text.onAction} />
             ) : (
               <Text style={styles.submitButtonText}>
                 {isCashIn ? 'Registrar Ingreso' : 'Registrar Retiro'}
@@ -225,151 +229,152 @@ export default function CashTransactionScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  header: {
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#666',
-  },
-  form: {
-    padding: 16,
-  },
-  inputGroup: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  required: {
-    color: '#F44336',
-  },
-  currencyInput: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  currencySymbol: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    paddingLeft: 16,
-    paddingRight: 8,
-  },
-  input: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    padding: 14,
-    fontSize: 16,
-    color: '#333',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  textArea: {
-    height: 80,
-    textAlignVertical: 'top',
-  },
-  previewCard: {
-    backgroundColor: '#FFFFFF',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  previewTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 12,
-  },
-  previewRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  previewLabel: {
-    fontSize: 14,
-    color: '#666',
-  },
-  previewLabelBold: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#333',
-  },
-  previewValue: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#333',
-  },
-  previewValueBold: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  positiveValue: {
-    color: '#4CAF50',
-  },
-  negativeValue: {
-    color: '#F44336',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#E0E0E0',
-    marginVertical: 8,
-  },
-  buttonContainer: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 24,
-  },
-  button: {
-    flex: 1,
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  cancelButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  cancelButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#666',
-  },
-  submitButtonIn: {
-    backgroundColor: '#4CAF50',
-  },
-  submitButtonOut: {
-    backgroundColor: '#FF9800',
-  },
-  submitButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-});
+const createStyles = (theme: Theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.color.background.subtle,
+    },
+    header: {
+      backgroundColor: theme.color.surface.base,
+      padding: theme.space[5],
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+    },
+    title: {
+      fontSize: 24,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[1],
+    },
+    subtitle: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+    },
+    form: {
+      padding: theme.space[4],
+    },
+    inputGroup: {
+      marginBottom: theme.space[5],
+    },
+    label: {
+      fontSize: 15,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[2],
+    },
+    required: {
+      color: theme.color.text.danger,
+    },
+    currencyInput: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.md,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    currencySymbol: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      paddingLeft: theme.space[4],
+      paddingRight: theme.space[2],
+    },
+    input: {
+      flex: 1,
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.md,
+      padding: theme.space[3.5],
+      fontSize: 16,
+      color: theme.color.text.heading,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    textArea: {
+      height: 80,
+      textAlignVertical: 'top',
+    },
+    previewCard: {
+      backgroundColor: theme.color.surface.base,
+      padding: theme.space[4],
+      borderRadius: theme.radii.md,
+      marginBottom: theme.space[5],
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    previewTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[3],
+    },
+    previewRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[2],
+    },
+    previewLabel: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+    },
+    previewLabelBold: {
+      fontSize: 15,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+    },
+    previewValue: {
+      fontSize: 14,
+      fontWeight: '500',
+      color: theme.color.text.heading,
+    },
+    previewValueBold: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+    },
+    positiveValue: {
+      color: theme.color.action.success.background,
+    },
+    negativeValue: {
+      color: theme.color.action.danger.background,
+    },
+    divider: {
+      height: 1,
+      backgroundColor: theme.color.border.subtle,
+      marginVertical: theme.space[2],
+    },
+    buttonContainer: {
+      flexDirection: 'row',
+      gap: theme.space[3],
+      marginTop: theme.space[6],
+    },
+    button: {
+      flex: 1,
+      padding: theme.space[4],
+      borderRadius: theme.radii.md,
+      alignItems: 'center',
+    },
+    cancelButton: {
+      backgroundColor: theme.color.surface.base,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    cancelButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.muted,
+    },
+    submitButtonIn: {
+      backgroundColor: theme.color.action.success.background,
+    },
+    submitButtonOut: {
+      backgroundColor: theme.color.icon.warning,
+    },
+    submitButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.onAction,
+    },
+  });

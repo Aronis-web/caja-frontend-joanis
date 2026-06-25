@@ -4,25 +4,30 @@
  */
 
 import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  ScrollView,
-  Alert,
-  ActivityIndicator,
-} from 'react-native';
+import { View, StyleSheet, TextInput, ScrollView } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useAuthStore } from '@/store/auth';
 import { usePOSStore } from '@/store/pos';
 import { ROUTES } from '@/constants/routes';
+import {
+  Body,
+  Button,
+  Caption,
+  Card,
+  Heading,
+  Label,
+  Title,
+  useTheme,
+  useThemedStyles,
+  type Theme,
+} from '@/design-system';
 
 export default function OpenSessionScreen() {
   const navigation = useNavigation();
   const user = useAuthStore((state) => state.user);
   const { selectedCashRegister, openSession, isLoading } = usePOSStore();
+  const theme = useTheme();
+  const styles = useThemedStyles(createStyles);
 
   const [openingBalance, setOpeningBalance] = useState('');
   const [notes, setNotes] = useState('');
@@ -68,19 +73,29 @@ export default function OpenSessionScreen() {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Abrir Caja</Text>
-        <Text style={styles.subtitle}>{selectedCashRegister?.name}</Text>
+        <Heading size="medium" color="heading">
+          Abrir Caja
+        </Heading>
+        <Body size="small" color="muted">
+          {selectedCashRegister?.name}
+        </Body>
       </View>
 
       <View style={styles.form}>
-        <View style={styles.infoCard}>
-          <Text style={styles.infoLabel}>Usuario:</Text>
-          <Text style={styles.infoValue}>{user?.name}</Text>
-        </View>
+        <Card variant="elevated" padding="medium" style={styles.infoCard}>
+          <Body size="small" color="muted">
+            Usuario:
+          </Body>
+          <Body size="small" color="heading" style={styles.infoValue}>
+            {user?.name}
+          </Body>
+        </Card>
 
-        <View style={styles.infoCard}>
-          <Text style={styles.infoLabel}>Fecha y Hora:</Text>
-          <Text style={styles.infoValue}>
+        <Card variant="elevated" padding="medium" style={styles.infoCard}>
+          <Body size="small" color="muted">
+            Fecha y Hora:
+          </Body>
+          <Body size="small" color="heading" style={styles.infoValue}>
             {new Date().toLocaleString('es-PE', {
               day: '2-digit',
               month: '2-digit',
@@ -88,181 +103,139 @@ export default function OpenSessionScreen() {
               hour: '2-digit',
               minute: '2-digit',
             })}
-          </Text>
-        </View>
+          </Body>
+        </Card>
 
         <View style={styles.inputGroup}>
-          <Text style={styles.label}>
-            Balance de Apertura <Text style={styles.required}>*</Text>
-          </Text>
+          <Label size="medium" color="heading" style={styles.label}>
+            Balance de Apertura{' '}
+            <Title size="small" color="danger">
+              *
+            </Title>
+          </Label>
           <View style={styles.currencyInput}>
-            <Text style={styles.currencySymbol}>S/</Text>
+            <Title size="small" color="heading" style={styles.currencySymbol}>
+              S/
+            </Title>
             <TextInput
               style={styles.input}
               value={openingBalance}
               onChangeText={setOpeningBalance}
               keyboardType="decimal-pad"
               placeholder="0.00"
-              placeholderTextColor="#999"
+              placeholderTextColor={theme.color.text.placeholder}
             />
           </View>
-          <Text style={styles.hint}>Ingrese el monto en efectivo con el que inicia la caja</Text>
+          <Caption color="subtle" style={styles.hint}>
+            Ingrese el monto en efectivo con el que inicia la caja
+          </Caption>
         </View>
 
         <View style={styles.inputGroup}>
-          <Text style={styles.label}>Notas (Opcional)</Text>
+          <Label size="medium" color="heading" style={styles.label}>
+            Notas (Opcional)
+          </Label>
           <TextInput
             style={[styles.input, styles.textArea]}
             value={notes}
             onChangeText={setNotes}
             placeholder="Ej: Apertura turno mañana"
-            placeholderTextColor="#999"
+            placeholderTextColor={theme.color.text.placeholder}
             multiline
             numberOfLines={3}
           />
         </View>
 
         <View style={styles.buttonContainer}>
-          <TouchableOpacity
-            style={[styles.button, styles.cancelButton]}
+          <Button
+            title="Cancelar"
+            variant="outline"
             onPress={() => navigation.goBack()}
             disabled={isLoading}
-          >
-            <Text style={styles.cancelButtonText}>Cancelar</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.button, styles.submitButton]}
+            fullWidth
+            style={styles.button}
+          />
+          <Button
+            title="Abrir Caja"
+            variant="primary"
             onPress={handleOpenSession}
             disabled={isLoading || !openingBalance}
-          >
-            {isLoading ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.submitButtonText}>Abrir Caja</Text>
-            )}
-          </TouchableOpacity>
+            loading={isLoading}
+            fullWidth
+            style={styles.button}
+          />
         </View>
       </View>
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  header: {
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#666',
-  },
-  form: {
-    padding: 16,
-  },
-  infoCard: {
-    backgroundColor: '#FFFFFF',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  infoLabel: {
-    fontSize: 14,
-    color: '#666',
-  },
-  infoValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-  },
-  inputGroup: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  required: {
-    color: '#F44336',
-  },
-  currencyInput: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  currencySymbol: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    paddingLeft: 16,
-    paddingRight: 8,
-  },
-  input: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    padding: 14,
-    fontSize: 16,
-    color: '#333',
-  },
-  textArea: {
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    height: 80,
-    textAlignVertical: 'top',
-  },
-  hint: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 4,
-  },
-  buttonContainer: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 24,
-  },
-  button: {
-    flex: 1,
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  cancelButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  cancelButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#666',
-  },
-  submitButton: {
-    backgroundColor: '#007AFF',
-  },
-  submitButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-});
+const createStyles = (theme: Theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.color.background.subtle,
+    },
+    header: {
+      backgroundColor: theme.color.surface.base,
+      padding: theme.space[5],
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+      gap: theme.space[1],
+    },
+    form: {
+      padding: theme.space[4],
+    },
+    infoCard: {
+      marginBottom: theme.space[3],
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    infoValue: {
+      fontWeight: '600',
+    },
+    inputGroup: {
+      marginBottom: theme.space[5],
+    },
+    label: {
+      marginBottom: theme.space[2],
+    },
+    currencyInput: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.md,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    currencySymbol: {
+      paddingLeft: theme.space[4],
+      paddingRight: theme.space[2],
+    },
+    input: {
+      flex: 1,
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.md,
+      padding: theme.space[3.5],
+      fontSize: 16,
+      color: theme.color.text.body,
+    },
+    textArea: {
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+      height: 80,
+      textAlignVertical: 'top',
+    },
+    hint: {
+      marginTop: theme.space[1],
+    },
+    buttonContainer: {
+      flexDirection: 'row',
+      gap: theme.space[3],
+      marginTop: theme.space[6],
+    },
+    button: {
+      flex: 1,
+    },
+  });

@@ -14,6 +14,7 @@ import {
   ActivityIndicator,
   Modal,
   Platform,
+  TextInput,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useAuthStore } from '@/store/auth';
@@ -22,37 +23,25 @@ import { useOfflineStore } from '@/store/offline';
 import { useCollectionsStore } from '@/store/collections';
 import { offlineSyncService } from '@/services/OfflineSyncService';
 import { offlineDatabase } from '@/services/OfflineDatabase';
+import { deviceTokenService } from '@/services/DeviceTokenService';
+import { offlineUsersBundleService } from '@/services/OfflineUsersBundleService';
+import { useAppUpdater } from '@/hooks/useAppUpdater';
 import { ROUTES } from '@/constants/routes';
+import {
+  useTheme,
+  useThemedStyles,
+  useThemeStore,
+  type Theme,
+  type ThemeMode,
+} from '@/design-system';
+import { Ionicons } from '@expo/vector-icons';
 
-// Tipos para la API de Electron
-interface UpdateInfo {
-  updateAvailable: boolean;
-  currentVersion: string;
-  latestVersion?: string;
-  releaseDate?: string;
-  updateDownloaded?: boolean;
-  message?: string;
-  error?: string;
-}
-
-interface ElectronAPI {
-  isElectron: boolean;
-  getAppVersion: () => Promise<{ version: string; name: string }>;
-  checkForUpdates: () => Promise<UpdateInfo>;
-  downloadUpdate: () => Promise<{ success: boolean; message?: string; error?: string }>;
-  installUpdate: () => Promise<{ success: boolean; message?: string }>;
-  onUpdateStatus: (callback: (status: { status: string; version: string }) => void) => void;
-  onDownloadProgress: (callback: (progress: { percent: number }) => void) => void;
-}
-
-declare global {
-  interface Window {
-    electronAPI?: ElectronAPI;
-  }
-}
+// Tipo Window.electronAPI declarado globalmente en src/hooks/useAppUpdater.ts
 
 export default function POSDashboardScreen() {
   const navigation = useNavigation();
+  const theme = useTheme();
+  const styles = useThemedStyles(createStyles);
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
   const {
@@ -68,7 +57,18 @@ export default function POSDashboardScreen() {
 
   // Estados para el modal de configuración
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
-  const [activeTab, setActiveTab] = useState<'sync' | 'updates'>('sync');
+  const [activeTab, setActiveTab] = useState<'sync' | 'updates' | 'appearance' | 'offline'>('sync');
+
+  // Estados para provisioning del X-Device-Token
+  const [deviceTokenInput, setDeviceTokenInput] = useState('');
+  const [deviceTokenProvisioned, setDeviceTokenProvisioned] = useState(false);
+  const [deviceTokenSaving, setDeviceTokenSaving] = useState(false);
+  const [deviceTokenMessage, setDeviceTokenMessage] = useState<string | null>(null);
+  const [bundleDownloading, setBundleDownloading] = useState(false);
+
+  // Tema (modo claro / oscuro / sistema)
+  const themeMode = useThemeStore((state) => state.mode);
+  const setThemeMode = useThemeStore((state) => state.setMode);
 
   // Estados de sincronización offline
   const {
@@ -91,117 +91,171 @@ export default function POSDashboardScreen() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
 
-  // Estados para el modal de actualizaciones
-  const [currentVersion, setCurrentVersion] = useState('...');
-  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
-  const [checkingUpdate, setCheckingUpdate] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState(0);
-  const [updateReady, setUpdateReady] = useState(false);
-  const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [installError, setInstallError] = useState<string | null>(null);
+  // Hook de actualizaciones server-side (/api/pos/app-updates)
+  const {
+    updateStatus,
+    isElectron: isElectronUpdater,
+    checkForUpdates,
+    downloadUpdate,
+    installUpdate,
+    resetUpdateState,
+    isChecking,
+    isDownloading,
+    isDownloaded,
+  } = useAppUpdater();
+
+  const currentVersion = updateStatus.currentVersion;
+  const downloadProgress = Math.round(updateStatus.downloadProgress?.percent ?? 0);
+  const updateReady = isDownloaded;
+  // Diferenciar errores de descarga vs instalación: si ya hay filePath, el fallo es de instalación
+  const downloadError =
+    updateStatus.status === 'error' && !updateStatus.filePath ? updateStatus.error ?? null : null;
+  const installError =
+    updateStatus.status === 'error' && !!updateStatus.filePath ? updateStatus.error ?? null : null;
+  // Mostrar resultado del check (disponible o al día) sin pintar error como "updateInfo"
+  const updateInfo =
+    updateStatus.status === 'available' ||
+    updateStatus.status === 'up-to-date' ||
+    isDownloading ||
+    isDownloaded
+      ? {
+          updateAvailable: !!updateStatus.updateAvailable,
+          latestVersion: updateStatus.latestVersion,
+          releaseNotes: updateStatus.releaseNotes,
+          releasedAt: updateStatus.releasedAt,
+        }
+      : null;
 
   // Verificar si estamos en Electron (o web en general para mostrar el botón)
   const isElectron =
-    Platform.OS === 'web' &&
-    typeof window !== 'undefined' &&
-    (window.electronAPI?.isElectron || window.electronAPI !== undefined);
+    isElectronUpdater ||
+    (Platform.OS === 'web' &&
+      typeof window !== 'undefined' &&
+      (window.electronAPI?.isElectron || window.electronAPI !== undefined));
 
-  // Cargar versión actual
-  useEffect(() => {
-    if (isElectron && window.electronAPI) {
-      window.electronAPI.getAppVersion().then((info) => {
-        setCurrentVersion(info.version);
-      });
-
-      // Escuchar eventos de actualización
-      window.electronAPI.onUpdateStatus((status) => {
-        if (status.status === 'downloaded') {
-          setUpdateReady(true);
-          setDownloading(false);
-        }
-      });
-
-      window.electronAPI.onDownloadProgress((progress) => {
-        setDownloadProgress(Math.round(progress.percent));
-      });
-    }
-  }, [isElectron]);
-
-  // Verificar actualizaciones
+  // Acciones delegadas al hook (mantienen firmas previas para no tocar JSX)
   const handleCheckUpdates = useCallback(async () => {
-    if (!isElectron || !window.electronAPI) return;
+    await checkForUpdates();
+  }, [checkForUpdates]);
 
-    setCheckingUpdate(true);
-    setUpdateInfo(null);
-
-    try {
-      const result = await window.electronAPI.checkForUpdates();
-      setUpdateInfo(result);
-      if (result.updateDownloaded) {
-        setUpdateReady(true);
-      }
-    } catch (error) {
-      console.error('Error checking updates:', error);
-      setUpdateInfo({
-        updateAvailable: false,
-        currentVersion: currentVersion,
-        error: 'Error al verificar actualizaciones',
-      });
-    } finally {
-      setCheckingUpdate(false);
-    }
-  }, [isElectron, currentVersion]);
-
-  // Descargar actualización
   const handleDownloadUpdate = useCallback(async () => {
-    if (!isElectron || !window.electronAPI) return;
+    await downloadUpdate();
+  }, [downloadUpdate]);
 
-    setDownloading(true);
-    setDownloadProgress(0);
-    setDownloadError(null);
-
-    try {
-      await window.electronAPI.downloadUpdate();
-    } catch (error) {
-      console.error('Error downloading update:', error);
-      setDownloading(false);
-      setDownloadError('No se pudo descargar la actualización. Verifique su conexión a internet.');
-    }
-  }, [isElectron]);
-
-  // Instalar actualización
   const handleInstallUpdate = useCallback(async () => {
-    if (!isElectron || !window.electronAPI) return;
+    await installUpdate();
+  }, [installUpdate]);
 
-    setInstallError(null);
-
-    try {
-      await window.electronAPI.installUpdate();
-    } catch (error) {
-      console.error('Error installing update:', error);
-      setInstallError('No se pudo instalar la actualización. Intente reiniciar manualmente.');
-    }
-  }, [isElectron]);
-
-  // Reintentar descarga
   const handleRetryDownload = useCallback(() => {
-    setDownloadError(null);
-    setUpdateInfo(null);
-    handleCheckUpdates();
-  }, [handleCheckUpdates]);
+    resetUpdateState();
+    void checkForUpdates();
+  }, [resetUpdateState, checkForUpdates]);
 
   // Cerrar modal y resetear estados
   const handleCloseSettingsModal = useCallback(() => {
-    if (!downloading && !updateReady && !syncing) {
+    if (!isDownloading && !updateReady && !syncing) {
       setSettingsModalVisible(false);
-      setUpdateInfo(null);
-      setDownloadError(null);
-      setInstallError(null);
+      resetUpdateState();
       setSyncError(null);
       setSyncSuccess(null);
+      setDeviceTokenMessage(null);
+      setDeviceTokenInput('');
     }
-  }, [downloading, updateReady, syncing]);
+  }, [isDownloading, updateReady, syncing, resetUpdateState]);
+
+  // Cargar estado de provisioning al abrir el modal
+  useEffect(() => {
+    if (!settingsModalVisible) return;
+    void deviceTokenService.isProvisioned().then(setDeviceTokenProvisioned);
+  }, [settingsModalVisible]);
+
+  // Guardar device token
+  const handleSaveDeviceToken = useCallback(async () => {
+    const token = deviceTokenInput.trim();
+    if (!token) {
+      setDeviceTokenMessage('Pegá un token válido antes de guardar.');
+      return;
+    }
+    if (!selectedCashRegister?.id || !selectedCashRegister?.code) {
+      setDeviceTokenMessage('Seleccioná y abrí la caja antes de provisionar el device token.');
+      return;
+    }
+    setDeviceTokenSaving(true);
+    setDeviceTokenMessage(null);
+    try {
+      await deviceTokenService.set(token);
+      await deviceTokenService.setProvisionedCashRegister({
+        id: selectedCashRegister.id,
+        code: selectedCashRegister.code,
+      });
+      setDeviceTokenProvisioned(true);
+      setDeviceTokenInput('');
+      setDeviceTokenMessage(
+        `Device token guardado y pareado con la caja ${selectedCashRegister.code}.`
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'No se pudo guardar el token';
+      setDeviceTokenMessage(msg);
+    } finally {
+      setDeviceTokenSaving(false);
+    }
+  }, [deviceTokenInput, selectedCashRegister?.id, selectedCashRegister?.code]);
+
+  // Eliminar device token
+  const handleClearDeviceToken = useCallback(() => {
+    Alert.alert(
+      'Eliminar device token',
+      'La caja dejará de poder operar offline hasta que se vuelva a provisionar. ¿Continuar?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deviceTokenService.clear();
+              setDeviceTokenProvisioned(false);
+              setDeviceTokenMessage('Device token eliminado.');
+            } catch (error) {
+              const msg = error instanceof Error ? error.message : 'No se pudo eliminar';
+              setDeviceTokenMessage(msg);
+            }
+          },
+        },
+      ]
+    );
+  }, []);
+
+  // Descargar bundle de usuarios offline
+  const handleDownloadUsersBundle = useCallback(async () => {
+    const cashRegisterId = currentSession?.cashRegisterId || selectedCashRegister?.id;
+    if (!cashRegisterId) {
+      setDeviceTokenMessage('Seleccioná una caja antes de descargar el bundle.');
+      return;
+    }
+    setBundleDownloading(true);
+    setDeviceTokenMessage(null);
+    try {
+      const result = await offlineUsersBundleService.downloadBundle(cashRegisterId);
+      if (result.ok) {
+        setDeviceTokenMessage(
+          `Bundle descargado: ${result.bundle.userCount} usuarios. Expira ${new Date(
+            result.bundle.expiresAt
+          ).toLocaleString()}.`
+        );
+      } else {
+        const reasons: Record<string, string> = {
+          FEATURE_OFF: 'El backend tiene desactivado el login offline (403).',
+          NOT_FOUND: 'No hay bundle disponible para esta caja.',
+          NO_DEVICE_TOKEN: 'Faltá guardar el device token primero.',
+          NETWORK_ERROR: 'No se pudo conectar al backend.',
+        };
+        setDeviceTokenMessage(reasons[result.reason] || 'No se pudo descargar el bundle.');
+      }
+    } finally {
+      setBundleDownloading(false);
+    }
+  }, [currentSession?.cashRegisterId, selectedCashRegister?.id]);
 
   // ============ FUNCIONES DE SINCRONIZACIÓN ============
 
@@ -448,7 +502,6 @@ export default function POSDashboardScreen() {
     navigation.navigate(ROUTES.NEW_SALE as never);
   };
 
-
   const handleCloseSession = () => {
     if (!currentSession) {
       Alert.alert('Error', 'No hay sesión activa');
@@ -458,11 +511,14 @@ export default function POSDashboardScreen() {
     // Reiniciar estado previo de recaudación para forzar el flujo de cierre propuesto (QR auto)
     clearActiveRequest();
 
-    navigation.navigate(ROUTES.CASH_COLLECTION as never, {
-      mode: 'closure',
-      autoStart: true,
-      forceFlow: Date.now(),
-    } as never);
+    (navigation.navigate as unknown as (route: string, params?: unknown) => void)(
+      ROUTES.CASH_COLLECTION,
+      {
+        mode: 'closure',
+        autoStart: true,
+        forceFlow: Date.now(),
+      }
+    );
   };
 
   const handleLogout = async () => {
@@ -537,7 +593,7 @@ export default function POSDashboardScreen() {
   if (isLoading) {
     return (
       <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
+        <ActivityIndicator size="large" color={theme.color.text.link} />
       </View>
     );
   }
@@ -582,7 +638,7 @@ export default function POSDashboardScreen() {
             {/* Header del Modal */}
             <View style={styles.settingsModalHeader}>
               <Text style={styles.settingsModalTitle}>⚙️ Configuración</Text>
-              {!downloading && !updateReady && !syncing ? (
+              {!isDownloading && !updateReady && !syncing ? (
                 <TouchableOpacity
                   style={styles.modalCloseButton}
                   onPress={handleCloseSettingsModal}
@@ -612,6 +668,22 @@ export default function POSDashboardScreen() {
               >
                 <Text style={[styles.tabText, activeTab === 'updates' && styles.tabTextActive]}>
                   📦 Actualizaciones
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.tab, activeTab === 'appearance' && styles.tabActive]}
+                onPress={() => setActiveTab('appearance')}
+              >
+                <Text style={[styles.tabText, activeTab === 'appearance' && styles.tabTextActive]}>
+                  🎨 Apariencia
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.tab, activeTab === 'offline' && styles.tabActive]}
+                onPress={() => setActiveTab('offline')}
+              >
+                <Text style={[styles.tabText, activeTab === 'offline' && styles.tabTextActive]}>
+                  📴 Offline
                 </Text>
               </TouchableOpacity>
             </View>
@@ -680,7 +752,7 @@ export default function POSDashboardScreen() {
                       disabled={syncing || syncingStock || syncingTokens || syncingSales}
                     >
                       {syncing ? (
-                        <ActivityIndicator size="small" color="#fff" />
+                        <ActivityIndicator size="small" color={theme.color.text.onAction} />
                       ) : (
                         <Text style={styles.syncActionIcon}>🔄</Text>
                       )}
@@ -699,7 +771,7 @@ export default function POSDashboardScreen() {
                       disabled={syncing || syncingStock || syncingTokens || syncingSales}
                     >
                       {syncing ? (
-                        <ActivityIndicator size="small" color="#fff" />
+                        <ActivityIndicator size="small" color={theme.color.text.onAction} />
                       ) : (
                         <Text style={styles.syncActionIcon}>📦</Text>
                       )}
@@ -716,7 +788,7 @@ export default function POSDashboardScreen() {
                       disabled={syncing || syncingStock || syncingTokens || syncingSales}
                     >
                       {syncingStock ? (
-                        <ActivityIndicator size="small" color="#fff" />
+                        <ActivityIndicator size="small" color={theme.color.text.onAction} />
                       ) : (
                         <Text style={styles.syncActionIcon}>📊</Text>
                       )}
@@ -733,7 +805,7 @@ export default function POSDashboardScreen() {
                       disabled={syncing || syncingStock || syncingTokens || syncingSales}
                     >
                       {syncingTokens ? (
-                        <ActivityIndicator size="small" color="#fff" />
+                        <ActivityIndicator size="small" color={theme.color.text.onAction} />
                       ) : (
                         <Text style={styles.syncActionIcon}>🎫</Text>
                       )}
@@ -759,7 +831,7 @@ export default function POSDashboardScreen() {
                       }
                     >
                       {syncingSales ? (
-                        <ActivityIndicator size="small" color="#fff" />
+                        <ActivityIndicator size="small" color={theme.color.text.onAction} />
                       ) : (
                         <Text style={styles.syncActionIcon}>📤</Text>
                       )}
@@ -819,22 +891,17 @@ export default function POSDashboardScreen() {
                     {isElectron && (
                       <>
                         {/* Estado de verificación */}
-                        {checkingUpdate && (
+                        {isChecking && (
                           <View style={styles.statusRow}>
-                            <ActivityIndicator size="small" color="#007AFF" />
+                            <ActivityIndicator size="small" color={theme.color.text.link} />
                             <Text style={styles.statusText2}>Verificando actualizaciones...</Text>
                           </View>
                         )}
 
                         {/* Resultado de verificación */}
-                        {updateInfo && !checkingUpdate && (
+                        {updateInfo && !isChecking && (
                           <View style={styles.updateResultContainer}>
-                            {updateInfo.error ? (
-                              <View style={styles.errorContainer}>
-                                <Text style={styles.errorIcon}>⚠️</Text>
-                                <Text style={styles.errorText}>{updateInfo.error}</Text>
-                              </View>
-                            ) : updateInfo.updateAvailable ? (
+                            {updateInfo.updateAvailable ? (
                               <View style={styles.updateAvailableContainer}>
                                 <Text style={styles.updateAvailableIcon}>🎉</Text>
                                 <Text style={styles.updateAvailableTitle}>
@@ -843,10 +910,10 @@ export default function POSDashboardScreen() {
                                 <Text style={styles.updateAvailableVersion}>
                                   v{updateInfo.latestVersion}
                                 </Text>
-                                {updateInfo.releaseDate && (
+                                {updateInfo.releasedAt && (
                                   <Text style={styles.updateDate}>
                                     Publicada:{' '}
-                                    {new Date(updateInfo.releaseDate).toLocaleDateString('es-PE')}
+                                    {new Date(updateInfo.releasedAt).toLocaleDateString('es-PE')}
                                   </Text>
                                 )}
                               </View>
@@ -862,10 +929,10 @@ export default function POSDashboardScreen() {
                         )}
 
                         {/* Progreso de descarga */}
-                        {downloading && (
+                        {isDownloading && (
                           <View style={styles.downloadProgressContainer}>
                             <View style={styles.downloadingHeader}>
-                              <ActivityIndicator size="small" color="#4CAF50" />
+                              <ActivityIndicator size="small" color={theme.color.text.success} />
                               <Text style={styles.downloadingTitle}>Descargando actualización</Text>
                             </View>
                             <Text style={styles.downloadingSubtext}>
@@ -923,21 +990,21 @@ export default function POSDashboardScreen() {
                   {isElectron && (
                     <View style={styles.updateActionsCard}>
                       {/* Botón verificar */}
-                      {!downloading && !updateReady && !downloadError && (
+                      {!isDownloading && !updateReady && !downloadError && (
                         <TouchableOpacity
                           style={[styles.modalButton, styles.checkButton]}
                           onPress={handleCheckUpdates}
-                          disabled={checkingUpdate}
+                          disabled={isChecking}
                         >
                           <Text style={styles.modalButtonText}>
-                            {checkingUpdate ? 'Verificando...' : '🔍 Verificar Actualizaciones'}
+                            {isChecking ? 'Verificando...' : '🔍 Verificar Actualizaciones'}
                           </Text>
                         </TouchableOpacity>
                       )}
 
                       {/* Botón descargar */}
                       {updateInfo?.updateAvailable &&
-                        !downloading &&
+                        !isDownloading &&
                         !updateReady &&
                         !downloadError && (
                           <TouchableOpacity
@@ -982,8 +1049,7 @@ export default function POSDashboardScreen() {
                           <TouchableOpacity
                             style={[styles.modalButton, styles.closeErrorButton]}
                             onPress={() => {
-                              setInstallError(null);
-                              setUpdateReady(false);
+                              resetUpdateState();
                               setSettingsModalVisible(false);
                             }}
                           >
@@ -995,6 +1061,179 @@ export default function POSDashboardScreen() {
                       )}
                     </View>
                   )}
+                </View>
+              )}
+
+              {/* ============ PESTAÑA DE APARIENCIA ============ */}
+              {activeTab === 'appearance' && (
+                <View style={styles.tabContent}>
+                  <View style={styles.appearanceCard}>
+                    <Text style={styles.cardTitle}>🎨 Modo de visualización</Text>
+                    <Text style={styles.appearanceHelper}>
+                      Elige cómo se ve la aplicación. El modo automático sigue la configuración del
+                      sistema.
+                    </Text>
+
+                    {(
+                      [
+                        {
+                          mode: 'light',
+                          label: 'Claro',
+                          helper: 'Fondo blanco, ideal para entornos iluminados',
+                          icon: 'sunny-outline' as const,
+                        },
+                        {
+                          mode: 'dark',
+                          label: 'Oscuro',
+                          helper: 'Fondo oscuro, reduce la fatiga visual',
+                          icon: 'moon-outline' as const,
+                        },
+                        {
+                          mode: 'system',
+                          label: 'Automático',
+                          helper: 'Sigue la preferencia del sistema operativo',
+                          icon: 'phone-portrait-outline' as const,
+                        },
+                      ] as Array<{
+                        mode: ThemeMode;
+                        label: string;
+                        helper: string;
+                        icon: keyof typeof Ionicons.glyphMap;
+                      }>
+                    ).map((option) => {
+                      const selected = themeMode === option.mode;
+                      return (
+                        <TouchableOpacity
+                          key={option.mode}
+                          style={[
+                            styles.appearanceOption,
+                            selected && styles.appearanceOptionSelected,
+                          ]}
+                          onPress={() => setThemeMode(option.mode)}
+                          activeOpacity={0.7}
+                        >
+                          <View
+                            style={[
+                              styles.appearanceIconWrap,
+                              selected && styles.appearanceIconWrapSelected,
+                            ]}
+                          >
+                            <Ionicons
+                              name={option.icon}
+                              size={22}
+                              color={selected ? theme.color.text.inverse : theme.color.text.muted}
+                            />
+                          </View>
+                          <View style={styles.appearanceTextWrap}>
+                            <Text
+                              style={[
+                                styles.appearanceLabel,
+                                selected && styles.appearanceLabelSelected,
+                              ]}
+                            >
+                              {option.label}
+                            </Text>
+                            <Text style={styles.appearanceHelperSmall}>{option.helper}</Text>
+                          </View>
+                          <View
+                            style={[
+                              styles.appearanceRadio,
+                              selected && styles.appearanceRadioSelected,
+                            ]}
+                          >
+                            {selected && <View style={styles.appearanceRadioDot} />}
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+
+              {/* ============ PESTAÑA OFFLINE / DEVICE TOKEN ============ */}
+              {activeTab === 'offline' && (
+                <View style={styles.tabContent}>
+                  <View style={styles.appearanceCard}>
+                    <Text style={styles.cardTitle}>🔐 Device token de la caja</Text>
+                    <Text style={styles.appearanceHelper}>
+                      Este token (válido 1 año) habilita el login offline y la sincronización contra
+                      el backend. Lo genera un administrador y se pega una sola vez por caja.
+                    </Text>
+
+                    <View style={styles.deviceTokenStatusRow}>
+                      <Ionicons
+                        name={deviceTokenProvisioned ? 'shield-checkmark' : 'shield-outline'}
+                        size={18}
+                        color={
+                          deviceTokenProvisioned ? theme.color.text.success : theme.color.text.muted
+                        }
+                      />
+                      <Text style={styles.deviceTokenStatusText}>
+                        {deviceTokenProvisioned ? 'Caja provisionada' : 'Caja sin provisionar'}
+                      </Text>
+                    </View>
+
+                    <TextInput
+                      style={styles.deviceTokenInput}
+                      value={deviceTokenInput}
+                      onChangeText={setDeviceTokenInput}
+                      placeholder="Pegá el device token aquí"
+                      placeholderTextColor={theme.color.text.placeholder}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      multiline
+                    />
+
+                    <TouchableOpacity
+                      style={[
+                        styles.deviceTokenButton,
+                        (deviceTokenSaving || !deviceTokenInput.trim()) &&
+                          styles.deviceTokenButtonDisabled,
+                      ]}
+                      onPress={handleSaveDeviceToken}
+                      disabled={deviceTokenSaving || !deviceTokenInput.trim()}
+                    >
+                      {deviceTokenSaving ? (
+                        <ActivityIndicator color={theme.color.text.onAction} />
+                      ) : (
+                        <Text style={styles.deviceTokenButtonText}>Guardar token</Text>
+                      )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.deviceTokenButton,
+                        styles.deviceTokenButtonSecondary,
+                        (bundleDownloading || !deviceTokenProvisioned) &&
+                          styles.deviceTokenButtonDisabled,
+                      ]}
+                      onPress={handleDownloadUsersBundle}
+                      disabled={bundleDownloading || !deviceTokenProvisioned}
+                    >
+                      {bundleDownloading ? (
+                        <ActivityIndicator color={theme.color.text.body} />
+                      ) : (
+                        <Text style={styles.deviceTokenButtonSecondaryText}>
+                          Descargar bundle de usuarios
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+
+                    {deviceTokenProvisioned && (
+                      <TouchableOpacity
+                        style={[styles.deviceTokenButton, styles.deviceTokenButtonDanger]}
+                        onPress={handleClearDeviceToken}
+                      >
+                        <Text style={styles.deviceTokenButtonDangerText}>
+                          Eliminar device token
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {deviceTokenMessage && (
+                      <Text style={styles.deviceTokenMessage}>{deviceTokenMessage}</Text>
+                    )}
+                  </View>
                 </View>
               )}
             </ScrollView>
@@ -1073,717 +1312,832 @@ export default function POSDashboardScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-  },
-  header: {
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    flex: 1,
-  },
-  headerRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  settingsButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#F0F0F0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  settingsButtonIcon: {
-    fontSize: 20,
-  },
-  logoutButton: {
-    backgroundColor: '#FFEBEE',
-  },
-  logoutButtonIcon: {
-    fontSize: 20,
-  },
-  statusBadge: {
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  statusOpen: {
-    backgroundColor: '#4CAF50',
-  },
-  statusClosed: {
-    backgroundColor: '#9E9E9E',
-  },
-  statusText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  sessionCard: {
-    backgroundColor: '#FFFFFF',
-    margin: 16,
-    padding: 20,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  noSessionCard: {
-    backgroundColor: '#FFF3CD',
-    margin: 16,
-    padding: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  noSessionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#856404',
-    marginBottom: 8,
-  },
-  noSessionText: {
-    fontSize: 14,
-    color: '#856404',
-    textAlign: 'center',
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 16,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  infoLabel: {
-    fontSize: 15,
-    color: '#666',
-  },
-  infoValue: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#333',
-  },
-  infoValueHighlight: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#E0E0E0',
-    marginVertical: 12,
-  },
-  refreshButton: {
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: '#F5F5F5',
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  refreshButtonText: {
-    fontSize: 14,
-    color: '#007AFF',
-    fontWeight: '500',
-  },
-  actionsContainer: {
-    padding: 16,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  actionButton: {
-    padding: 20,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  halfButton: {
-    flex: 1,
-  },
-  primaryButton: {
-    backgroundColor: '#007AFF',
-  },
-  saleButton: {
-    backgroundColor: '#4CAF50',
-  },
-  secondaryButton: {
-    backgroundColor: '#FF9800',
-  },
-  dangerButton: {
-    backgroundColor: '#F44336',
-  },
-  actionButtonIcon: {
-    fontSize: 32,
-    marginBottom: 8,
-  },
-  actionButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  // Estilos del Modal de Configuración
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  settingsModalContent: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    width: '95%',
-    maxWidth: 600,
-    maxHeight: '90%',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 10,
-  },
-  settingsModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  settingsModalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#333',
-  },
-  settingsModalBody: {
-    flex: 1,
-    maxHeight: 500,
-  },
-  // Estilos de pestañas
-  tabsContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#F5F5F5',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    borderBottomWidth: 3,
-    borderBottomColor: 'transparent',
-  },
-  tabActive: {
-    backgroundColor: '#FFFFFF',
-    borderBottomColor: '#007AFF',
-  },
-  tabText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#666',
-  },
-  tabTextActive: {
-    color: '#007AFF',
-  },
-  tabContent: {
-    padding: 16,
-  },
-  // Estilos de tarjetas
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#333',
-    marginBottom: 16,
-  },
-  syncStatsCard: {
-    backgroundColor: '#F8F9FA',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#E9ECEF',
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginBottom: 16,
-  },
-  statBox: {
-    alignItems: 'center',
-    padding: 12,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
-    minWidth: 100,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  statNumber: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#007AFF',
-  },
-  statWarning: {
-    color: '#FF9800',
-  },
-  statPending: {
-    color: '#F44336',
-  },
-  statLabel: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 4,
-    fontWeight: '500',
-  },
-  lastSyncRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#E9ECEF',
-  },
-  lastSyncLabel: {
-    fontSize: 13,
-    color: '#666',
-  },
-  lastSyncValue: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#333',
-  },
-  // Mensajes de estado de sync
-  syncErrorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFEBEE',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-    gap: 10,
-  },
-  syncErrorIcon: {
-    fontSize: 20,
-  },
-  syncErrorText: {
-    flex: 1,
-    color: '#C62828',
-    fontSize: 14,
-  },
-  syncSuccessContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#E8F5E9',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-    gap: 10,
-  },
-  syncSuccessIcon: {
-    fontSize: 20,
-  },
-  syncSuccessText: {
-    flex: 1,
-    color: '#2E7D32',
-    fontSize: 14,
-  },
-  // Acciones de sincronización
-  syncActionsCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#E9ECEF',
-  },
-  syncActionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-    borderRadius: 10,
-    marginBottom: 10,
-    gap: 12,
-  },
-  syncActionPrimary: {
-    backgroundColor: '#007AFF',
-  },
-  syncActionSecondary: {
-    backgroundColor: '#5C6BC0',
-  },
-  syncActionTokens: {
-    backgroundColor: '#FF9800',
-  },
-  syncActionWarning: {
-    backgroundColor: '#E65100',
-  },
-  syncActionDanger: {
-    backgroundColor: '#9E9E9E',
-  },
-  syncActionIcon: {
-    fontSize: 24,
-    width: 32,
-    textAlign: 'center',
-  },
-  syncActionTextContainer: {
-    flex: 1,
-  },
-  syncActionTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  syncActionDesc: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.8)',
-    marginTop: 2,
-  },
-  // Tarjeta de actualizaciones
-  updateCard: {
-    backgroundColor: '#F8F9FA',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#E9ECEF',
-  },
-  updateActionsCard: {
-    gap: 10,
-  },
-  notElectronWarning: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#E3F2FD',
-    padding: 12,
-    borderRadius: 8,
-    gap: 10,
-  },
-  notElectronIcon: {
-    fontSize: 20,
-  },
-  notElectronText: {
-    flex: 1,
-    color: '#1565C0',
-    fontSize: 13,
-  },
-  modalCloseButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F0F0F0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalCloseText: {
-    fontSize: 16,
-    color: '#666',
-    fontWeight: '600',
-  },
-  modalCloseButtonDisabled: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#E0E0E0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalCloseTextDisabled: {
-    fontSize: 16,
-    color: '#BDBDBD',
-    fontWeight: '600',
-  },
-  modalBody: {
-    padding: 20,
-  },
-  versionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  versionLabel: {
-    fontSize: 15,
-    color: '#666',
-  },
-  versionValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#007AFF',
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 16,
-    backgroundColor: '#F5F5F5',
-    borderRadius: 8,
-  },
-  statusText2: {
-    fontSize: 14,
-    color: '#666',
-  },
-  updateResultContainer: {
-    marginTop: 8,
-  },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 16,
-    backgroundColor: '#FFF3CD',
-    borderRadius: 8,
-  },
-  errorIcon: {
-    fontSize: 24,
-  },
-  errorText: {
-    fontSize: 14,
-    color: '#856404',
-    flex: 1,
-  },
-  updateAvailableContainer: {
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#E8F5E9',
-    borderRadius: 8,
-  },
-  updateAvailableIcon: {
-    fontSize: 40,
-    marginBottom: 8,
-  },
-  updateAvailableTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#2E7D32',
-    marginBottom: 4,
-  },
-  updateAvailableVersion: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#1B5E20',
-  },
-  updateDate: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 8,
-  },
-  upToDateContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 16,
-    backgroundColor: '#E3F2FD',
-    borderRadius: 8,
-  },
-  upToDateIcon: {
-    fontSize: 24,
-  },
-  upToDateText: {
-    fontSize: 14,
-    color: '#1565C0',
-    flex: 1,
-  },
-  downloadProgressContainer: {
-    padding: 20,
-    backgroundColor: '#E8F5E9',
-    borderRadius: 12,
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#4CAF50',
-  },
-  downloadingHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 8,
-  },
-  downloadingTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#2E7D32',
-  },
-  downloadingSubtext: {
-    fontSize: 13,
-    color: '#666',
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  progressBarContainer: {
-    width: '100%',
-    height: 8,
-    backgroundColor: '#E0E0E0',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressBar: {
-    height: '100%',
-    backgroundColor: '#4CAF50',
-  },
-  progressText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#4CAF50',
-    marginTop: 8,
-  },
-  updateReadyContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    padding: 20,
-    backgroundColor: '#E8F5E9',
-    borderRadius: 12,
-    marginTop: 8,
-    borderWidth: 2,
-    borderColor: '#4CAF50',
-  },
-  updateReadyIcon: {
-    fontSize: 32,
-  },
-  updateReadyTextContainer: {
-    flex: 1,
-  },
-  updateReadyTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#2E7D32',
-    marginBottom: 4,
-  },
-  updateReadyText: {
-    fontSize: 13,
-    color: '#558B2F',
-    lineHeight: 18,
-  },
-  modalActions: {
-    padding: 16,
-    paddingTop: 0,
-    gap: 10,
-  },
-  modalButton: {
-    padding: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  checkButton: {
-    backgroundColor: '#007AFF',
-  },
-  downloadButton: {
-    backgroundColor: '#4CAF50',
-  },
-  installButton: {
-    backgroundColor: '#FF9800',
-  },
-  restartButton: {
-    backgroundColor: '#4CAF50',
-    paddingVertical: 18,
-    borderRadius: 12,
-  },
-  restartButtonText: {
-    color: '#FFFFFF',
-    fontSize: 17,
-    fontWeight: 'bold',
-  },
-  retryButton: {
-    backgroundColor: '#FF9800',
-  },
-  closeErrorButton: {
-    backgroundColor: '#9E9E9E',
-  },
-  closeErrorButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  downloadErrorContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    padding: 20,
-    backgroundColor: '#FFEBEE',
-    borderRadius: 12,
-    marginTop: 8,
-    borderWidth: 2,
-    borderColor: '#F44336',
-  },
-  downloadErrorIcon: {
-    fontSize: 32,
-  },
-  downloadErrorTextContainer: {
-    flex: 1,
-  },
-  downloadErrorTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#C62828',
-    marginBottom: 4,
-  },
-  downloadErrorText: {
-    fontSize: 13,
-    color: '#B71C1C',
-    lineHeight: 18,
-  },
-  installErrorContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    padding: 20,
-    backgroundColor: '#FFF3E0',
-    borderRadius: 12,
-    marginTop: 8,
-    borderWidth: 2,
-    borderColor: '#FF9800',
-  },
-  installErrorIcon: {
-    fontSize: 32,
-  },
-  installErrorTextContainer: {
-    flex: 1,
-  },
-  installErrorTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#E65100',
-    marginBottom: 4,
-  },
-  installErrorText: {
-    fontSize: 13,
-    color: '#F57C00',
-    lineHeight: 18,
-  },
-  modalButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-});
+const createStyles = (theme: Theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.color.background.subtle,
+    },
+    centerContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: theme.color.background.subtle,
+    },
+    header: {
+      backgroundColor: theme.color.surface.base,
+      padding: theme.space[5],
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+    },
+    headerTitle: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+      flex: 1,
+    },
+    headerRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[3],
+    },
+    settingsButton: {
+      width: 40,
+      height: 40,
+      borderRadius: theme.radii.full,
+      backgroundColor: theme.color.surface.muted,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    settingsButtonIcon: {
+      fontSize: 20,
+    },
+    logoutButton: {
+      backgroundColor: theme.color.state.danger.background,
+    },
+    logoutButtonIcon: {
+      fontSize: 20,
+    },
+    statusBadge: {
+      paddingHorizontal: theme.space[4],
+      paddingVertical: theme.space[1.5],
+      borderRadius: theme.radii.full,
+    },
+    statusOpen: {
+      backgroundColor: theme.color.action.success.background,
+    },
+    statusClosed: {
+      backgroundColor: theme.color.text.subtle,
+    },
+    statusText: {
+      color: theme.color.text.onAction,
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    sessionCard: {
+      backgroundColor: theme.color.surface.base,
+      margin: theme.space[4],
+      padding: theme.space[5],
+      borderRadius: theme.radii.lg,
+      ...theme.shadow.sm,
+    },
+    noSessionCard: {
+      backgroundColor: theme.color.state.warning.background,
+      margin: theme.space[4],
+      padding: theme.space[6],
+      borderRadius: theme.radii.lg,
+      alignItems: 'center',
+    },
+    noSessionTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: theme.color.state.warning.text,
+      marginBottom: theme.space[2],
+    },
+    noSessionText: {
+      fontSize: 14,
+      color: theme.color.state.warning.text,
+      textAlign: 'center',
+    },
+    sectionTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[4],
+    },
+    infoRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[3],
+    },
+    infoLabel: {
+      fontSize: 15,
+      color: theme.color.text.muted,
+    },
+    infoValue: {
+      fontSize: 15,
+      fontWeight: '500',
+      color: theme.color.text.heading,
+    },
+    infoValueHighlight: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: theme.color.text.success,
+    },
+    divider: {
+      height: 1,
+      backgroundColor: theme.color.border.subtle,
+      marginVertical: theme.space[3],
+    },
+    refreshButton: {
+      marginTop: theme.space[3],
+      padding: theme.space[3],
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.md,
+      alignItems: 'center',
+    },
+    refreshButtonText: {
+      fontSize: 14,
+      color: theme.color.text.link,
+      fontWeight: '500',
+    },
+    actionsContainer: {
+      padding: theme.space[4],
+    },
+    actionRow: {
+      flexDirection: 'row',
+      gap: theme.space[3],
+    },
+    actionButton: {
+      padding: theme.space[5],
+      borderRadius: theme.radii.lg,
+      alignItems: 'center',
+      marginBottom: theme.space[3],
+      ...theme.shadow.sm,
+    },
+    halfButton: {
+      flex: 1,
+    },
+    primaryButton: {
+      backgroundColor: theme.color.action.primary.background,
+    },
+    saleButton: {
+      backgroundColor: theme.color.action.success.background,
+    },
+    secondaryButton: {
+      backgroundColor: theme.color.icon.warning,
+    },
+    dangerButton: {
+      backgroundColor: theme.color.action.danger.background,
+    },
+    actionButtonIcon: {
+      fontSize: 32,
+      marginBottom: theme.space[2],
+    },
+    actionButtonText: {
+      color: theme.color.text.onAction,
+      fontSize: 16,
+      fontWeight: '600',
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: theme.color.overlay.medium,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    settingsModalContent: {
+      backgroundColor: theme.color.surface.elevated,
+      borderRadius: theme.radii.xl,
+      width: '95%',
+      maxWidth: 600,
+      maxHeight: '90%',
+      ...theme.shadow.lg,
+    },
+    settingsModalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: theme.space[4],
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+    },
+    settingsModalTitle: {
+      fontSize: 20,
+      fontWeight: '700',
+      color: theme.color.text.heading,
+    },
+    settingsModalBody: {
+      flex: 1,
+      maxHeight: 500,
+    },
+    tabsContainer: {
+      flexDirection: 'row',
+      backgroundColor: theme.color.surface.subtle,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+    },
+    tab: {
+      flex: 1,
+      paddingVertical: theme.space[3.5],
+      paddingHorizontal: theme.space[4],
+      alignItems: 'center',
+      borderBottomWidth: 3,
+      borderBottomColor: 'transparent',
+    },
+    tabActive: {
+      backgroundColor: theme.color.surface.base,
+      borderBottomColor: theme.color.text.link,
+    },
+    tabText: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.muted,
+    },
+    tabTextActive: {
+      color: theme.color.text.link,
+    },
+    tabContent: {
+      padding: theme.space[4],
+    },
+    cardTitle: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[4],
+    },
+    appearanceCard: {
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.lg,
+      padding: theme.space[4],
+      marginBottom: theme.space[4],
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    appearanceHelper: {
+      fontSize: 13,
+      color: theme.color.text.muted,
+      marginTop: -theme.space[2],
+      marginBottom: theme.space[4],
+      lineHeight: 18,
+    },
+    deviceTokenStatusRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: theme.space[3],
+      gap: theme.space[2],
+    },
+    deviceTokenStatusText: {
+      fontSize: 13,
+      color: theme.color.text.body,
+    },
+    deviceTokenInput: {
+      borderWidth: 1,
+      borderColor: theme.color.border.default,
+      borderRadius: theme.radii.md,
+      padding: theme.space[3],
+      backgroundColor: theme.color.surface.base,
+      color: theme.color.text.body,
+      fontSize: 13,
+      minHeight: 80,
+      textAlignVertical: 'top',
+      marginBottom: theme.space[3],
+    },
+    deviceTokenButton: {
+      backgroundColor: theme.color.action.primary.background,
+      borderRadius: theme.radii.md,
+      paddingVertical: theme.space[3],
+      alignItems: 'center',
+      marginBottom: theme.space[2],
+    },
+    deviceTokenButtonDisabled: {
+      opacity: 0.5,
+    },
+    deviceTokenButtonText: {
+      color: theme.color.text.onAction,
+      fontWeight: '600',
+    },
+    deviceTokenButtonSecondary: {
+      backgroundColor: theme.color.surface.base,
+      borderWidth: 1,
+      borderColor: theme.color.border.default,
+    },
+    deviceTokenButtonSecondaryText: {
+      color: theme.color.text.body,
+      fontWeight: '600',
+    },
+    deviceTokenButtonDanger: {
+      backgroundColor: theme.color.state.danger.background,
+      borderWidth: 1,
+      borderColor: theme.color.state.danger.border,
+    },
+    deviceTokenButtonDangerText: {
+      color: theme.color.text.danger,
+      fontWeight: '600',
+    },
+    deviceTokenMessage: {
+      fontSize: 12,
+      color: theme.color.text.muted,
+      marginTop: theme.space[2],
+      lineHeight: 16,
+    },
+    appearanceOption: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.md,
+      padding: theme.space[3],
+      marginBottom: theme.space[2],
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+      gap: theme.space[3],
+    },
+    appearanceOptionSelected: {
+      borderColor: theme.color.action.primary.background,
+      backgroundColor: theme.color.surface.base,
+      ...theme.shadow.xs,
+    },
+    appearanceIconWrap: {
+      width: 40,
+      height: 40,
+      borderRadius: theme.radii.md,
+      backgroundColor: theme.color.surface.muted,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    appearanceIconWrapSelected: {
+      backgroundColor: theme.color.action.primary.background,
+    },
+    appearanceTextWrap: {
+      flex: 1,
+    },
+    appearanceLabel: {
+      fontSize: 15,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+    },
+    appearanceLabelSelected: {
+      color: theme.color.text.heading,
+    },
+    appearanceHelperSmall: {
+      fontSize: 12,
+      color: theme.color.text.muted,
+      marginTop: 2,
+    },
+    appearanceRadio: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      borderWidth: 2,
+      borderColor: theme.color.border.default,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    appearanceRadioSelected: {
+      borderColor: theme.color.action.primary.background,
+    },
+    appearanceRadioDot: {
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+      backgroundColor: theme.color.action.primary.background,
+    },
+    syncStatsCard: {
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.lg,
+      padding: theme.space[4],
+      marginBottom: theme.space[4],
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    statsGrid: {
+      flexDirection: 'row',
+      justifyContent: 'space-around',
+      marginBottom: theme.space[4],
+    },
+    statBox: {
+      alignItems: 'center',
+      padding: theme.space[3],
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.md,
+      minWidth: 100,
+      ...theme.shadow.xs,
+    },
+    statNumber: {
+      fontSize: 28,
+      fontWeight: '700',
+      color: theme.color.text.link,
+    },
+    statWarning: {
+      color: theme.color.text.warning,
+    },
+    statPending: {
+      color: theme.color.text.danger,
+    },
+    statLabel: {
+      fontSize: 12,
+      color: theme.color.text.muted,
+      marginTop: theme.space[1],
+      fontWeight: '500',
+    },
+    lastSyncRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingTop: theme.space[3],
+      borderTopWidth: 1,
+      borderTopColor: theme.color.border.subtle,
+    },
+    lastSyncLabel: {
+      fontSize: 13,
+      color: theme.color.text.muted,
+    },
+    lastSyncValue: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+    },
+    syncErrorContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.color.state.danger.background,
+      padding: theme.space[3],
+      borderRadius: theme.radii.md,
+      marginBottom: theme.space[4],
+      gap: theme.space[2.5],
+    },
+    syncErrorIcon: {
+      fontSize: 20,
+    },
+    syncErrorText: {
+      flex: 1,
+      color: theme.color.state.danger.text,
+      fontSize: 14,
+    },
+    syncSuccessContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.color.state.success.background,
+      padding: theme.space[3],
+      borderRadius: theme.radii.md,
+      marginBottom: theme.space[4],
+      gap: theme.space[2.5],
+    },
+    syncSuccessIcon: {
+      fontSize: 20,
+    },
+    syncSuccessText: {
+      flex: 1,
+      color: theme.color.state.success.text,
+      fontSize: 14,
+    },
+    syncActionsCard: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.lg,
+      padding: theme.space[4],
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    syncActionButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: theme.space[3.5],
+      borderRadius: theme.radii.md,
+      marginBottom: theme.space[2.5],
+      gap: theme.space[3],
+    },
+    syncActionPrimary: {
+      backgroundColor: theme.color.action.primary.background,
+    },
+    syncActionSecondary: {
+      backgroundColor: theme.color.text.link,
+    },
+    syncActionTokens: {
+      backgroundColor: theme.color.icon.warning,
+    },
+    syncActionWarning: {
+      backgroundColor: theme.color.state.warning.border,
+    },
+    syncActionDanger: {
+      backgroundColor: theme.color.text.subtle,
+    },
+    syncActionIcon: {
+      fontSize: 24,
+      width: 32,
+      textAlign: 'center',
+    },
+    syncActionTextContainer: {
+      flex: 1,
+    },
+    syncActionTitle: {
+      fontSize: 15,
+      fontWeight: '600',
+      color: theme.color.text.onAction,
+    },
+    syncActionDesc: {
+      fontSize: 12,
+      color: 'rgba(255,255,255,0.8)',
+      marginTop: theme.space[0.5],
+    },
+    updateCard: {
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.lg,
+      padding: theme.space[4],
+      marginBottom: theme.space[4],
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    updateActionsCard: {
+      gap: theme.space[2.5],
+    },
+    notElectronWarning: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.color.state.info.background,
+      padding: theme.space[3],
+      borderRadius: theme.radii.md,
+      gap: theme.space[2.5],
+    },
+    notElectronIcon: {
+      fontSize: 20,
+    },
+    notElectronText: {
+      flex: 1,
+      color: theme.color.state.info.text,
+      fontSize: 13,
+    },
+    modalCloseButton: {
+      width: 32,
+      height: 32,
+      borderRadius: theme.radii.full,
+      backgroundColor: theme.color.surface.muted,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    modalCloseText: {
+      fontSize: 16,
+      color: theme.color.text.muted,
+      fontWeight: '600',
+    },
+    modalCloseButtonDisabled: {
+      width: 32,
+      height: 32,
+      borderRadius: theme.radii.full,
+      backgroundColor: theme.color.border.subtle,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    modalCloseTextDisabled: {
+      fontSize: 16,
+      color: theme.color.text.disabled,
+      fontWeight: '600',
+    },
+    modalBody: {
+      padding: theme.space[5],
+    },
+    versionRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[4],
+      paddingBottom: theme.space[4],
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+    },
+    versionLabel: {
+      fontSize: 15,
+      color: theme.color.text.muted,
+    },
+    versionValue: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.link,
+    },
+    statusRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[3],
+      padding: theme.space[4],
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.md,
+    },
+    statusText2: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+    },
+    updateResultContainer: {
+      marginTop: theme.space[2],
+    },
+    errorContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[3],
+      padding: theme.space[4],
+      backgroundColor: theme.color.state.warning.background,
+      borderRadius: theme.radii.md,
+    },
+    errorIcon: {
+      fontSize: 24,
+    },
+    errorText: {
+      fontSize: 14,
+      color: theme.color.state.warning.text,
+      flex: 1,
+    },
+    updateAvailableContainer: {
+      alignItems: 'center',
+      padding: theme.space[5],
+      backgroundColor: theme.color.state.success.background,
+      borderRadius: theme.radii.md,
+    },
+    updateAvailableIcon: {
+      fontSize: 40,
+      marginBottom: theme.space[2],
+    },
+    updateAvailableTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.state.success.text,
+      marginBottom: theme.space[1],
+    },
+    updateAvailableVersion: {
+      fontSize: 24,
+      fontWeight: 'bold',
+      color: theme.color.text.success,
+    },
+    updateDate: {
+      fontSize: 12,
+      color: theme.color.text.muted,
+      marginTop: theme.space[2],
+    },
+    upToDateContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[3],
+      padding: theme.space[4],
+      backgroundColor: theme.color.state.info.background,
+      borderRadius: theme.radii.md,
+    },
+    upToDateIcon: {
+      fontSize: 24,
+    },
+    upToDateText: {
+      fontSize: 14,
+      color: theme.color.state.info.text,
+      flex: 1,
+    },
+    downloadProgressContainer: {
+      padding: theme.space[5],
+      backgroundColor: theme.color.state.success.background,
+      borderRadius: theme.radii.lg,
+      alignItems: 'center',
+      borderWidth: 2,
+      borderColor: theme.color.state.success.border,
+    },
+    downloadingHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[2.5],
+      marginBottom: theme.space[2],
+    },
+    downloadingTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.state.success.text,
+    },
+    downloadingSubtext: {
+      fontSize: 13,
+      color: theme.color.text.muted,
+      marginBottom: theme.space[4],
+      textAlign: 'center',
+    },
+    progressBarContainer: {
+      width: '100%',
+      height: 8,
+      backgroundColor: theme.color.border.subtle,
+      borderRadius: theme.radii.sm,
+      overflow: 'hidden',
+    },
+    progressBar: {
+      height: '100%',
+      backgroundColor: theme.color.action.success.background,
+    },
+    progressText: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.success,
+      marginTop: theme.space[2],
+    },
+    updateReadyContainer: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: theme.space[3],
+      padding: theme.space[5],
+      backgroundColor: theme.color.state.success.background,
+      borderRadius: theme.radii.lg,
+      marginTop: theme.space[2],
+      borderWidth: 2,
+      borderColor: theme.color.state.success.border,
+    },
+    updateReadyIcon: {
+      fontSize: 32,
+    },
+    updateReadyTextContainer: {
+      flex: 1,
+    },
+    updateReadyTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.state.success.text,
+      marginBottom: theme.space[1],
+    },
+    updateReadyText: {
+      fontSize: 13,
+      color: theme.color.state.success.text,
+      lineHeight: 18,
+    },
+    modalActions: {
+      padding: theme.space[4],
+      paddingTop: 0,
+      gap: theme.space[2.5],
+    },
+    modalButton: {
+      padding: theme.space[3.5],
+      borderRadius: theme.radii.md,
+      alignItems: 'center',
+    },
+    checkButton: {
+      backgroundColor: theme.color.action.primary.background,
+    },
+    downloadButton: {
+      backgroundColor: theme.color.action.success.background,
+    },
+    installButton: {
+      backgroundColor: theme.color.icon.warning,
+    },
+    restartButton: {
+      backgroundColor: theme.color.action.success.background,
+      paddingVertical: theme.space[4],
+      borderRadius: theme.radii.lg,
+    },
+    restartButtonText: {
+      color: theme.color.text.onAction,
+      fontSize: 17,
+      fontWeight: 'bold',
+    },
+    retryButton: {
+      backgroundColor: theme.color.icon.warning,
+    },
+    closeErrorButton: {
+      backgroundColor: theme.color.text.subtle,
+    },
+    closeErrorButtonText: {
+      color: theme.color.text.onAction,
+      fontSize: 15,
+      fontWeight: '600',
+    },
+    downloadErrorContainer: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: theme.space[3],
+      padding: theme.space[5],
+      backgroundColor: theme.color.state.danger.background,
+      borderRadius: theme.radii.lg,
+      marginTop: theme.space[2],
+      borderWidth: 2,
+      borderColor: theme.color.state.danger.border,
+    },
+    downloadErrorIcon: {
+      fontSize: 32,
+    },
+    downloadErrorTextContainer: {
+      flex: 1,
+    },
+    downloadErrorTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.state.danger.text,
+      marginBottom: theme.space[1],
+    },
+    downloadErrorText: {
+      fontSize: 13,
+      color: theme.color.state.danger.text,
+      lineHeight: 18,
+    },
+    installErrorContainer: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: theme.space[3],
+      padding: theme.space[5],
+      backgroundColor: theme.color.state.warning.background,
+      borderRadius: theme.radii.lg,
+      marginTop: theme.space[2],
+      borderWidth: 2,
+      borderColor: theme.color.state.warning.border,
+    },
+    installErrorIcon: {
+      fontSize: 32,
+    },
+    installErrorTextContainer: {
+      flex: 1,
+    },
+    installErrorTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.state.warning.text,
+      marginBottom: theme.space[1],
+    },
+    installErrorText: {
+      fontSize: 13,
+      color: theme.color.state.warning.text,
+      lineHeight: 18,
+    },
+    modalButtonText: {
+      color: theme.color.text.onAction,
+      fontSize: 15,
+      fontWeight: '600',
+    },
+  });

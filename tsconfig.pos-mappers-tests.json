@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "outDir": "./.tmp-tests",
+    "noEmit": false,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2020",
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "src/utils/posMappers.ts",
+    "src/utils/posMappers.test.ts",
+    "src/types/pos.ts",
+    "src/types/offline.ts"
+  ]
+}

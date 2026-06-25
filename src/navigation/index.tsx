@@ -65,6 +65,23 @@ const SelectionStack = React.memo(function SelectionStack() {
   );
 });
 
+// Stack mínimo para sesión offline pura: va directo a NewSale.
+// No incluye dashboard/abrir-cerrar sesión porque no hay turno online.
+const OfflinePOSStack = React.memo(function OfflinePOSStack() {
+  return (
+    <POSStackNavigator.Navigator
+      screenOptions={{ headerShown: false }}
+      initialRouteName={POS_ROUTES.NEW_SALE}
+    >
+      <POSStackNavigator.Screen
+        name={POS_ROUTES.NEW_SALE}
+        component={NewSaleScreen}
+        options={{ title: 'Nueva Venta', headerShown: false }}
+      />
+    </POSStackNavigator.Navigator>
+  );
+});
+
 const POSStack = React.memo(function POSStack() {
   return (
     <POSStackNavigator.Navigator
@@ -119,10 +136,11 @@ const MainStack = React.memo(function MainStack() {
 });
 
 export const Navigation = () => {
-  const { isAuthenticated, user, currentCompany, currentSite } = useAuthStore();
+  const { isAuthenticated, user, currentCompany, currentSite, isOfflineSession } = useAuthStore();
   const { selectedCashRegister } = usePOSStore();
 
   console.log('🧭 Navigation render - isAuthenticated:', isAuthenticated);
+  console.log('🧭 Navigation render - isOfflineSession:', isOfflineSession);
   console.log('🧭 Navigation render - currentCompany:', currentCompany?.name);
   console.log('🧭 Navigation render - currentSite:', currentSite?.name);
   console.log('🧭 Navigation render - selectedCashRegister:', selectedCashRegister?.name);
@@ -133,6 +151,16 @@ export const Navigation = () => {
     return (
       <NavigationContainer>
         <AuthStack />
+      </NavigationContainer>
+    );
+  }
+
+  // Sesión offline -> directo a NewSale, sin pasar por selecciones ni dashboard.
+  // La caja/sesión/usuario se asignarán al reconectar y relogarse online.
+  if (isOfflineSession) {
+    return (
+      <NavigationContainer>
+        <OfflinePOSStack key={`offline:${user?.id ?? 'anon'}`} />
       </NavigationContainer>
     );
   }

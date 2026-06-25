@@ -18,6 +18,7 @@ import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
 import { posService } from '@/services/POSService';
 import type { SaleInfo } from '@/types/pos';
 import { config } from '@/utils/config';
+import { useTheme, useThemedStyles, type Theme } from '@/design-system';
 
 type RouteParams = {
   SaleDetail: {
@@ -29,6 +30,8 @@ export default function SaleDetailScreen() {
   const route = useRoute<RouteProp<RouteParams, 'SaleDetail'>>();
   const navigation = useNavigation();
   const { saleId } = route.params;
+  const theme = useTheme();
+  const styles = useThemedStyles(createStyles);
 
   const [saleInfo, setSaleInfo] = useState<SaleInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -108,14 +111,14 @@ export default function SaleDetailScreen() {
 
     switch (normalizedStatus) {
       case 'completed':
-        return '#4CAF50';
+        return theme.color.action.success.background;
       case 'processing':
       case 'pending':
-        return '#FF9800';
+        return theme.color.icon.warning;
       case 'rejected':
-        return '#F44336';
+        return theme.color.action.danger.background;
       default:
-        return '#9E9E9E';
+        return theme.color.icon.subtle;
     }
   };
 
@@ -139,7 +142,7 @@ export default function SaleDetailScreen() {
   if (loading) {
     return (
       <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
+        <ActivityIndicator size="large" color={theme.color.text.link} />
         <Text style={styles.loadingText}>Cargando venta...</Text>
       </View>
     );
@@ -175,7 +178,7 @@ export default function SaleDetailScreen() {
       {/* Status Message */}
       {polling && (
         <View style={styles.pollingBanner}>
-          <ActivityIndicator size="small" color="#FF9800" />
+          <ActivityIndicator size="small" color={theme.color.icon.warning} />
           <Text style={styles.pollingText}>Esperando generación del documento...</Text>
         </View>
       )}
@@ -248,189 +251,186 @@ export default function SaleDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: '#666',
-  },
-  errorText: {
-    fontSize: 18,
-    color: '#F44336',
-    marginBottom: 16,
-  },
-  retryButton: {
-    padding: 12,
-    backgroundColor: '#007AFF',
-    borderRadius: 8,
-  },
-  retryButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  header: {
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#666',
-  },
-  statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  statusText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  pollingBanner: {
-    backgroundColor: '#FFF3E0',
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  pollingText: {
-    fontSize: 14,
-    color: '#F57C00',
-    fontWeight: '500',
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    margin: 16,
-    padding: 20,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 16,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  infoLabel: {
-    fontSize: 15,
-    color: '#666',
-  },
-  infoValue: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#333',
-  },
-  infoValueHighlight: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-  },
-  messageBox: {
-    backgroundColor: '#E3F2FD',
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 8,
-  },
-  messageText: {
-    fontSize: 14,
-    color: '#1976D2',
-  },
-  documentCard: {
-    backgroundColor: '#F9F9F9',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 12,
-  },
-  documentInfo: {
-    marginBottom: 12,
-  },
-  documentNumber: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 4,
-  },
-  documentDate: {
-    fontSize: 13,
-    color: '#666',
-    marginBottom: 4,
-  },
-  documentHash: {
-    fontSize: 11,
-    color: '#999',
-    fontFamily: 'monospace',
-  },
-  downloadButton: {
-    backgroundColor: '#007AFF',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  downloadButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  actionsContainer: {
-    flexDirection: 'row',
-    padding: 16,
-    gap: 12,
-  },
-  button: {
-    flex: 1,
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  backButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  backButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#666',
-  },
-  primaryButton: {
-    backgroundColor: '#007AFF',
-  },
-  primaryButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-});
+const createStyles = (theme: Theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.color.background.subtle,
+    },
+    centerContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: theme.color.background.subtle,
+    },
+    loadingText: {
+      marginTop: theme.space[3],
+      fontSize: 16,
+      color: theme.color.text.muted,
+    },
+    errorText: {
+      fontSize: 18,
+      color: theme.color.text.danger,
+      marginBottom: theme.space[4],
+    },
+    retryButton: {
+      padding: theme.space[3],
+      backgroundColor: theme.color.text.link,
+      borderRadius: theme.radii.md,
+    },
+    retryButtonText: {
+      color: theme.color.text.onAction,
+      fontSize: 16,
+      fontWeight: '600',
+    },
+    header: {
+      backgroundColor: theme.color.surface.base,
+      padding: theme.space[5],
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+    },
+    title: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[1],
+    },
+    subtitle: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+    },
+    statusBadge: {
+      paddingHorizontal: theme.space[3],
+      paddingVertical: theme.space[1.5],
+      borderRadius: theme.radii.lg,
+    },
+    statusText: {
+      color: theme.color.text.onAction,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    pollingBanner: {
+      backgroundColor: theme.color.state.warning.background,
+      padding: theme.space[3],
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: theme.space[2],
+    },
+    pollingText: {
+      fontSize: 14,
+      color: theme.color.state.warning.text,
+      fontWeight: '500',
+    },
+    card: {
+      backgroundColor: theme.color.surface.base,
+      margin: theme.space[4],
+      padding: theme.space[5],
+      borderRadius: theme.radii.lg,
+      ...theme.shadow.sm,
+    },
+    sectionTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[4],
+    },
+    infoRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[3],
+    },
+    infoLabel: {
+      fontSize: 15,
+      color: theme.color.text.muted,
+    },
+    infoValue: {
+      fontSize: 15,
+      fontWeight: '500',
+      color: theme.color.text.heading,
+    },
+    infoValueHighlight: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: theme.color.action.success.background,
+    },
+    messageBox: {
+      backgroundColor: theme.color.state.info.background,
+      padding: theme.space[3],
+      borderRadius: theme.radii.md,
+      marginTop: theme.space[2],
+    },
+    messageText: {
+      fontSize: 14,
+      color: theme.color.state.info.text,
+    },
+    documentCard: {
+      backgroundColor: theme.color.surface.subtle,
+      padding: theme.space[4],
+      borderRadius: theme.radii.md,
+      marginBottom: theme.space[3],
+    },
+    documentInfo: {
+      marginBottom: theme.space[3],
+    },
+    documentNumber: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[1],
+    },
+    documentDate: {
+      fontSize: 13,
+      color: theme.color.text.muted,
+      marginBottom: theme.space[1],
+    },
+    documentHash: {
+      fontSize: 11,
+      color: theme.color.text.placeholder,
+      fontFamily: 'monospace',
+    },
+    downloadButton: {
+      backgroundColor: theme.color.text.link,
+      padding: theme.space[3],
+      borderRadius: theme.radii.md,
+      alignItems: 'center',
+    },
+    downloadButtonText: {
+      color: theme.color.text.onAction,
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    actionsContainer: {
+      flexDirection: 'row',
+      padding: theme.space[4],
+      gap: theme.space[3],
+    },
+    button: {
+      flex: 1,
+      padding: theme.space[4],
+      borderRadius: theme.radii.md,
+      alignItems: 'center',
+    },
+    backButton: {
+      backgroundColor: theme.color.surface.base,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    backButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.muted,
+    },
+    primaryButton: {
+      backgroundColor: theme.color.text.link,
+    },
+    primaryButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.onAction,
+    },
+  });

@@ -44,11 +44,5 @@ nsis:
 portable:
   artifactName: '${productName}-${version}-portable.${ext}'
 
-publish:
-  provider: github
-  owner: aronis-web # Cambiar al propietario del repo
-  repo: caja-frontend-joanis # Cambiar al nombre del repo
-  releaseType: release
-
-# Delta updates (reduce tamaño de descarga)
-# Solo disponible con GitHub como proveedor
+# Sin publish provider: las actualizaciones se sirven desde svc-pos (/api/pos/app-updates/*).
+# Los artefactos generados deben subirse manualmente al backend de releases.

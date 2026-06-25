@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, ActivityIndicator, Text, StyleSheet } from 'react-native';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { useTheme, useThemedStyles, Body, type Theme } from '@/design-system';
 
 interface LoaderProps {
   fullScreen?: boolean;
@@ -8,39 +9,41 @@ interface LoaderProps {
 }
 
 export const Loader: React.FC<LoaderProps> = ({ fullScreen = false, text, size = 'large' }) => {
+  const theme = useTheme();
+  const styles = useThemedStyles(createStyles);
+
+  const content = (
+    <>
+      <ActivityIndicator size={size} color={theme.color.action.primary.background} />
+      {text && (
+        <Body size="small" color="muted" style={styles.text}>
+          {text}
+        </Body>
+      )}
+    </>
+  );
+
   if (fullScreen) {
-    return (
-      <View style={styles.fullScreenContainer}>
-        <ActivityIndicator size={size} color="#6366F1" />
-        {text && <Text style={styles.text}>{text}</Text>}
-      </View>
-    );
+    return <View style={styles.fullScreenContainer}>{content}</View>;
   }
 
-  return (
-    <View style={styles.container}>
-      <ActivityIndicator size={size} color="#6366F1" />
-      {text && <Text style={styles.text}>{text}</Text>}
-    </View>
-  );
+  return <View style={styles.container}>{content}</View>;
 };
 
-const styles = StyleSheet.create({
-  fullScreenContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-  },
-  container: {
-    padding: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  text: {
-    marginTop: 12,
-    fontSize: 14,
-    color: '#64748B',
-    fontWeight: '500',
-  },
-});
+const createStyles = (theme: Theme) =>
+  StyleSheet.create({
+    fullScreenContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: theme.color.background.canvas,
+    },
+    container: {
+      padding: theme.space[5],
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    text: {
+      marginTop: theme.space[3],
+    },
+  });

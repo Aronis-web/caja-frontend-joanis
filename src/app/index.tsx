@@ -12,15 +12,10 @@ import {
 } from '@expo-google-fonts/baloo-2';
 import { Navigation } from '@/navigation';
 import { useAuthStore } from '@/store/auth';
+import { ThemeProvider, FloatingFooterProvider, useTheme, useThemeValue } from '@/design-system';
 
 export const App = () => {
-  const [fontsLoaded] = useFonts({
-    Baloo2_700Bold,
-    Baloo2_600SemiBold,
-    Baloo2_500Medium,
-  });
-
-  const { initAuth, isLoading: authLoading } = useAuthStore();
+  const { initAuth } = useAuthStore();
 
   useEffect(() => {
     const initialize = async () => {
@@ -38,19 +33,46 @@ export const App = () => {
     initialize();
   }, [initAuth]);
 
+  return (
+    <ThemeProvider>
+      <SafeAreaProvider>
+        <FloatingFooterProvider>
+          <ThemedStatusBar />
+          <AppContent />
+        </FloatingFooterProvider>
+      </SafeAreaProvider>
+    </ThemeProvider>
+  );
+};
+
+const AppContent = () => {
+  const theme = useTheme();
+  const [fontsLoaded] = useFonts({
+    Baloo2_700Bold,
+    Baloo2_600SemiBold,
+    Baloo2_500Medium,
+  });
+  const authLoading = useAuthStore((s) => s.isLoading);
+
   if (!fontsLoaded || authLoading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#6366F1" />
+      <View style={[styles.loadingContainer, { backgroundColor: theme.color.background.canvas }]}>
+        <ActivityIndicator size="large" color={theme.color.action.primary.background} />
       </View>
     );
   }
 
+  return <Navigation />;
+};
+
+const ThemedStatusBar = () => {
+  const { isDark } = useThemeValue();
   return (
-    <SafeAreaProvider>
-      <StatusBar barStyle="dark-content" />
-      <Navigation />
-    </SafeAreaProvider>
+    <StatusBar
+      barStyle={isDark ? 'light-content' : 'dark-content'}
+      translucent
+      backgroundColor="transparent"
+    />
   );
 };
 
@@ -59,7 +81,6 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
   },
 });
 

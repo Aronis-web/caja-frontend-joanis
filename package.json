@@ -29,7 +29,12 @@
     "publish:stable": "node scripts/publish-release.js stable",
     "publish:beta": "node scripts/publish-release.js beta",
     "publish:edge": "node scripts/publish-release.js edge",
-    "test:payment-flow": "tsc -p tsconfig.payment-tests.json && node .tmp-tests/utils/paymentFlow.test.js"
+    "test:payment-flow": "tsc -p tsconfig.payment-tests.json && node .tmp-tests/utils/paymentFlow.test.js",
+    "test:pos-mappers": "tsc -p tsconfig.pos-mappers-tests.json && node .tmp-tests/utils/posMappers.test.js",
+    "test:app-updates": "tsc -p tsconfig.app-updates-tests.json && node .tmp-tests/services/AppUpdatesService.test.js",
+    "test:all": "npm run test:payment-flow && npm run test:pos-mappers && npm run test:app-updates && npm run test:crypto-offline && npm run test:offline-login",
+    "test:crypto-offline": "tsc -p tsconfig.crypto-tests.json && node .tmp-tests/utils/cryptoOffline.test.js",
+    "test:offline-login": "tsc -p tsconfig.offline-login-tests.json && node .tmp-tests/services/OfflineLoginService.test.js"
   },
   "dependencies": {
     "@expo-google-fonts/baloo-2": "^0.4.2",
@@ -40,13 +45,14 @@
     "@react-navigation/native": "^6.1.18",
     "@react-navigation/native-stack": "^6.11.0",
     "axios": "^1.6.0",
-    "electron-updater": "^6.8.3",
+    "bcryptjs": "^3.0.3",
     "expo": "~54.0.33",
     "expo-file-system": "^55.0.11",
     "expo-font": "~14.0.11",
     "expo-secure-store": "~15.0.8",
     "expo-sharing": "^55.0.14",
     "expo-status-bar": "~3.0.9",
+    "hash-wasm": "^4.12.0",
     "mime-types": "^2.1.35",
     "pdf-lib": "^1.17.1",
     "pdf-to-printer": "^5.7.0",
@@ -66,6 +72,7 @@
   "devDependencies": {
     "@babel/core": "^7.25.0",
     "@types/node": "^25.5.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "~19.1.0",
     "@types/sql.js": "^1.4.11",
     "@typescript-eslint/eslint-plugin": "^8.46.0",

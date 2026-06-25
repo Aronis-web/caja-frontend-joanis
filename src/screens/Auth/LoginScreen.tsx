@@ -1,46 +1,100 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
-  Text,
-  TextInput,
-  TouchableOpacity,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator,
+  TouchableOpacity,
+  ScrollView,
+  TextInput,
   useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/store/auth';
+import { config } from '@/utils/config';
+import secureStorage from '@/utils/secureStorage';
+import { networkMonitor } from '@/services/NetworkMonitor';
+import { deviceTokenService } from '@/services/DeviceTokenService';
+import {
+  Button,
+  Input,
+  Body,
+  Caption,
+  Heading,
+  useTheme,
+  useThemedStyles,
+  type Theme,
+} from '@/design-system';
 import packageJson from '../../../package.json';
 
-interface LoginScreenProps {
-  navigation?: any;
-}
-
-export const LoginScreen: React.FC<LoginScreenProps> = () => {
+export const LoginScreen: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const [pin, setPin] = useState('');
+  const [loginMode, setLoginMode] = useState<'password' | 'pin'>('password');
   const [rememberMe, setRememberMe] = useState(false);
-  const { width, height } = useWindowDimensions();
+  const [isOnline, setIsOnline] = useState<boolean>(() => networkMonitor.getStatus());
+  const [isProvisioned, setIsProvisioned] = useState<boolean>(false);
+  const { width } = useWindowDimensions();
+  const theme = useTheme();
+  const styles = useThemedStyles(createStyles);
 
-  const { loginWithCredentials, isLoading, error, clearError } = useAuthStore();
+  const { loginWithCredentials, loginOffline, isLoading, error, clearError } = useAuthStore();
 
-  const isTablet = width >= 768 || height >= 768;
-  const isLandscape = width > height;
+  const passwordRef = useRef<TextInput>(null);
+  const pinRef = useRef<TextInput>(null);
+
+  useEffect(() => {
+    (async () => {
+      const [storedRemember, storedEmail, provisioned] = await Promise.all([
+        secureStorage.getItem(config.STORAGE_KEYS.REMEMBER_ME),
+        AsyncStorage.getItem(config.STORAGE_KEYS.LAST_EMAIL),
+        deviceTokenService.isProvisioned(),
+      ]);
+      if (storedRemember === 'true') {
+        setRememberMe(true);
+      }
+      if (storedEmail) {
+        setEmail(storedEmail);
+      }
+      setIsProvisioned(provisioned);
+    })();
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = networkMonitor.subscribe((online) => setIsOnline(online));
+    void networkMonitor.checkConnectivity();
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  const isWide = width >= 600;
+  const offlineLoginAvailable = !isOnline && isProvisioned;
 
   const handleLogin = async () => {
-    if (!email || !password) {
+    if (isLoading) return;
+    if (!email) return;
+
+    if (offlineLoginAvailable) {
+      const credential = loginMode === 'pin' ? pin : password;
+      if (!credential) return;
+      console.log('🔑 Iniciando login OFFLINE...');
+      await loginOffline({
+        email,
+        password: loginMode === 'password' ? password : undefined,
+        pin: loginMode === 'pin' ? pin : undefined,
+      });
       return;
     }
 
+    if (!password) return;
     console.log('🔑 Iniciando proceso de login...');
     await loginWithCredentials(email, password, rememberMe);
   };
 
-  // Limpiar error cuando el usuario empiece a escribir
   const handleEmailChange = (text: string) => {
     setEmail(text);
     if (error) clearError();
@@ -51,514 +105,313 @@ export const LoginScreen: React.FC<LoginScreenProps> = () => {
     if (error) clearError();
   };
 
+  const handlePinChange = (text: string) => {
+    setPin(text.replace(/[^0-9]/g, '').slice(0, 8));
+    if (error) clearError();
+  };
+
+  const canSubmit =
+    !!email &&
+    !isLoading &&
+    (offlineLoginAvailable ? (loginMode === 'pin' ? pin.length >= 4 : !!password) : !!password);
+
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.backgroundPattern}>
-        <View style={styles.circle1} />
-        <View style={styles.circle2} />
-        <View style={styles.circle3} />
-      </View>
-
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <View
-          style={[
-            styles.content,
-            isTablet && styles.contentTablet,
-            isTablet && isLandscape && styles.contentTabletLandscape,
-          ]}
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          <View style={[styles.header, isTablet && isLandscape && styles.headerLandscape]}>
-            <View style={styles.logoContainer}>
-              <View
-                style={[
-                  styles.logoInner,
-                  isTablet && styles.logoInnerTablet,
-                  isTablet && isLandscape && styles.logoInnerLandscape,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.logo,
-                    isTablet && styles.logoTablet,
-                    isTablet && isLandscape && styles.logoLandscape,
-                  ]}
-                >
+          <View style={[styles.column, isWide && styles.columnWide]}>
+            <View style={styles.brandBlock}>
+              <View style={styles.logoMark}>
+                <Heading size="medium" color="onAction" style={styles.logoMarkText}>
                   CG
-                </Text>
+                </Heading>
               </View>
+              <Heading size="large" color="heading" style={styles.brandName}>
+                Caja Grit
+              </Heading>
             </View>
-            <Text
-              style={[
-                styles.title,
-                isTablet && styles.titleTablet,
-                isTablet && isLandscape && styles.titleLandscape,
-              ]}
-            >
-              ¡Bienvenido de nuevo! 👋
-            </Text>
-            <Text
-              style={[
-                styles.subtitle,
-                isTablet && styles.subtitleTablet,
-                isTablet && isLandscape && styles.subtitleLandscape,
-              ]}
-            >
-              Inicia sesión en Caja Grit - v{packageJson.version}
-            </Text>
-          </View>
 
-          <View
-            style={[
-              styles.form,
-              isTablet && styles.formTablet,
-              isTablet && isLandscape && styles.formLandscape,
-            ]}
-          >
-            <View style={styles.inputContainer}>
-              <Text style={[styles.inputLabel, isTablet && styles.inputLabelTablet]}>
-                Correo electrónico
-              </Text>
-              <View
-                style={[
-                  styles.inputWrapper,
-                  isTablet && styles.inputWrapperTablet,
-                  isTablet && isLandscape && styles.inputWrapperLandscape,
-                ]}
-              >
-                <TextInput
-                  style={[
-                    styles.input,
-                    isTablet && styles.inputTablet,
-                    isTablet && isLandscape && styles.inputLandscape,
-                  ]}
-                  placeholder="correo@empresa.com"
-                  placeholderTextColor="#94A3B8"
-                  value={email}
-                  onChangeText={handleEmailChange}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
+            <View style={styles.intro}>
+              <Heading size="medium" color="heading" align="center" style={styles.title}>
+                Iniciá sesión
+              </Heading>
+              <Body size="medium" color="muted" align="center">
+                {offlineLoginAvailable
+                  ? 'Ingresá tus credenciales para continuar (modo offline).'
+                  : 'Ingresá tus credenciales para continuar.'}
+              </Body>
+            </View>
+
+            {!isOnline && (
+              <View style={isProvisioned ? styles.offlineBanner : styles.warningBanner}>
+                <Ionicons
+                  name={isProvisioned ? 'cloud-offline' : 'warning'}
+                  size={18}
+                  color={isProvisioned ? theme.color.text.warning : theme.color.text.danger}
                 />
-              </View>
-            </View>
-
-            <View style={styles.inputContainer}>
-              <Text style={[styles.inputLabel, isTablet && styles.inputLabelTablet]}>
-                Contraseña
-              </Text>
-              <View
-                style={[
-                  styles.inputWrapper,
-                  isTablet && styles.inputWrapperTablet,
-                  isTablet && isLandscape && styles.inputWrapperLandscape,
-                ]}
-              >
-                <TextInput
-                  style={[
-                    styles.input,
-                    styles.inputWithIcon,
-                    isTablet && styles.inputTablet,
-                    isTablet && isLandscape && styles.inputLandscape,
-                  ]}
-                  placeholder="Ingresa tu contraseña"
-                  placeholderTextColor="#94A3B8"
-                  value={password}
-                  onChangeText={handlePasswordChange}
-                  secureTextEntry={!showPassword}
-                  autoCorrect={false}
-                />
-                <TouchableOpacity
-                  style={styles.eyeButton}
-                  onPress={() => setShowPassword(!showPassword)}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                <Body
+                  size="small"
+                  color={isProvisioned ? 'warning' : 'danger'}
+                  style={styles.bannerText}
                 >
-                  <Ionicons
-                    name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                    size={22}
-                    color="#64748B"
-                  />
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <View style={styles.rememberMeContainer}>
-              <TouchableOpacity
-                style={styles.checkboxContainer}
-                onPress={() => setRememberMe(!rememberMe)}
-                activeOpacity={0.7}
-              >
-                <View
-                  style={[
-                    styles.checkbox,
-                    rememberMe && styles.checkboxChecked,
-                    isTablet && styles.checkboxTablet,
-                  ]}
-                >
-                  {rememberMe && (
-                    <Ionicons name="checkmark" size={isTablet ? 18 : 16} color="#FFFFFF" />
-                  )}
-                </View>
-                <Text style={[styles.rememberMeText, isTablet && styles.rememberMeTextTablet]}>
-                  Mantener sesión iniciada
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <TouchableOpacity
-              style={[
-                styles.button,
-                isLoading && styles.buttonDisabled,
-                isTablet && styles.buttonTablet,
-                isTablet && isLandscape && styles.buttonLandscape,
-              ]}
-              onPress={handleLogin}
-              disabled={isLoading}
-              activeOpacity={0.9}
-            >
-              <View style={[styles.buttonInner, isLoading && styles.buttonInnerDisabled]}>
-                {isLoading ? (
-                  <ActivityIndicator color="#FFFFFF" size="small" />
-                ) : (
-                  <Text style={[styles.buttonText, isTablet && styles.buttonTextTablet]}>
-                    Iniciar Sesión
-                  </Text>
-                )}
-              </View>
-            </TouchableOpacity>
-
-            {error && !isLoading && (
-              <View style={styles.errorContainer}>
-                <Ionicons name="alert-circle" size={20} color="#EF4444" />
-                <Text style={[styles.errorText, isTablet && styles.errorTextTablet]}>{error}</Text>
+                  {isProvisioned
+                    ? 'Sin conexión: vas a iniciar sesión en modo offline contra esta caja.'
+                    : 'Sin conexión y caja sin provisionar. Conectate para iniciar sesión.'}
+                </Body>
               </View>
             )}
+
+            <View style={styles.form}>
+              <Input
+                label="Correo electrónico"
+                placeholder="correo@empresa.com"
+                value={email}
+                onChangeText={handleEmailChange}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                size="medium"
+                containerStyle={styles.field}
+                returnKeyType="next"
+                blurOnSubmit={false}
+                onSubmitEditing={() =>
+                  offlineLoginAvailable && loginMode === 'pin'
+                    ? pinRef.current?.focus()
+                    : passwordRef.current?.focus()
+                }
+              />
+
+              {offlineLoginAvailable && loginMode === 'pin' ? (
+                <Input
+                  ref={pinRef}
+                  label="PIN"
+                  placeholder="••••"
+                  value={pin}
+                  onChangeText={handlePinChange}
+                  keyboardType="number-pad"
+                  secureTextEntry
+                  autoCorrect={false}
+                  size="medium"
+                  containerStyle={styles.field}
+                  returnKeyType="done"
+                  onSubmitEditing={handleLogin}
+                />
+              ) : (
+                <Input
+                  ref={passwordRef}
+                  label="Contraseña"
+                  placeholder="••••••••"
+                  value={password}
+                  onChangeText={handlePasswordChange}
+                  secureTextEntry
+                  autoCorrect={false}
+                  size="medium"
+                  containerStyle={styles.field}
+                  returnKeyType="done"
+                  onSubmitEditing={handleLogin}
+                />
+              )}
+
+              {offlineLoginAvailable && (
+                <TouchableOpacity
+                  style={styles.modeSwitch}
+                  onPress={() => {
+                    setLoginMode((prev) => (prev === 'password' ? 'pin' : 'password'));
+                    if (error) clearError();
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="swap-horizontal" size={16} color={theme.color.text.link} />
+                  <Body size="small" color="link" style={styles.modeSwitchText}>
+                    {loginMode === 'password' ? 'Usar PIN' : 'Usar contraseña'}
+                  </Body>
+                </TouchableOpacity>
+              )}
+
+              {!offlineLoginAvailable && (
+                <TouchableOpacity
+                  style={styles.rememberRow}
+                  onPress={() => setRememberMe(!rememberMe)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.checkbox, rememberMe && styles.checkboxChecked]}>
+                    {rememberMe && (
+                      <Ionicons name="checkmark" size={14} color={theme.color.text.onAction} />
+                    )}
+                  </View>
+                  <Body size="small" color="muted">
+                    Mantener sesión iniciada
+                  </Body>
+                </TouchableOpacity>
+              )}
+
+              <Button
+                title={offlineLoginAvailable ? 'Iniciar sesión offline' : 'Iniciar sesión'}
+                onPress={handleLogin}
+                loading={isLoading}
+                disabled={!canSubmit}
+                size="medium"
+                fullWidth
+                style={styles.submitButton}
+              />
+
+              {error && !isLoading && (
+                <View style={styles.errorBox}>
+                  <Ionicons name="alert-circle" size={18} color={theme.color.text.danger} />
+                  <Body size="small" color="danger" style={styles.errorText}>
+                    {error}
+                  </Body>
+                </View>
+              )}
+            </View>
           </View>
 
           <View style={styles.footer}>
-            <Text style={[styles.footerText, isTablet && styles.footerTextTablet]}>
-              © 2024 Caja Grit
-            </Text>
+            <Caption color="subtle">v{packageJson.version}</Caption>
           </View>
-        </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  backgroundPattern: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    overflow: 'hidden',
-  },
-  circle1: {
-    position: 'absolute',
-    width: 300,
-    height: 300,
-    borderRadius: 150,
-    backgroundColor: 'rgba(99, 102, 241, 0.08)',
-    top: -100,
-    right: -100,
-  },
-  circle2: {
-    position: 'absolute',
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: 'rgba(139, 92, 246, 0.06)',
-    bottom: 100,
-    left: -50,
-  },
-  circle3: {
-    position: 'absolute',
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-    backgroundColor: 'rgba(59, 130, 246, 0.05)',
-    top: '50%',
-    right: 50,
-  },
-  content: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 32,
-    paddingVertical: 40,
-  },
-  header: {
-    alignItems: 'center',
-    marginBottom: 48,
-  },
-  logoContainer: {
-    marginBottom: 24,
-  },
-  logoInner: {
-    width: 80,
-    height: 80,
-    borderRadius: 24,
-    backgroundColor: '#6366F1',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#6366F1',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  logo: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    letterSpacing: 1,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: '#1E293B',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#64748B',
-    textAlign: 'center',
-    lineHeight: 24,
-    fontWeight: '400',
-  },
-  form: {
-    marginBottom: 40,
-  },
-  inputContainer: {
-    marginBottom: 24,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 8,
-  },
-  inputWrapper: {
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  input: {
-    width: '100%',
-    height: 52,
-    paddingHorizontal: 16,
-    fontSize: 16,
-    color: '#1E293B',
-    fontWeight: '500',
-  },
-  inputWithIcon: {
-    paddingRight: 48,
-  },
-  eyeButton: {
-    position: 'absolute',
-    right: 16,
-    top: 0,
-    bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center',
-    width: 40,
-    height: '100%',
-  },
-  rememberMeContainer: {
-    marginTop: 8,
-    marginBottom: 8,
-  },
-  checkboxContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  checkboxChecked: {
-    backgroundColor: '#6366F1',
-    borderColor: '#6366F1',
-  },
-  checkboxTablet: {
-    width: 24,
-    height: 24,
-    borderRadius: 7,
-    marginRight: 12,
-  },
-  rememberMeText: {
-    fontSize: 14,
-    color: '#64748B',
-    fontWeight: '500',
-  },
-  rememberMeTextTablet: {
-    fontSize: 16,
-  },
-  button: {
-    width: '100%',
-    height: 52,
-    borderRadius: 12,
-    marginTop: 20,
-    shadowColor: '#6366F1',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  buttonDisabled: {
-    shadowOpacity: 0,
-    elevation: 0,
-  },
-  buttonInner: {
-    flex: 1,
-    backgroundColor: '#6366F1',
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  buttonInnerDisabled: {
-    backgroundColor: '#94A3B8',
-  },
-  buttonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEE2E2',
-    borderRadius: 12,
-    padding: 12,
-    marginTop: 16,
-    borderWidth: 1,
-    borderColor: '#FECACA',
-  },
-  errorText: {
-    color: '#DC2626',
-    fontSize: 14,
-    fontWeight: '500',
-    marginLeft: 8,
-    flex: 1,
-  },
-  errorTextTablet: {
-    fontSize: 16,
-  },
-  footer: {
-    alignItems: 'center',
-  },
-  footerText: {
-    fontSize: 12,
-    color: '#94A3B8',
-    fontWeight: '500',
-  },
-  // Tablet styles
-  contentTablet: {
-    maxWidth: 500,
-    alignSelf: 'center',
-    width: '100%',
-  },
-  logoInnerTablet: {
-    width: 100,
-    height: 100,
-    borderRadius: 28,
-  },
-  logoTablet: {
-    fontSize: 40,
-  },
-  titleTablet: {
-    fontSize: 38,
-  },
-  subtitleTablet: {
-    fontSize: 18,
-  },
-  formTablet: {
-    marginBottom: 48,
-  },
-  inputLabelTablet: {
-    fontSize: 16,
-  },
-  inputWrapperTablet: {
-    borderRadius: 14,
-  },
-  inputTablet: {
-    height: 60,
-    fontSize: 18,
-    paddingHorizontal: 20,
-  },
-  buttonTablet: {
-    height: 60,
-    borderRadius: 14,
-  },
-  buttonTextTablet: {
-    fontSize: 18,
-  },
-  footerTextTablet: {
-    fontSize: 14,
-  },
-  // Landscape styles
-  contentTabletLandscape: {
-    maxWidth: 700,
-    paddingVertical: 10,
-    justifyContent: 'center',
-  },
-  headerLandscape: {
-    marginBottom: 12,
-    paddingTop: 0,
-  },
-  logoInnerLandscape: {
-    width: 70,
-    height: 70,
-    borderRadius: 20,
-  },
-  logoLandscape: {
-    fontSize: 30,
-  },
-  titleLandscape: {
-    fontSize: 28,
-    marginTop: 12,
-  },
-  subtitleLandscape: {
-    fontSize: 15,
-    marginTop: 6,
-  },
-  formLandscape: {
-    marginBottom: 20,
-  },
-  inputWrapperLandscape: {
-    borderRadius: 12,
-  },
-  inputLandscape: {
-    height: 50,
-    fontSize: 16,
-    paddingHorizontal: 18,
-  },
-  buttonLandscape: {
-    height: 50,
-    borderRadius: 12,
-    marginTop: 16,
-  },
-});
+const createStyles = (theme: Theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.color.background.canvas,
+    },
+    flex: { flex: 1 },
+    scroll: {
+      flexGrow: 1,
+      justifyContent: 'center',
+      paddingHorizontal: theme.space[6],
+      paddingVertical: theme.space[10],
+    },
+    column: {
+      width: '100%',
+      maxWidth: 360,
+      alignSelf: 'center',
+    },
+    columnWide: {
+      maxWidth: 380,
+    },
+    brandBlock: {
+      alignItems: 'center',
+      marginBottom: theme.space[8],
+    },
+    logoMark: {
+      width: 72,
+      height: 72,
+      borderRadius: theme.radii['2xl'],
+      backgroundColor: theme.color.action.primary.background,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: theme.space[4],
+    },
+    logoMarkText: {
+      fontWeight: '800',
+      letterSpacing: 1,
+    },
+    brandName: {
+      fontWeight: '700',
+    },
+    intro: {
+      marginBottom: theme.space[8],
+      alignItems: 'center',
+    },
+    title: {
+      marginBottom: theme.space[2],
+    },
+    form: {},
+    field: {
+      marginBottom: theme.space[4],
+    },
+    rememberRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: theme.space[1],
+      marginBottom: theme.space[2],
+    },
+    checkbox: {
+      width: 18,
+      height: 18,
+      borderRadius: theme.radii.sm,
+      borderWidth: 1.5,
+      borderColor: theme.color.border.default,
+      backgroundColor: theme.color.surface.base,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: theme.space[2],
+    },
+    checkboxChecked: {
+      backgroundColor: theme.color.action.primary.background,
+      borderColor: theme.color.action.primary.background,
+    },
+    submitButton: {
+      marginTop: theme.space[6],
+    },
+    errorBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.color.state.danger.background,
+      borderRadius: theme.radii.md,
+      paddingVertical: theme.space[2],
+      paddingHorizontal: theme.space[3],
+      marginTop: theme.space[4],
+      borderWidth: 1,
+      borderColor: theme.color.state.danger.border,
+    },
+    errorText: {
+      marginLeft: theme.space[2],
+      flex: 1,
+    },
+    offlineBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.color.state.warning.background,
+      borderRadius: theme.radii.md,
+      paddingVertical: theme.space[2],
+      paddingHorizontal: theme.space[3],
+      marginBottom: theme.space[6],
+      borderWidth: 1,
+      borderColor: theme.color.state.warning.border,
+    },
+    warningBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.color.state.danger.background,
+      borderRadius: theme.radii.md,
+      paddingVertical: theme.space[2],
+      paddingHorizontal: theme.space[3],
+      marginBottom: theme.space[6],
+      borderWidth: 1,
+      borderColor: theme.color.state.danger.border,
+    },
+    bannerText: {
+      marginLeft: theme.space[2],
+      flex: 1,
+    },
+    modeSwitch: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: theme.space[1],
+      marginBottom: theme.space[2],
+    },
+    modeSwitchText: {
+      marginLeft: theme.space[2],
+    },
+    footer: {
+      alignItems: 'center',
+      paddingTop: theme.space[8],
+    },
+  });
 
 export default LoginScreen;

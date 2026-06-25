@@ -80,7 +80,8 @@ export interface OfflineSale {
   payments: OfflineSalePayment[];
   documentType: '01' | '03';
   cashRegisterId: string;
-  sessionId: string;
+  cashRegisterCode?: string;
+  sessionId?: string | null;
   sellerId: string;
   createdAt: string;
   syncStatus: OfflineSaleStatus;
@@ -89,6 +90,9 @@ export interface OfflineSale {
   syncError?: string;
   serverSaleId?: string;
   serverDocumentNumber?: string;
+  // Marca ventas creadas en sesión offline sin caja/sesión definitiva.
+  // Al abrir sesión online se reasignan cashRegisterId/sessionId/sellerId.
+  pendingReassignment?: boolean;
 }
 
 // ============ METADATA DE SINCRONIZACIÓN ============
@@ -180,16 +184,22 @@ export interface TokenReplenishResponse {
 
 export interface SyncRegistrationResponse {
   registrationId: string;
-  queuePosition: number;
+  status?: 'READY' | 'QUEUED';
+  syncToken?: string;
+  tokenExpiresAt?: string;
+  queuePosition?: number;
   pollIntervalMs: number;
-  estimatedWaitMs: number;
+  estimatedWaitMs?: number;
+  estimatedWaitMinutes?: number;
 }
 
 export interface SyncStatusResponse {
-  status: 'QUEUED' | 'READY' | 'EXPIRED';
+  status: 'QUEUED' | 'READY' | 'SYNCING' | 'EXPIRED';
   position?: number;
   syncToken?: string;
+  tokenExpiresAt?: string;
   expiresAt?: string;
+  nextPollMs?: number;
 }
 
 export interface SyncSalesRequest {

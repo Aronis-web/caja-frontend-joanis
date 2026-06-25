@@ -12,9 +12,15 @@ class AuthService {
   private refreshPromise: Promise<RefreshTokenResponse> | null = null;
   private currentCompany: Company | null = null;
   private currentSite: Site | null = null;
+  private unauthorizedHandler: (() => Promise<void> | void) | null = null;
 
-  constructor() {
-    this.restoreAuth();
+  /**
+   * Permite al store de auth registrar el manejador que se ejecuta cuando el
+   * backend devuelve 401 en una petición autenticada. Evita la dependencia
+   * circular AuthService -> useAuthStore.
+   */
+  setUnauthorizedHandler(handler: (() => Promise<void> | void) | null): void {
+    this.unauthorizedHandler = handler;
   }
 
   setCurrentCompany(company: Company | null): void {
@@ -233,6 +239,16 @@ class AuthService {
       if (response.status === 401) {
         console.warn('⚠️ Token expirado (401), cerrando sesión...');
         await this.clearAuthData();
+        // Notificar al store para mantenerlo sincronizado (Navigation -> Login,
+        // limpieza de POS, etc.). Es opcional: si no hay handler registrado,
+        // al menos el servicio ya limpió su estado interno.
+        if (this.unauthorizedHandler) {
+          try {
+            await this.unauthorizedHandler();
+          } catch (handlerError) {
+            console.error('Error en unauthorizedHandler:', handlerError);
+          }
+        }
         // Lanzar error específico para que la UI pueda manejarlo
         throw this.createAuthError(
           401,
@@ -341,8 +357,22 @@ class AuthService {
           try {
             await this.refreshToken();
           } catch (error) {
-            console.error('Token refresh failed, clearing auth:', error);
-            await this.clearAuthData();
+            // Si es un error de red (sin internet), conservar la sesión local
+            // para permitir entrar en modo offline. Solo limpiamos si el backend
+            // realmente rechazó el refresh (401/403, token revocado, etc.).
+            const isNetworkError =
+              error instanceof AuthError
+                ? error.code === 'NETWORK_ERROR'
+                : !!(error instanceof Error && error.name === 'TypeError');
+
+            if (isNetworkError) {
+              console.warn(
+                '⚠️ Token refresh falló por red, manteniendo sesión local para modo offline'
+              );
+            } else {
+              console.error('Token refresh failed, clearing auth:', error);
+              await this.clearAuthData();
+            }
           }
         }
       }

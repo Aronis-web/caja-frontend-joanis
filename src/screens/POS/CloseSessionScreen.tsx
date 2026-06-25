@@ -4,12 +4,15 @@
  */
 
 import React, { useEffect, useRef } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { ROUTES } from '@/constants/routes';
+import { Body, useTheme, useThemedStyles, type Theme } from '@/design-system';
 
 export default function CloseSessionScreen() {
   const navigation = useNavigation();
+  const theme = useTheme();
+  const styles = useThemedStyles(createStyles);
   const redirectedRef = useRef(false);
 
   useEffect(() => {
@@ -26,28 +29,30 @@ export default function CloseSessionScreen() {
     if (typeof nav.replace === 'function') {
       nav.replace(ROUTES.CASH_COLLECTION, params);
     } else {
-      navigation.navigate(ROUTES.CASH_COLLECTION as never, params);
+      (navigation.navigate as unknown as (route: string, params?: unknown) => void)(
+        ROUTES.CASH_COLLECTION,
+        params
+      );
     }
   }, [navigation]);
 
   return (
     <View style={styles.container}>
-      <ActivityIndicator size="large" color="#007AFF" />
-      <Text style={styles.text}>Redirigiendo al flujo de cierre...</Text>
+      <ActivityIndicator size="large" color={theme.color.text.link} />
+      <Body size="medium" color="muted">
+        Redirigiendo al flujo de cierre...
+      </Body>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-    gap: 12,
-  },
-  text: {
-    fontSize: 15,
-    color: '#666',
-  },
-});
+const createStyles = (theme: Theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: theme.color.background.subtle,
+      gap: theme.space[3],
+    },
+  });

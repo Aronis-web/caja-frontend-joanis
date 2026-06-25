@@ -4,26 +4,34 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
-  ActivityIndicator,
-  Alert,
-} from 'react-native';
+import { View, StyleSheet, FlatList, ActivityIndicator, Alert } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useAuthStore } from '@/store/auth';
 import { usePOSStore } from '@/store/pos';
 import type { CashRegister } from '@/types/pos';
 import { ROUTES } from '@/constants/routes';
+import {
+  Badge,
+  Body,
+  Card,
+  Caption,
+  EmptyState,
+  Heading,
+  Title,
+  useTheme,
+  useThemedStyles,
+  type BadgeVariant,
+  type Theme,
+} from '@/design-system';
 
 export default function CashRegisterSelectionScreen() {
   const navigation = useNavigation();
   const currentSite = useAuthStore((state) => state.currentSite);
   const currentCompany = useAuthStore((state) => state.currentCompany);
   const user = useAuthStore((state) => state.user);
+  const theme = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [cashRegisters, setCashRegisters] = useState<CashRegister[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -105,16 +113,14 @@ export default function CashRegisterSelectionScreen() {
     const isOpenByMe = item.currentSessionId && item.currentUserId === user?.id;
     const isBlocked = blockedByOther || blockedByActiveSession;
 
-    // Determinar el estado visual de la caja
-    const getStatusStyle = () => {
-      if (blockedByOther) return styles.statusBlocked;
-      if (blockedByActiveSession) return styles.statusBlocked;
-      if (isOpenByMe) return styles.statusOpenByMe;
-      if (item.currentSessionId) return styles.statusOpen;
-      return styles.statusClosed;
+    const getStatusVariant = (): BadgeVariant => {
+      if (isBlocked) return 'danger';
+      if (isOpenByMe) return 'info';
+      if (item.currentSessionId) return 'success';
+      return 'default';
     };
 
-    const getStatusText = () => {
+    const getStatusLabel = () => {
       if (blockedByOther) return 'OCUPADA';
       if (isOpenByMe) return 'MI CAJA';
       if (item.currentSessionId) return 'ABIERTA';
@@ -128,54 +134,69 @@ export default function CashRegisterSelectionScreen() {
     };
 
     return (
-      <TouchableOpacity
-        style={[styles.card, isBlocked && styles.cardBlocked]}
+      <Card
+        variant="elevated"
+        padding="medium"
         onPress={() => handleSelectCashRegister(item)}
         disabled={isBlocked}
+        style={isBlocked ? styles.cardBlocked : undefined}
       >
         <View style={styles.cardHeader}>
-          <Text style={[styles.cardTitle, isBlocked && styles.cardTitleBlocked]}>{item.name}</Text>
-          <View style={[styles.statusBadge, getStatusStyle()]}>
-            <Text style={styles.statusText}>{getStatusText()}</Text>
-          </View>
+          <Title size="small" color={isBlocked ? 'muted' : 'heading'} style={styles.cardTitle}>
+            {item.name}
+          </Title>
+          <Badge label={getStatusLabel()} variant={getStatusVariant()} size="small" pill />
         </View>
-        <Text style={[styles.cardCode, isBlocked && styles.cardTextBlocked]}>
+        <Body size="small" color={isBlocked ? 'subtle' : 'muted'}>
           Código: {item.code}
-        </Text>
+        </Body>
         {item.emissionPoint && (
-          <Text style={[styles.cardDetail, isBlocked && styles.cardTextBlocked]}>
+          <Caption color={isBlocked ? 'subtle' : 'muted'} style={styles.cardDetail}>
             Punto de Emisión: {item.emissionPoint.code} - {item.emissionPoint.description}
-          </Text>
+          </Caption>
         )}
-        {getBlockedMessage() && <Text style={styles.blockedMessage}>{getBlockedMessage()}</Text>}
-      </TouchableOpacity>
+        {getBlockedMessage() && (
+          <Body size="small" color="danger" style={styles.blockedMessage}>
+            {getBlockedMessage()}
+          </Body>
+        )}
+      </Card>
     );
   };
 
   if (loading) {
     return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
-        <Text style={styles.loadingText}>Cargando cajas...</Text>
-      </View>
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color={theme.color.action.primary.background} />
+          <Body size="medium" color="muted" style={styles.loadingText}>
+            Cargando cajas...
+          </Body>
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
-        <Text style={styles.title}>Seleccionar Caja</Text>
-        <Text style={styles.subtitle}>{currentCompany?.name}</Text>
-        <Text style={styles.subtitle}>{currentSite?.name}</Text>
+        <Heading size="medium" color="heading">
+          Seleccionar Caja
+        </Heading>
+        <Body size="small" color="muted">
+          {currentCompany?.name}
+        </Body>
+        <Body size="small" color="muted">
+          {currentSite?.name}
+        </Body>
       </View>
 
       {cashRegisters.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>No hay cajas registradoras disponibles</Text>
-          <Text style={styles.emptySubtext}>
-            Contacte al administrador para configurar una caja
-          </Text>
-        </View>
+        <EmptyState
+          icon="albums-outline"
+          title="No hay cajas registradoras disponibles"
+          description="Contacte al administrador para configurar una caja"
+        />
       ) : (
         <FlatList
           data={cashRegisters}
@@ -184,134 +205,52 @@ export default function CashRegisterSelectionScreen() {
           contentContainerStyle={styles.listContainer}
         />
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-  },
-  header: {
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 2,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: '#666',
-  },
-  listContainer: {
-    padding: 16,
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    flex: 1,
-  },
-  statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  statusOpen: {
-    backgroundColor: '#4CAF50',
-  },
-  statusOpenByMe: {
-    backgroundColor: '#2196F3',
-  },
-  statusBlocked: {
-    backgroundColor: '#F44336',
-  },
-  statusClosed: {
-    backgroundColor: '#9E9E9E',
-  },
-  statusText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  cardCode: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 4,
-  },
-  cardDetail: {
-    fontSize: 13,
-    color: '#888',
-  },
-  cardBlocked: {
-    backgroundColor: '#F5F5F5',
-    opacity: 0.8,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  cardTitleBlocked: {
-    color: '#999',
-  },
-  cardTextBlocked: {
-    color: '#AAA',
-  },
-  blockedMessage: {
-    marginTop: 8,
-    fontSize: 13,
-    color: '#F44336',
-    fontWeight: '500',
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 32,
-  },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: '#999',
-    textAlign: 'center',
-  },
-});
+const createStyles = (theme: Theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.color.background.subtle,
+    },
+    centerContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    header: {
+      backgroundColor: theme.color.surface.base,
+      padding: theme.space[5],
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+      gap: theme.space[1],
+    },
+    loadingText: {
+      marginTop: theme.space[3],
+    },
+    listContainer: {
+      padding: theme.space[4],
+      gap: theme.space[3],
+    },
+    cardHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[2],
+      gap: theme.space[2],
+    },
+    cardTitle: {
+      flex: 1,
+    },
+    cardDetail: {
+      marginTop: theme.space[1],
+    },
+    cardBlocked: {
+      opacity: 0.65,
+    },
+    blockedMessage: {
+      marginTop: theme.space[2],
+    },
+  });

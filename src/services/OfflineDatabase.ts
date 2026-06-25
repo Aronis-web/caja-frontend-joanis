@@ -13,6 +13,11 @@ import type {
   SyncMetadata,
   OfflineSaleStatus,
 } from '@/types/offline';
+import type {
+  EncryptedUsersBundle,
+  OfflineLoginEvent,
+  OfflineLoginMethod,
+} from '@/types/offlineAuth';
 
 // Tipos para sql.js (definidos manualmente para evitar importar el módulo)
 interface SqlJsDatabase {
@@ -41,6 +46,9 @@ class OfflineDatabaseService {
   private SQL: SqlJsStatic | null = null;
   private isInitialized = false;
   private initPromise: Promise<void> | null = null;
+  private saveTimeout: ReturnType<typeof setTimeout> | null = null;
+  private savePending = false;
+  private readonly SAVE_DEBOUNCE_MS = 750;
 
   /**
    * Inicializa la base de datos SQLite
@@ -116,6 +124,20 @@ class OfflineDatabaseService {
 
       // Crear tablas
       await this.createTables();
+
+      // Garantizar que cualquier escritura pendiente se persista al salir
+      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('beforeunload', () => {
+          if (this.savePending || this.saveTimeout) {
+            if (this.saveTimeout) {
+              clearTimeout(this.saveTimeout);
+              this.saveTimeout = null;
+            }
+            this.savePending = false;
+            this.flushToStorageSync();
+          }
+        });
+      }
 
       this.isInitialized = true;
       console.log('✅ [OFFLINE_DB] SQLite inicializado correctamente');
@@ -196,7 +218,8 @@ class OfflineDatabaseService {
         payments TEXT NOT NULL,
         documentType TEXT NOT NULL,
         cashRegisterId TEXT NOT NULL,
-        sessionId TEXT NOT NULL,
+        cashRegisterCode TEXT,
+        sessionId TEXT,
         sellerId TEXT NOT NULL,
         createdAt TEXT NOT NULL,
         syncStatus TEXT DEFAULT 'PENDING',
@@ -204,12 +227,87 @@ class OfflineDatabaseService {
         lastSyncAttempt TEXT,
         syncError TEXT,
         serverSaleId TEXT,
-        serverDocumentNumber TEXT
+        serverDocumentNumber TEXT,
+        pendingReassignment INTEGER DEFAULT 0
       )
     `);
 
+    // Migración: agregar pendingReassignment / cashRegisterCode si no existen
+    try {
+      this.db.run(`ALTER TABLE offline_sales ADD COLUMN pendingReassignment INTEGER DEFAULT 0`);
+      console.log('🔄 [OFFLINE_DB] Columna pendingReassignment agregada');
+    } catch (e) {
+      // ya existe
+    }
+    try {
+      this.db.run(`ALTER TABLE offline_sales ADD COLUMN cashRegisterCode TEXT`);
+      console.log('🔄 [OFFLINE_DB] Columna cashRegisterCode agregada');
+    } catch (e) {
+      // ya existe
+    }
+
+    // Migración: convertir sessionId a NULLABLE si la tabla existente lo definió NOT NULL
+    try {
+      const info = this.db.exec(`PRAGMA table_info(offline_sales)`);
+      const rows = info[0]?.values || [];
+      const sessionIdCol = rows.find((row: any[]) => row[1] === 'sessionId');
+      const sessionIdNotNull = sessionIdCol ? sessionIdCol[3] === 1 : false;
+      if (sessionIdNotNull) {
+        console.log('🔄 [OFFLINE_DB] Migrando offline_sales: sessionId NULLABLE...');
+        this.db.run(`ALTER TABLE offline_sales RENAME TO offline_sales_old`);
+        this.db.run(`
+          CREATE TABLE offline_sales (
+            localId TEXT PRIMARY KEY,
+            token TEXT NOT NULL,
+            offlineTicketCode TEXT NOT NULL,
+            items TEXT NOT NULL,
+            totalCents INTEGER NOT NULL,
+            subtotalCents INTEGER,
+            taxCents INTEGER,
+            discountCents INTEGER DEFAULT 0,
+            customerId TEXT,
+            customerSnapshot TEXT,
+            payments TEXT NOT NULL,
+            documentType TEXT NOT NULL,
+            cashRegisterId TEXT NOT NULL,
+            cashRegisterCode TEXT,
+            sessionId TEXT,
+            sellerId TEXT NOT NULL,
+            createdAt TEXT NOT NULL,
+            syncStatus TEXT DEFAULT 'PENDING',
+            syncAttempts INTEGER DEFAULT 0,
+            lastSyncAttempt TEXT,
+            syncError TEXT,
+            serverSaleId TEXT,
+            serverDocumentNumber TEXT,
+            pendingReassignment INTEGER DEFAULT 0
+          )
+        `);
+        this.db.run(`
+          INSERT INTO offline_sales
+          (localId, token, offlineTicketCode, items, totalCents, subtotalCents, taxCents, discountCents,
+           customerId, customerSnapshot, payments, documentType, cashRegisterId, cashRegisterCode,
+           sessionId, sellerId, createdAt, syncStatus, syncAttempts, lastSyncAttempt, syncError,
+           serverSaleId, serverDocumentNumber, pendingReassignment)
+          SELECT
+            localId, token, offlineTicketCode, items, totalCents, subtotalCents, taxCents, discountCents,
+            customerId, customerSnapshot, payments, documentType, cashRegisterId, cashRegisterCode,
+            sessionId, sellerId, createdAt, syncStatus, syncAttempts, lastSyncAttempt, syncError,
+            serverSaleId, serverDocumentNumber, pendingReassignment
+          FROM offline_sales_old
+        `);
+        this.db.run(`DROP TABLE offline_sales_old`);
+        console.log('✅ [OFFLINE_DB] Migración offline_sales completada');
+      }
+    } catch (e) {
+      console.warn('⚠️ [OFFLINE_DB] No se pudo migrar offline_sales:', e);
+    }
+
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_sales_status ON offline_sales(syncStatus)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_sales_token ON offline_sales(token)`);
+    this.db.run(
+      `CREATE INDEX IF NOT EXISTS idx_sales_pending_reassign ON offline_sales(pendingReassignment)`
+    );
 
     // Tabla de metadata de sincronización
     this.db.run(`
@@ -226,13 +324,69 @@ class OfflineDatabaseService {
       )
     `);
 
+    // Tabla del bundle de usuarios cifrado (solo 1 registro vigente por cashRegisterId)
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS users_bundle (
+        cashRegisterId TEXT PRIMARY KEY,
+        bundleId TEXT NOT NULL,
+        alg TEXT NOT NULL,
+        iv TEXT NOT NULL,
+        authTag TEXT NOT NULL,
+        ciphertext TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        keyVersion INTEGER NOT NULL,
+        salt TEXT NOT NULL,
+        info TEXT NOT NULL,
+        userCount INTEGER NOT NULL,
+        generatedAt TEXT NOT NULL,
+        expiresAt TEXT NOT NULL,
+        nextRefreshMs INTEGER NOT NULL,
+        storedAt TEXT NOT NULL
+      )
+    `);
+
+    // Tabla de eventos de login offline (cola para sincronizar al volver online)
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS login_events (
+        id TEXT PRIMARY KEY,
+        userId TEXT NOT NULL,
+        bundleId TEXT NOT NULL,
+        occurredAt TEXT NOT NULL,
+        method TEXT NOT NULL,
+        success INTEGER NOT NULL,
+        failureReason TEXT,
+        syncStatus TEXT NOT NULL DEFAULT 'PENDING'
+      )
+    `);
+
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_login_events_status ON login_events(syncStatus)`);
+
     console.log('✅ [OFFLINE_DB] Tablas creadas correctamente');
   }
 
   /**
-   * Guarda la base de datos en localStorage
+   * Programa una escritura de la BD a localStorage de forma debounced.
+   * Múltiples llamadas dentro de SAVE_DEBOUNCE_MS se colapsan en un único flush
+   * para evitar bloquear el hilo y picos de memoria por export()+base64.
    */
   saveToStorage(): void {
+    if (!this.db) return;
+    this.savePending = true;
+    if (this.saveTimeout) return;
+    this.saveTimeout = setTimeout(() => {
+      this.saveTimeout = null;
+      if (this.savePending) {
+        this.savePending = false;
+        this.flushToStorageSync();
+      }
+    }, this.SAVE_DEBOUNCE_MS);
+  }
+
+  /**
+   * Persiste la BD a localStorage inmediatamente (sin debounce).
+   * Usar en cierre de la app o casos donde se requiera durabilidad inmediata.
+   */
+  flushToStorageSync(): void {
     if (!this.db) return;
 
     try {
@@ -261,10 +415,14 @@ class OfflineDatabaseService {
   }
 
   private arrayBufferToBase64(buffer: Uint8Array): string {
-    let binary = '';
+    // Conversión por chunks para evitar concatenación O(n^2) y posibles
+    // desbordes de pila con String.fromCharCode(...array) en buffers grandes.
+    const CHUNK = 0x8000;
     const bytes = new Uint8Array(buffer);
-    for (let i = 0; i < bytes.byteLength; i++) {
-      binary += String.fromCharCode(bytes[i]);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      const sub = bytes.subarray(i, Math.min(i + CHUNK, bytes.length));
+      binary += String.fromCharCode.apply(null, sub as unknown as number[]);
     }
     return btoa(binary);
   }
@@ -326,9 +484,10 @@ class OfflineDatabaseService {
     const results = this.db.exec(
       `
       SELECT * FROM products
-      WHERE LOWER(name) LIKE ?
+      WHERE (LOWER(name) LIKE ?
          OR LOWER(sku) LIKE ?
-         OR barcode LIKE ?
+         OR barcode LIKE ?)
+        AND localStock > 0
       LIMIT ?
     `,
       [searchQuery, searchQuery, query, limit]
@@ -582,9 +741,9 @@ class OfflineDatabaseService {
       `
       INSERT INTO offline_sales
       (localId, token, offlineTicketCode, items, totalCents, subtotalCents, taxCents, discountCents,
-       customerId, customerSnapshot, payments, documentType, cashRegisterId, sessionId, sellerId,
-       createdAt, syncStatus, syncAttempts)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       customerId, customerSnapshot, payments, documentType, cashRegisterId, cashRegisterCode,
+       sessionId, sellerId, createdAt, syncStatus, syncAttempts, pendingReassignment)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       [
         sale.localId,
@@ -600,16 +759,70 @@ class OfflineDatabaseService {
         JSON.stringify(sale.payments),
         sale.documentType,
         sale.cashRegisterId,
-        sale.sessionId,
+        sale.cashRegisterCode || null,
+        sale.sessionId || null,
         sale.sellerId,
         sale.createdAt,
         sale.syncStatus,
         sale.syncAttempts,
+        sale.pendingReassignment ? 1 : 0,
       ]
     );
 
     this.saveToStorage();
-    console.log(`✅ [OFFLINE_DB] Venta offline guardada: ${sale.localId}`);
+    console.log(
+      `✅ [OFFLINE_DB] Venta offline guardada: ${sale.localId}${sale.pendingReassignment ? ' (pending reassignment)' : ''}`
+    );
+  }
+
+  /**
+   * Reasigna las ventas pendientes de reasignación a la caja/sesión/vendedor
+   * recién abiertos online. Limpia el flag pendingReassignment para que
+   * pasen a ser elegibles para sincronización.
+   */
+  async reassignPendingSales(
+    cashRegisterId: string,
+    sessionId: string,
+    sellerId: string,
+    cashRegisterCode?: string
+  ): Promise<number> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    // Reasignar tanto las ventas marcadas pendingReassignment=1 como cualquier
+    // venta PENDING/FAILED cuya sessionId no coincida con la sesión actual:
+    // ese caso ocurre cuando se creó offline con una sessionId stale del store
+    // (turno cerrado en backend) y por eso la sync la rechaza. La caja sólo
+    // admite un turno abierto a la vez, así que reasignar al nuevo es seguro.
+    const countResult = this.db.exec(
+      `SELECT COUNT(*) FROM offline_sales
+       WHERE pendingReassignment = 1
+          OR (syncStatus IN ('PENDING','FAILED') AND (sessionId IS NULL OR sessionId <> ?))`,
+      [sessionId]
+    );
+    const count = (countResult[0]?.values[0]?.[0] as number) || 0;
+    if (count === 0) return 0;
+
+    this.db.run(
+      `
+      UPDATE offline_sales
+      SET cashRegisterId = ?,
+          cashRegisterCode = COALESCE(?, cashRegisterCode),
+          sessionId = ?,
+          sellerId = ?,
+          pendingReassignment = 0,
+          syncStatus = CASE WHEN syncStatus = 'FAILED' THEN 'PENDING' ELSE syncStatus END,
+          syncAttempts = CASE WHEN syncStatus = 'FAILED' THEN 0 ELSE syncAttempts END
+      WHERE pendingReassignment = 1
+         OR (syncStatus IN ('PENDING','FAILED') AND (sessionId IS NULL OR sessionId <> ?))
+    `,
+      [cashRegisterId, cashRegisterCode || null, sessionId, sellerId, sessionId]
+    );
+
+    this.saveToStorage();
+    console.log(
+      `🔁 [OFFLINE_DB] ${count} ventas reasignadas a caja=${cashRegisterId} sesión=${sessionId}`
+    );
+    return count;
   }
 
   /**
@@ -622,6 +835,7 @@ class OfflineDatabaseService {
       `
       SELECT * FROM offline_sales
       WHERE syncStatus IN ('PENDING', 'FAILED')
+        AND (pendingReassignment IS NULL OR pendingReassignment = 0)
       ORDER BY createdAt ASC
       LIMIT ?
     `,
@@ -723,6 +937,7 @@ class OfflineDatabaseService {
     if (typeof obj.customerSnapshot === 'string' && obj.customerSnapshot) {
       obj.customerSnapshot = JSON.parse(obj.customerSnapshot);
     }
+    obj.pendingReassignment = obj.pendingReassignment === 1;
 
     return obj as OfflineSale;
   }
@@ -821,9 +1036,181 @@ class OfflineDatabaseService {
     this.db.run(`DELETE FROM tokens`);
     this.db.run(`DELETE FROM offline_sales`);
     this.db.run(`DELETE FROM sync_metadata`);
+    this.db.run(`DELETE FROM users_bundle`);
+    this.db.run(`DELETE FROM login_events`);
 
     this.saveToStorage();
     console.log('🗑️ [OFFLINE_DB] Todos los datos eliminados');
+  }
+
+  // ============ USERS BUNDLE ============
+
+  /**
+   * Guarda (o reemplaza) el bundle cifrado de usuarios para una caja.
+   */
+  async saveUsersBundle(cashRegisterId: string, bundle: EncryptedUsersBundle): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    this.db.run(`DELETE FROM users_bundle WHERE cashRegisterId = ?`, [cashRegisterId]);
+    this.db.run(
+      `
+      INSERT INTO users_bundle
+      (cashRegisterId, bundleId, alg, iv, authTag, ciphertext, checksum, keyVersion, salt, info, userCount, generatedAt, expiresAt, nextRefreshMs, storedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+      [
+        cashRegisterId,
+        bundle.bundleId,
+        bundle.alg,
+        bundle.iv,
+        bundle.authTag,
+        bundle.ciphertext,
+        bundle.checksum,
+        bundle.keyVersion,
+        bundle.salt,
+        bundle.info,
+        bundle.userCount,
+        bundle.generatedAt,
+        bundle.expiresAt,
+        bundle.nextRefreshMs,
+        new Date().toISOString(),
+      ]
+    );
+    this.saveToStorage();
+    console.log(
+      `✅ [OFFLINE_DB] Bundle de usuarios guardado (${bundle.userCount} usuarios, expira ${bundle.expiresAt})`
+    );
+  }
+
+  /**
+   * Obtiene el bundle cifrado vigente para una caja.
+   */
+  async getUsersBundle(cashRegisterId: string): Promise<EncryptedUsersBundle | null> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const results = this.db.exec(`SELECT * FROM users_bundle WHERE cashRegisterId = ?`, [
+      cashRegisterId,
+    ]);
+
+    if (results.length === 0 || results[0].values.length === 0) {
+      return null;
+    }
+
+    const row = results[0].values[0];
+    const columns = results[0].columns;
+    const obj: any = {};
+    columns.forEach((col: string, i: number) => {
+      obj[col] = row[i];
+    });
+
+    return {
+      alg: obj.alg,
+      iv: obj.iv,
+      authTag: obj.authTag,
+      ciphertext: obj.ciphertext,
+      bundleId: obj.bundleId,
+      userCount: obj.userCount,
+      checksum: obj.checksum,
+      keyVersion: obj.keyVersion,
+      generatedAt: obj.generatedAt,
+      expiresAt: obj.expiresAt,
+      nextRefreshMs: obj.nextRefreshMs,
+      salt: obj.salt,
+      info: obj.info,
+    };
+  }
+
+  /**
+   * Elimina el bundle de usuarios de una caja.
+   */
+  async clearUsersBundle(cashRegisterId: string): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    this.db.run(`DELETE FROM users_bundle WHERE cashRegisterId = ?`, [cashRegisterId]);
+    this.saveToStorage();
+  }
+
+  // ============ LOGIN EVENTS ============
+
+  /**
+   * Encola un evento de login offline para sincronizar al volver online.
+   */
+  async saveLoginEvent(event: OfflineLoginEvent): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    this.db.run(
+      `
+      INSERT OR REPLACE INTO login_events
+      (id, userId, bundleId, occurredAt, method, success, failureReason, syncStatus)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+      [
+        event.id,
+        event.userId,
+        event.bundleId,
+        event.occurredAt,
+        event.method,
+        event.success ? 1 : 0,
+        event.failureReason || null,
+        event.syncStatus,
+      ]
+    );
+    this.saveToStorage();
+  }
+
+  /**
+   * Obtiene los eventos de login pendientes de sincronizar.
+   */
+  async getPendingLoginEvents(limit: number = 200): Promise<OfflineLoginEvent[]> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const results = this.db.exec(
+      `SELECT * FROM login_events WHERE syncStatus = 'PENDING' ORDER BY occurredAt ASC LIMIT ?`,
+      [limit]
+    );
+
+    if (results.length === 0 || results[0].values.length === 0) {
+      return [];
+    }
+
+    return results[0].values.map((row: any[]) => {
+      const obj: any = {};
+      results[0].columns.forEach((col: string, i: number) => {
+        obj[col] = row[i];
+      });
+      return {
+        id: obj.id,
+        userId: obj.userId,
+        bundleId: obj.bundleId,
+        occurredAt: obj.occurredAt,
+        method: obj.method as OfflineLoginMethod,
+        success: obj.success === 1,
+        failureReason: obj.failureReason || undefined,
+        syncStatus: obj.syncStatus,
+      } as OfflineLoginEvent;
+    });
+  }
+
+  /**
+   * Marca eventos de login como sincronizados.
+   */
+  async markLoginEventsSynced(ids: string[]): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+    if (ids.length === 0) return;
+
+    const placeholders = ids.map(() => '?').join(',');
+    this.db.run(`UPDATE login_events SET syncStatus = 'SYNCED' WHERE id IN (${placeholders})`, ids);
+    this.saveToStorage();
+  }
+
+  /**
+   * Elimina eventos de login ya sincronizados (housekeeping).
+   */
+  async deleteSyncedLoginEvents(): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    this.db.run(`DELETE FROM login_events WHERE syncStatus = 'SYNCED'`);
+    this.saveToStorage();
   }
 
   /**
@@ -838,7 +1225,12 @@ class OfflineDatabaseService {
    */
   close(): void {
     if (this.db) {
-      this.saveToStorage();
+      if (this.saveTimeout) {
+        clearTimeout(this.saveTimeout);
+        this.saveTimeout = null;
+      }
+      this.savePending = false;
+      this.flushToStorageSync();
       this.db.close();
       this.db = null;
       this.isInitialized = false;

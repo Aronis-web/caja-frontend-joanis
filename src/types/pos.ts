@@ -113,6 +113,7 @@ export interface SaleItem {
   tax?: number;
   total?: number;
   imageUrl?: string;
+  availableStock?: number;
 }
 
 export interface SalePayment {

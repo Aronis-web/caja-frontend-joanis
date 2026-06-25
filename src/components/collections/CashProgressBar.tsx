@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
+import { useTheme, useThemedStyles, type Theme } from '@/design-system';
 import { CashAlertLevel } from '@/types/collections';
 
 interface CashProgressBarProps {
@@ -13,19 +14,22 @@ interface CashProgressBarProps {
   height?: number;
 }
 
-const BAR_COLORS: Record<CashAlertLevel, string> = {
-  [CashAlertLevel.NORMAL]: '#4CAF50',
-  [CashAlertLevel.WARNING]: '#FFC107',
-  [CashAlertLevel.CRITICAL]: '#FF9800',
-  [CashAlertLevel.BLOCKED]: '#F44336',
-};
-
 export const CashProgressBar: React.FC<CashProgressBarProps> = ({
   percent,
   alertLevel,
   height = 12,
 }) => {
-  const barColor = BAR_COLORS[alertLevel];
+  const theme = useTheme();
+  const styles = useThemedStyles(createStyles);
+
+  const barColors: Record<CashAlertLevel, string> = {
+    [CashAlertLevel.NORMAL]: theme.color.action.success.background,
+    [CashAlertLevel.WARNING]: theme.color.icon.warning,
+    [CashAlertLevel.CRITICAL]: theme.color.action.danger.backgroundHover,
+    [CashAlertLevel.BLOCKED]: theme.color.action.danger.background,
+  };
+
+  const barColor = barColors[alertLevel];
   const clampedPercent = Math.min(Math.max(percent, 0), 100);
 
   return (
@@ -45,25 +49,26 @@ export const CashProgressBar: React.FC<CashProgressBarProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    width: '100%',
-    backgroundColor: '#E0E0E0',
-    borderRadius: 6,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  bar: {
-    height: '100%',
-    borderRadius: 6,
-  },
-  marker: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: 2,
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
-  },
-});
+const createStyles = (theme: Theme) =>
+  StyleSheet.create({
+    container: {
+      width: '100%',
+      backgroundColor: theme.color.border.subtle,
+      borderRadius: theme.radii.sm,
+      overflow: 'hidden',
+      position: 'relative',
+    },
+    bar: {
+      height: '100%',
+      borderRadius: theme.radii.sm,
+    },
+    marker: {
+      position: 'absolute',
+      top: 0,
+      bottom: 0,
+      width: 2,
+      backgroundColor: theme.color.overlay.subtle,
+    },
+  });
 
 export default CashProgressBar;

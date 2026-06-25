@@ -25,6 +25,7 @@ import {
   CollectionRequestReason,
   ALERT_LEVEL_CONFIGS,
 } from '@/types/collections';
+import { useTheme, useThemedStyles, type Theme } from '@/design-system';
 
 // Importación condicional de QRCode para web/Electron
 let QRCode: React.ComponentType<{ value: string; size?: number; level?: string }> | null = null;
@@ -42,6 +43,8 @@ export default function CashCollectionScreen() {
   const route = useRoute();
   const { currentSession, selectedCashRegister } = usePOSStore();
   const logout = useAuthStore((state) => state.logout);
+  const theme = useTheme();
+  const styles = useThemedStyles(createStyles);
   const {
     cashStatus,
     isCashStatusLoading,
@@ -534,7 +537,7 @@ export default function CashCollectionScreen() {
     if (isCashStatusLoading && !cashStatus) {
       return (
         <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={theme.color.text.link} />
           <Text style={styles.loadingText}>Cargando información...</Text>
         </View>
       );
@@ -596,7 +599,7 @@ export default function CashCollectionScreen() {
 
       return (
         <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={theme.color.text.link} />
           <Text style={styles.loadingText}>Generando QR de cierre...</Text>
         </View>
       );
@@ -686,7 +689,7 @@ export default function CashCollectionScreen() {
             disabled={isRequestLoading}
           >
             {isRequestLoading ? (
-              <ActivityIndicator color="#FFFFFF" />
+              <ActivityIndicator color={theme.color.text.onAction} />
             ) : (
               <Text style={styles.requestButtonText}>
                 {cashStatus.isBlocked
@@ -789,7 +792,7 @@ export default function CashCollectionScreen() {
 
           {/* Estado */}
           <View style={styles.statusIndicator}>
-            <ActivityIndicator size="small" color="#FFC107" />
+            <ActivityIndicator size="small" color={theme.color.state.warning.border} />
             <Text style={styles.statusIndicatorText}>
               {isClosureMode
                 ? '🟡 Esperando escaneo de supervisora para cierre...'
@@ -843,7 +846,7 @@ export default function CashCollectionScreen() {
     return (
       <View style={styles.centerContainer}>
         <View style={styles.inProgressCard}>
-          <ActivityIndicator size="large" color="#2196F3" />
+          <ActivityIndicator size="large" color={theme.color.icon.accent} />
           <Text style={styles.inProgressTitle}>🔵 Recaudación en Proceso</Text>
           <Text style={styles.inProgressText}>
             {requestStatus?.processedBy?.name || 'Una supervisora'} está procesando la recaudación.
@@ -1212,566 +1215,541 @@ export default function CashCollectionScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  header: {
-    backgroundColor: '#FFFFFF',
-    paddingTop: 16,
-    paddingBottom: 16,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  headerBackButton: {
-    marginRight: 12,
-    padding: 4,
-  },
-  headerBackText: {
-    fontSize: 24,
-    color: '#007AFF',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    flex: 1,
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: '#666',
-  },
-  scrollContent: {
-    flex: 1,
-    padding: 16,
-  },
-  scrollCenter: {
-    alignItems: 'center',
-  },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: '#666',
-  },
+const createStyles = (theme: Theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.color.background.subtle,
+    },
+    header: {
+      backgroundColor: theme.color.surface.base,
+      paddingTop: theme.space[4],
+      paddingBottom: theme.space[4],
+      paddingHorizontal: theme.space[5],
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    headerBackButton: {
+      marginRight: theme.space[3],
+      padding: theme.space[1],
+    },
+    headerBackText: {
+      fontSize: 24,
+      color: theme.color.text.link,
+    },
+    headerTitle: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+      flex: 1,
+    },
+    headerSubtitle: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+    },
+    scrollContent: {
+      flex: 1,
+      padding: theme.space[4],
+    },
+    scrollCenter: {
+      alignItems: 'center',
+    },
+    centerContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: theme.space[5],
+    },
+    loadingText: {
+      marginTop: theme.space[3],
+      fontSize: 16,
+      color: theme.color.text.muted,
+    },
+    statusCard: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.lg,
+      padding: theme.space[5],
+      marginBottom: theme.space[4],
+      ...theme.shadow.sm,
+    },
+    statusHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.space[4],
+    },
+    statusTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+    },
+    progressContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[3],
+      marginBottom: theme.space[5],
+    },
+    percentBig: {
+      fontSize: 24,
+      fontWeight: '700',
+      minWidth: 60,
+      textAlign: 'right',
+    },
+    amountsGrid: {
+      gap: theme.space[3],
+    },
+    amountBox: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: theme.space[2],
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+    },
+    amountLabel: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+    },
+    amountValue: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+    },
+    amountValueBig: {
+      fontSize: 18,
+      fontWeight: '700',
+    },
+    alertBox: {
+      marginTop: theme.space[4],
+      padding: theme.space[3],
+      borderRadius: theme.radii.md,
+      borderWidth: 1,
+    },
+    alertBoxText: {
+      fontSize: 14,
+      fontWeight: '500',
+      textAlign: 'center',
+    },
+    collectionInfoCard: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.lg,
+      padding: theme.space[5],
+      marginBottom: theme.space[4],
+    },
+    cardTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[4],
+    },
+    infoRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: theme.space[2],
+    },
+    infoLabel: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+    },
+    infoValue: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+    },
+    suggestedValue: {
+      color: theme.color.action.success.background,
+    },
+    infoHint: {
+      fontSize: 12,
+      color: theme.color.text.placeholder,
+      marginTop: theme.space[3],
+      fontStyle: 'italic',
+    },
+    requestButton: {
+      backgroundColor: theme.color.text.link,
+      paddingVertical: theme.space[4],
+      borderRadius: theme.radii.lg,
+      alignItems: 'center',
+      marginBottom: theme.space[3],
+    },
+    requestButtonUrgent: {
+      backgroundColor: theme.color.action.danger.background,
+    },
+    requestButtonText: {
+      color: theme.color.text.onAction,
+      fontSize: 16,
+      fontWeight: '600',
+    },
+    backButton: {
+      paddingVertical: theme.space[3],
+      alignItems: 'center',
+    },
+    backButtonText: {
+      color: theme.color.text.muted,
+      fontSize: 14,
+    },
+    errorBox: {
+      backgroundColor: theme.color.state.danger.background,
+      padding: theme.space[3],
+      borderRadius: theme.radii.md,
+      marginBottom: theme.space[3],
+    },
+    errorText: {
+      color: theme.color.state.danger.text,
+      fontSize: 14,
+      textAlign: 'center',
+    },
 
-  // Status Card
-  statusCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  statusHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  statusTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-  },
-  progressContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 20,
-  },
-  percentBig: {
-    fontSize: 24,
-    fontWeight: '700',
-    minWidth: 60,
-    textAlign: 'right',
-  },
-  amountsGrid: {
-    gap: 12,
-  },
-  amountBox: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-  },
-  amountLabel: {
-    fontSize: 14,
-    color: '#666',
-  },
-  amountValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-  },
-  amountValueBig: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  alertBox: {
-    marginTop: 16,
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  alertBoxText: {
-    fontSize: 14,
-    fontWeight: '500',
-    textAlign: 'center',
-  },
+    qrCard: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.xl,
+      padding: theme.space[6],
+      alignItems: 'center',
+      width: '100%',
+      maxWidth: 400,
+    },
+    qrTitle: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[5],
+    },
+    qrContainer: {
+      padding: theme.space[4],
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.lg,
+      borderWidth: 2,
+      borderColor: theme.color.border.subtle,
+      marginBottom: theme.space[4],
+    },
+    qrPlaceholder: {
+      width: 220,
+      height: 220,
+      backgroundColor: theme.color.surface.subtle,
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderRadius: theme.radii.md,
+    },
+    qrPlaceholderText: {
+      fontSize: 48,
+      fontWeight: 'bold',
+      color: theme.color.text.placeholder,
+    },
+    qrTokenText: {
+      fontSize: 10,
+      color: theme.color.text.muted,
+      marginTop: theme.space[2],
+    },
+    tokenContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[2],
+      marginBottom: theme.space[4],
+    },
+    tokenLabel: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+    },
+    tokenValue: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+      fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
+    },
+    countdownContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[2],
+      backgroundColor: theme.color.state.info.background,
+      paddingHorizontal: theme.space[4],
+      paddingVertical: theme.space[2],
+      borderRadius: theme.radii.full,
+      marginBottom: theme.space[5],
+    },
+    countdownUrgent: {
+      backgroundColor: theme.color.state.danger.background,
+    },
+    countdownIcon: {
+      fontSize: 16,
+    },
+    countdownText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.state.info.text,
+    },
+    countdownTextUrgent: {
+      color: theme.color.state.danger.text,
+    },
+    qrInfoBox: {
+      width: '100%',
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.md,
+      padding: theme.space[4],
+      marginBottom: theme.space[5],
+    },
+    qrInfoRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: theme.space[1],
+    },
+    qrInfoLabel: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+    },
+    qrInfoValue: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+    },
+    statusIndicator: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[2],
+    },
+    statusIndicatorText: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+    },
+    cancelButton: {
+      marginTop: theme.space[5],
+      paddingVertical: theme.space[3],
+      paddingHorizontal: theme.space[6],
+      borderRadius: theme.radii.md,
+      borderWidth: 1,
+      borderColor: theme.color.action.danger.background,
+    },
+    cancelButtonText: {
+      color: theme.color.action.danger.background,
+      fontSize: 14,
+      fontWeight: '500',
+    },
+    confirmOverlay: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: theme.color.overlay.medium,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: theme.space[5],
+    },
+    confirmBox: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.lg,
+      padding: theme.space[6],
+      maxWidth: 320,
+      width: '100%',
+    },
+    confirmTitle: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[3],
+      textAlign: 'center',
+    },
+    confirmText: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+      marginBottom: theme.space[5],
+      textAlign: 'center',
+    },
+    confirmButtons: {
+      flexDirection: 'row',
+      gap: theme.space[3],
+    },
+    confirmButtonNo: {
+      flex: 1,
+      paddingVertical: theme.space[3],
+      borderRadius: theme.radii.md,
+      backgroundColor: theme.color.border.subtle,
+      alignItems: 'center',
+    },
+    confirmButtonNoText: {
+      fontSize: 14,
+      fontWeight: '500',
+      color: theme.color.text.heading,
+    },
+    confirmButtonYes: {
+      flex: 1,
+      paddingVertical: theme.space[3],
+      borderRadius: theme.radii.md,
+      backgroundColor: theme.color.action.danger.background,
+      alignItems: 'center',
+    },
+    confirmButtonYesText: {
+      fontSize: 14,
+      fontWeight: '500',
+      color: theme.color.text.onAction,
+    },
 
-  // Collection Info Card
-  collectionInfoCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 16,
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 16,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  infoLabel: {
-    fontSize: 14,
-    color: '#666',
-  },
-  infoValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-  },
-  suggestedValue: {
-    color: '#4CAF50',
-  },
-  infoHint: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 12,
-    fontStyle: 'italic',
-  },
-
-  // Request Button
-  requestButton: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  requestButtonUrgent: {
-    backgroundColor: '#F44336',
-  },
-  requestButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-
-  // Back Button
-  backButton: {
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  backButtonText: {
-    color: '#666',
-    fontSize: 14,
-  },
-
-  // Error Box
-  errorBox: {
-    backgroundColor: '#FFEBEE',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 12,
-  },
-  errorText: {
-    color: '#C62828',
-    fontSize: 14,
-    textAlign: 'center',
-  },
-
-  // QR Card
-  qrCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 24,
-    alignItems: 'center',
-    width: '100%',
-    maxWidth: 400,
-  },
-  qrTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 20,
-  },
-  qrContainer: {
-    padding: 16,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#E0E0E0',
-    marginBottom: 16,
-  },
-  qrPlaceholder: {
-    width: 220,
-    height: 220,
-    backgroundColor: '#F5F5F5',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 8,
-  },
-  qrPlaceholderText: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: '#999',
-  },
-  qrTokenText: {
-    fontSize: 10,
-    color: '#666',
-    marginTop: 8,
-  },
-  tokenContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 16,
-  },
-  tokenLabel: {
-    fontSize: 14,
-    color: '#666',
-  },
-  tokenValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
-  },
-  countdownContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#E3F2FD',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginBottom: 20,
-  },
-  countdownUrgent: {
-    backgroundColor: '#FFEBEE',
-  },
-  countdownIcon: {
-    fontSize: 16,
-  },
-  countdownText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1976D2',
-  },
-  countdownTextUrgent: {
-    color: '#C62828',
-  },
-  qrInfoBox: {
-    width: '100%',
-    backgroundColor: '#F5F5F5',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 20,
-  },
-  qrInfoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 4,
-  },
-  qrInfoLabel: {
-    fontSize: 14,
-    color: '#666',
-  },
-  qrInfoValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-  },
-  statusIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  statusIndicatorText: {
-    fontSize: 14,
-    color: '#666',
-  },
-
-  // Cancel Button
-  cancelButton: {
-    marginTop: 20,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#F44336',
-  },
-  cancelButtonText: {
-    color: '#F44336',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-
-  // Confirm Overlay
-  confirmOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  confirmBox: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 24,
-    maxWidth: 320,
-    width: '100%',
-  },
-  confirmTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  confirmText: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  confirmButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  confirmButtonNo: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    backgroundColor: '#E0E0E0',
-    alignItems: 'center',
-  },
-  confirmButtonNoText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#333',
-  },
-  confirmButtonYes: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    backgroundColor: '#F44336',
-    alignItems: 'center',
-  },
-  confirmButtonYesText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#FFFFFF',
-  },
-
-  // In Progress Card
-  inProgressCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 32,
-    alignItems: 'center',
-    maxWidth: 350,
-  },
-  inProgressTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#1976D2',
-    marginTop: 20,
-    marginBottom: 12,
-  },
-  inProgressText: {
-    fontSize: 16,
-    color: '#333',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  inProgressHint: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    fontStyle: 'italic',
-  },
-
-  // Completed Card
-  completedCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 32,
-    alignItems: 'center',
-    width: '100%',
-    maxWidth: 560,
-  },
-  completedIcon: {
-    fontSize: 64,
-    marginBottom: 16,
-  },
-  completedTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-    marginBottom: 20,
-  },
-  completedInfo: {
-    width: '100%',
-    backgroundColor: '#F5F5F5',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 20,
-  },
-  completedInfoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 6,
-  },
-  completedLabel: {
-    fontSize: 14,
-    color: '#666',
-  },
-  completedValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-  },
-  sectionTitleText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#333',
-    marginBottom: 10,
-  },
-  sectionEmptyText: {
-    fontSize: 13,
-    color: '#777',
-    fontStyle: 'italic',
-  },
-  subSectionBlock: {
-    marginBottom: 12,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  completedHint: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 24,
-  },
-  completedButton: {
-    backgroundColor: '#4CAF50',
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    borderRadius: 8,
-  },
-  completedButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-
-  // Expired Card
-  expiredCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 32,
-    alignItems: 'center',
-    maxWidth: 350,
-  },
-  expiredIcon: {
-    fontSize: 64,
-    marginBottom: 16,
-  },
-  expiredTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#FF9800',
-    marginBottom: 12,
-  },
-  expiredText: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 24,
-  },
-  regenerateButton: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-    marginBottom: 12,
-  },
-  regenerateButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  backButtonAlt: {
-    paddingVertical: 12,
-  },
-  backButtonAltText: {
-    color: '#666',
-    fontSize: 14,
-  },
-
-  // Cancelled Card
-  cancelledCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 32,
-    alignItems: 'center',
-    maxWidth: 350,
-  },
-  cancelledIcon: {
-    fontSize: 64,
-    marginBottom: 16,
-  },
-  cancelledTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#666',
-    marginBottom: 12,
-  },
-  cancelledText: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 24,
-  },
-});
+    inProgressCard: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.xl,
+      padding: theme.space[8],
+      alignItems: 'center',
+      maxWidth: 350,
+    },
+    inProgressTitle: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: theme.color.state.info.text,
+      marginTop: theme.space[5],
+      marginBottom: theme.space[3],
+    },
+    inProgressText: {
+      fontSize: 16,
+      color: theme.color.text.heading,
+      textAlign: 'center',
+      marginBottom: theme.space[2],
+    },
+    inProgressHint: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+      textAlign: 'center',
+      fontStyle: 'italic',
+    },
+    completedCard: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.xl,
+      padding: theme.space[8],
+      alignItems: 'center',
+      width: '100%',
+      maxWidth: 560,
+    },
+    completedIcon: {
+      fontSize: 64,
+      marginBottom: theme.space[4],
+    },
+    completedTitle: {
+      fontSize: 24,
+      fontWeight: 'bold',
+      color: theme.color.action.success.background,
+      marginBottom: theme.space[5],
+    },
+    completedInfo: {
+      width: '100%',
+      backgroundColor: theme.color.surface.subtle,
+      borderRadius: theme.radii.md,
+      padding: theme.space[4],
+      marginBottom: theme.space[5],
+    },
+    completedInfoRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: theme.space[1.5],
+    },
+    completedLabel: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+    },
+    completedValue: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.color.text.heading,
+    },
+    sectionTitleText: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: theme.color.text.heading,
+      marginBottom: theme.space[2.5],
+    },
+    sectionEmptyText: {
+      fontSize: 13,
+      color: theme.color.text.subtle,
+      fontStyle: 'italic',
+    },
+    subSectionBlock: {
+      marginBottom: theme.space[3],
+      paddingBottom: theme.space[2],
+      borderBottomWidth: 1,
+      borderBottomColor: theme.color.border.subtle,
+    },
+    completedHint: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+      textAlign: 'center',
+      marginBottom: theme.space[6],
+    },
+    completedButton: {
+      backgroundColor: theme.color.action.success.background,
+      paddingVertical: theme.space[3.5],
+      paddingHorizontal: theme.space[8],
+      borderRadius: theme.radii.md,
+    },
+    completedButtonText: {
+      color: theme.color.text.onAction,
+      fontSize: 16,
+      fontWeight: '600',
+    },
+    expiredCard: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.xl,
+      padding: theme.space[8],
+      alignItems: 'center',
+      maxWidth: 350,
+    },
+    expiredIcon: {
+      fontSize: 64,
+      marginBottom: theme.space[4],
+    },
+    expiredTitle: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: theme.color.icon.warning,
+      marginBottom: theme.space[3],
+    },
+    expiredText: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+      textAlign: 'center',
+      marginBottom: theme.space[6],
+    },
+    regenerateButton: {
+      backgroundColor: theme.color.text.link,
+      paddingVertical: theme.space[3.5],
+      paddingHorizontal: theme.space[6],
+      borderRadius: theme.radii.md,
+      marginBottom: theme.space[3],
+    },
+    regenerateButtonText: {
+      color: theme.color.text.onAction,
+      fontSize: 16,
+      fontWeight: '600',
+    },
+    backButtonAlt: {
+      paddingVertical: theme.space[3],
+    },
+    backButtonAltText: {
+      color: theme.color.text.muted,
+      fontSize: 14,
+    },
+    cancelledCard: {
+      backgroundColor: theme.color.surface.base,
+      borderRadius: theme.radii.xl,
+      padding: theme.space[8],
+      alignItems: 'center',
+      maxWidth: 350,
+    },
+    cancelledIcon: {
+      fontSize: 64,
+      marginBottom: theme.space[4],
+    },
+    cancelledTitle: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: theme.color.text.muted,
+      marginBottom: theme.space[3],
+    },
+    cancelledText: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+      textAlign: 'center',
+      marginBottom: theme.space[6],
+    },
+  });
