@@ -26,8 +26,24 @@ const mime = require('mime-types');
 const os = require('os');
 const ptp = require('pdf-to-printer');
 const { PDFDocument } = require('pdf-lib');
+const { autoUpdater } = require('electron-updater');
 
 console.log('[ELECTRON] ✅ Módulos básicos cargados');
+
+// ===== Configuración de electron-updater (igual que admin-frontend-joanis) =====
+autoUpdater.autoDownload = false; // La descarga la dispara el usuario desde el modal
+autoUpdater.autoInstallOnAppQuit = true; // Instalar al cerrar si quedó descargada
+autoUpdater.allowDowngrade = false;
+autoUpdater.allowPrerelease = false;
+if (process.platform === 'win32') {
+  autoUpdater.forceDevUpdateConfig = false;
+}
+
+// Token de GitHub para repos privados (opcional). Inyectar vía GH_TOKEN al empaquetar/ejecutar.
+const GITHUB_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '';
+if (GITHUB_TOKEN) {
+  autoUpdater.requestHeaders = { Authorization: `token ${GITHUB_TOKEN}` };
+}
 
 const isExplicitDev = process.env.NODE_ENV === 'development';
 const isDev = isExplicitDev || !app.isPackaged;
@@ -38,6 +54,122 @@ console.log('[ELECTRON] 🎯 isDev:', isDev);
 let mainWindow;
 let server;
 let logStream;
+let openpayBridgeProcess = null;
+let openpayBridgeStopping = false;
+
+// ===== openpay-bridge: proceso .NET local que envuelve el SDK EGlobal =====
+// Corre solo en Windows y solo si encontramos el ejecutable ya compilado
+// (`openpay-bridge/bin/Release/openpay-bridge.exe` en dev, o
+// `resources/openpay-bridge/openpay-bridge.exe` en producción). Si no está,
+// asumimos que el operador no usa PinPad OpenPay y no hacemos nada.
+function resolveOpenPayBridgeExe() {
+  if (process.platform !== 'win32') return null;
+  const candidates = isPackaged
+    ? [path.join(process.resourcesPath, 'openpay-bridge', 'openpay-bridge.exe')]
+    : [
+        path.join(__dirname, 'openpay-bridge', 'bin', 'Release', 'openpay-bridge.exe'),
+        path.join(__dirname, 'openpay-bridge', 'bin', 'Debug', 'openpay-bridge.exe'),
+      ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function probeOpenPayBridgeAlive(cb) {
+  const req = http.get('http://localhost:9091/health', { timeout: 800 }, (res) => {
+    res.resume();
+    cb(res.statusCode === 200);
+  });
+  req.on('error', () => cb(false));
+  req.on('timeout', () => { try { req.destroy(); } catch {} cb(false); });
+}
+
+function startOpenPayBridge() {
+  try {
+    if (openpayBridgeProcess) {
+      console.log('[OPENPAY-BRIDGE] ya hay un bridge corriendo (pid=' + openpayBridgeProcess.pid + '); se omite spawn');
+      return;
+    }
+    const exe = resolveOpenPayBridgeExe();
+    if (!exe) {
+      console.log('[OPENPAY-BRIDGE] ℹ️ openpay-bridge.exe no encontrado; se omite el arranque');
+      return;
+    }
+    // Si ya hay un bridge externo respondiendo en 9091 (por ejemplo `run-sandbox.ps1`
+    // corriendo aparte), no spawneamos otro para no chocar en el puerto.
+    probeOpenPayBridgeAlive((alive) => {
+      if (alive) {
+        console.log('[OPENPAY-BRIDGE] ya responde en http://localhost:9091 (proceso externo); se omite spawn');
+        return;
+      }
+      spawnOpenPayBridge(exe);
+    });
+  } catch (err) {
+    console.error('[OPENPAY-BRIDGE] ❌ No se pudo iniciar el bridge:', err.message);
+  }
+}
+
+function spawnOpenPayBridge(exe) {
+  try {
+    console.log('[OPENPAY-BRIDGE] 🚀 Iniciando bridge:', exe);
+    // cwd = carpeta del exe para que el SDK encuentre pinpad.config / Local.config
+    // junto al binario.
+    openpayBridgeProcess = spawn(exe, [], {
+      cwd: path.dirname(exe),
+      env: { ...process.env, OPENPAY_BRIDGE_PORT: '9091' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+
+    openpayBridgeProcess.stdout.on('data', (chunk) => {
+      const line = chunk.toString().trim();
+      if (line) console.log('[OPENPAY-BRIDGE]', line);
+    });
+    openpayBridgeProcess.stderr.on('data', (chunk) => {
+      const line = chunk.toString().trim();
+      if (line) console.error('[OPENPAY-BRIDGE][stderr]', line);
+    });
+
+    openpayBridgeProcess.on('exit', (code, signal) => {
+      console.log('[OPENPAY-BRIDGE] 🛑 Bridge terminó', { code, signal });
+      const wasStopping = openpayBridgeStopping;
+      openpayBridgeProcess = null;
+      openpayBridgeStopping = false;
+      // Auto-reinicio si murió inesperadamente y la app sigue viva.
+      if (!wasStopping && !app.isReady()) return;
+      if (!wasStopping && mainWindow) {
+        console.log('[OPENPAY-BRIDGE] 🔁 Reintentando arranque en 3s...');
+        setTimeout(() => startOpenPayBridge(), 3000);
+      }
+    });
+
+    openpayBridgeProcess.on('error', (err) => {
+      console.error('[OPENPAY-BRIDGE] ❌ Error de proceso:', err.message);
+    });
+  } catch (err) {
+    console.error('[OPENPAY-BRIDGE] ❌ No se pudo iniciar el bridge:', err.message);
+  }
+}
+
+function stopOpenPayBridge() {
+  if (!openpayBridgeProcess) return;
+  openpayBridgeStopping = true;
+  console.log('[OPENPAY-BRIDGE] 🛑 Deteniendo bridge...');
+  try {
+    // En Windows, kill() manda SIGTERM que HttpListener ignora; usamos
+    // taskkill para asegurar el corte.
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/pid', String(openpayBridgeProcess.pid), '/f', '/t'], {
+        windowsHide: true,
+      });
+    } else {
+      openpayBridgeProcess.kill();
+    }
+  } catch (err) {
+    console.error('[OPENPAY-BRIDGE] ⚠️ Error deteniendo bridge:', err.message);
+  }
+}
 
 
 // Función para buscar archivo recursivamente
@@ -704,20 +836,13 @@ ipcMain.handle('print-html', async (event, { htmlContent, filename }) => {
   }
 });
 
-// ===== ACTUALIZACIONES DESDE EL SERVIDOR (svc-pos /api/pos/app-updates) =====
-// El check lo hace el renderer vía HTTP. Aquí solo descargamos el binario,
-// validamos checksum (sha256) opcional y lanzamos el instalador.
+// ===== ACTUALIZACIONES AUTOMÁTICAS (electron-updater + GitHub Releases) =====
+// Igual que admin-frontend-joanis: electron-updater lee latest.yml desde GitHub
+// Releases y maneja check/descarga/instalación. El renderer solo pinta el modal
+// a partir de los eventos reenviados por IPC (update-status / download-progress).
 
-let activeDownload = null; // { req, filePath, aborted }
-let downloadedUpdatePath = null;
-
-function getUpdatesDir() {
-  const dir = path.join(app.getPath('userData'), 'updates');
-  try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); } catch (e) {
-    console.error('[UPDATE] No se pudo crear updates dir:', e.message);
-  }
-  return dir;
-}
+let updateInfo = null;
+let updateDownloaded = false;
 
 function safeSendToRenderer(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
@@ -727,50 +852,20 @@ function safeSendToRenderer(channel, payload) {
   }
 }
 
-function inferFilename(downloadUrl, version) {
-  try {
-    const u = new URL(downloadUrl);
-    const base = path.basename(u.pathname);
-    if (base && /\.[a-z0-9]{2,5}$/i.test(base)) return base;
-  } catch (_) {}
-  const ext = process.platform === 'win32' ? 'exe' : process.platform === 'darwin' ? 'dmg' : 'AppImage';
-  return `CajaGrit-${version || Date.now()}-installer.${ext}`;
+function isNoReleasesError(message) {
+  return !!message && (
+    message.includes('404') ||
+    message.includes('Not Found') ||
+    message.includes('no published releases')
+  );
 }
 
-function parseChecksum(value) {
-  if (!value || typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (trimmed.includes(':')) {
-    const [algo, hex] = trimmed.split(':');
-    return { algorithm: algo.toLowerCase(), expected: hex.toLowerCase() };
-  }
-  return { algorithm: 'sha256', expected: trimmed.toLowerCase() };
-}
-
-function httpGet(reqUrl, redirectsLeft = 5) {
-  return new Promise((resolve, reject) => {
-    let parsed;
-    try { parsed = new URL(reqUrl); } catch (e) { return reject(e); }
-    const lib = parsed.protocol === 'https:' ? https : http;
-    const req = lib.get(reqUrl, { headers: { 'User-Agent': `CajaGrit/${app.getVersion()}` } }, (res) => {
-      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        if (redirectsLeft <= 0) {
-          res.resume();
-          return reject(new Error('Demasiados redirects'));
-        }
-        const next = new URL(res.headers.location, reqUrl).toString();
-        res.resume();
-        httpGet(next, redirectsLeft - 1).then(resolve, reject);
-        return;
-      }
-      if (!res.statusCode || res.statusCode >= 400) {
-        res.resume();
-        return reject(new Error(`HTTP ${res.statusCode || 'desconocido'} descargando ${reqUrl}`));
-      }
-      resolve({ res, req });
-    });
-    req.on('error', reject);
-  });
+function isNetworkError(message) {
+  return !!message && (
+    message.includes('net::') ||
+    message.includes('ENOTFOUND') ||
+    message.includes('ETIMEDOUT')
+  );
 }
 
 ipcMain.handle('get-app-version', async () => ({
@@ -778,156 +873,157 @@ ipcMain.handle('get-app-version', async () => ({
   name: app.getName(),
 }));
 
-ipcMain.handle('download-app-update', async (_event, args = {}) => {
-  const { url: downloadUrl, version, expectedChecksum, expectedBytes, filename } = args;
-  if (!downloadUrl || typeof downloadUrl !== 'string') {
-    return { success: false, error: 'downloadUrl requerido' };
-  }
-  if (activeDownload) {
-    return { success: false, error: 'Ya hay una descarga en curso' };
-  }
+// Verificar actualizaciones manualmente (lo invoca el modal del renderer)
+ipcMain.handle('check-for-updates', async () => {
   if (isDev) {
-    console.warn('[UPDATE] Descarga real omitida en desarrollo');
-    return { success: false, error: 'Descarga no disponible en modo desarrollo' };
+    return {
+      updateAvailable: false,
+      currentVersion: app.getVersion(),
+      message: 'Las actualizaciones no están disponibles en modo desarrollo',
+    };
   }
 
-  const finalName = filename || inferFilename(downloadUrl, version);
-  const filePath = path.join(getUpdatesDir(), finalName);
-  const tmpPath = `${filePath}.part`;
-
-  // Limpiar archivo previo si existe
-  try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (_) {}
-
-  const checksumSpec = parseChecksum(expectedChecksum);
-  const hash = checksumSpec ? crypto.createHash(checksumSpec.algorithm) : null;
-
-  console.log('[UPDATE] ⬇️ Descargando', downloadUrl, '->', filePath);
-  safeSendToRenderer('update-status', { status: 'downloading', version });
-
   try {
-    const { res, req } = await httpGet(downloadUrl);
-    const total = expectedBytes && Number(expectedBytes) > 0
-      ? Number(expectedBytes)
-      : Number(res.headers['content-length']) || 0;
+    console.log('[UPDATE] Verificando actualizaciones...');
+    const result = await autoUpdater.checkForUpdates();
 
-    activeDownload = { req, filePath: tmpPath, aborted: false };
+    if (result && result.updateInfo) {
+      updateInfo = result.updateInfo;
+      const currentVersion = app.getVersion();
+      const latestVersion = result.updateInfo.version;
+      return {
+        updateAvailable: latestVersion !== currentVersion,
+        currentVersion,
+        latestVersion,
+        releaseDate: result.updateInfo.releaseDate,
+        releaseNotes:
+          typeof result.updateInfo.releaseNotes === 'string'
+            ? result.updateInfo.releaseNotes
+            : undefined,
+        updateDownloaded,
+      };
+    }
 
-    let transferred = 0;
-    let lastTick = Date.now();
-    let lastBytes = 0;
-    const fileStream = fs.createWriteStream(tmpPath);
+    return { updateAvailable: false, currentVersion: app.getVersion() };
+  } catch (error) {
+    const message = (error && error.message) || String(error);
+    console.error('[UPDATE] Error al verificar actualizaciones:', message);
+    if (isNoReleasesError(message)) {
+      return {
+        updateAvailable: false,
+        currentVersion: app.getVersion(),
+        message: 'No hay releases publicados aún. ¡Ya tienes la versión más reciente!',
+      };
+    }
+    if (isNetworkError(message)) {
+      return {
+        updateAvailable: false,
+        currentVersion: app.getVersion(),
+        message: 'No se pudo conectar al servidor de actualizaciones.',
+      };
+    }
+    return { updateAvailable: false, currentVersion: app.getVersion(), error: message };
+  }
+});
 
-    await new Promise((resolve, reject) => {
-      res.on('data', (chunk) => {
-        transferred += chunk.length;
-        if (hash) hash.update(chunk);
-        const now = Date.now();
-        if (now - lastTick >= 250) {
-          const bytesPerSecond = ((transferred - lastBytes) * 1000) / (now - lastTick);
-          lastTick = now;
-          lastBytes = transferred;
-          safeSendToRenderer('download-progress', {
-            percent: total > 0 ? Math.min(100, (transferred / total) * 100) : 0,
-            transferred,
-            total,
-            bytesPerSecond,
-          });
-        }
-      });
-      res.on('error', reject);
-      fileStream.on('error', reject);
-      fileStream.on('finish', resolve);
-      res.pipe(fileStream);
+// Descargar actualización (electron-updater)
+ipcMain.handle('download-update', async () => {
+  if (isDev) {
+    return { success: false, message: 'No disponible en modo desarrollo' };
+  }
+  try {
+    console.log('[UPDATE] Iniciando descarga de actualización...');
+    safeSendToRenderer('update-status', { status: 'downloading' });
+    await autoUpdater.downloadUpdate();
+    return { success: true, message: 'Descarga iniciada' };
+  } catch (error) {
+    const message = (error && error.message) || String(error);
+    console.error('[UPDATE] Error al descargar:', message);
+    safeSendToRenderer('update-status', { status: 'error', error: message });
+    return { success: false, error: message };
+  }
+});
+
+// Instalar actualización descargada (electron-updater hace quitAndInstall)
+ipcMain.handle('install-update', async () => {
+  if (!updateDownloaded) {
+    return { success: false, message: 'No hay actualización descargada' };
+  }
+  console.log('[UPDATE] Instalando actualización...');
+  safeSendToRenderer('update-status', { status: 'installing' });
+  // isSilent=false (mostrar progreso del NSIS), isForceRunAfter=true (reabrir app)
+  setImmediate(() => autoUpdater.quitAndInstall(false, true));
+  return { success: true };
+});
+
+// Configurar eventos del auto-updater y arrancar verificación periódica
+function setupAutoUpdater() {
+  if (isDev) {
+    console.log('[UPDATE] Auto-updater deshabilitado en modo desarrollo');
+    return;
+  }
+
+  console.log('[UPDATE] Configurando auto-updater...');
+
+  autoUpdater.on('update-available', (info) => {
+    console.log('[UPDATE] Actualización disponible:', info.version);
+    updateInfo = info;
+    safeSendToRenderer('update-status', {
+      status: 'available',
+      version: info.version,
+      releaseDate: info.releaseDate,
+      releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined,
     });
+  });
 
-    if (activeDownload && activeDownload.aborted) {
-      try { fs.unlinkSync(tmpPath); } catch (_) {}
-      activeDownload = null;
-      return { success: false, error: 'Descarga cancelada' };
+  autoUpdater.on('update-not-available', () => {
+    console.log('[UPDATE] No hay actualizaciones disponibles');
+    safeSendToRenderer('update-status', { status: 'up-to-date' });
+  });
+
+  autoUpdater.on('error', (err) => {
+    const message = (err && err.message) || String(err);
+    console.error('[UPDATE] Error en auto-updater:', message);
+    // 404 / sin releases publicados → tratar como "al día" (no es un error real)
+    if (isNoReleasesError(message)) {
+      safeSendToRenderer('update-status', { status: 'up-to-date' });
+      return;
     }
-
-    if (checksumSpec && hash) {
-      const actual = hash.digest('hex').toLowerCase();
-      if (actual !== checksumSpec.expected) {
-        try { fs.unlinkSync(tmpPath); } catch (_) {}
-        activeDownload = null;
-        const msg = `Checksum ${checksumSpec.algorithm} no coincide (esperado ${checksumSpec.expected}, obtenido ${actual})`;
-        console.error('[UPDATE] ❌', msg);
-        safeSendToRenderer('update-status', { status: 'error', error: msg });
-        return { success: false, error: msg };
-      }
+    // Errores de conexión: ignorar silenciosamente
+    if (isNetworkError(message)) {
+      return;
     }
+    safeSendToRenderer('update-status', { status: 'error', error: message });
+  });
 
-    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (_) {}
-    fs.renameSync(tmpPath, filePath);
-    downloadedUpdatePath = filePath;
-    activeDownload = null;
-
+  autoUpdater.on('download-progress', (progress) => {
     safeSendToRenderer('download-progress', {
-      percent: 100, transferred, total: total || transferred, bytesPerSecond: 0,
+      percent: progress.percent,
+      bytesPerSecond: progress.bytesPerSecond,
+      transferred: progress.transferred,
+      total: progress.total,
     });
-    safeSendToRenderer('update-status', { status: 'downloaded', version, filePath });
+  });
 
-    console.log('[UPDATE] ✅ Descarga completada:', filePath);
-    return { success: true, filePath };
-  } catch (error) {
-    try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (_) {}
-    activeDownload = null;
-    const message = error && error.message ? error.message : String(error);
-    console.error('[UPDATE] ❌ Error descargando:', message);
-    safeSendToRenderer('update-status', { status: 'error', error: message });
-    return { success: false, error: message };
-  }
-});
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log('[UPDATE] Actualización descargada:', info.version);
+    updateDownloaded = true;
+    safeSendToRenderer('update-status', { status: 'downloaded', version: info.version });
+  });
 
-ipcMain.handle('cancel-app-update', async () => {
-  if (!activeDownload) return { success: false, error: 'No hay descarga activa' };
-  try {
-    activeDownload.aborted = true;
-    if (activeDownload.req && typeof activeDownload.req.destroy === 'function') {
-      activeDownload.req.destroy(new Error('Cancelada por el usuario'));
-    }
-    return { success: true };
-  } catch (e) {
-    return { success: false, error: e.message };
-  }
-});
+  // Verificar al iniciar (tras 5s) y luego cada 4 horas
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch((err) => {
+      console.error('[UPDATE] Error en verificación inicial:', err.message);
+    });
+  }, 5000);
 
-ipcMain.handle('install-app-update', async (_event, args = {}) => {
-  const filePath = (args && args.filePath) || downloadedUpdatePath;
-  if (!filePath || !fs.existsSync(filePath)) {
-    return { success: false, error: 'No hay actualización descargada' };
-  }
-  console.log('[UPDATE] ⚙️ Lanzando instalador:', filePath);
-  safeSendToRenderer('update-status', { status: 'installing', filePath });
-
-  try {
-    if (server) { try { server.close(); } catch (_) {} }
-
-    if (process.platform === 'win32') {
-      const child = spawn(filePath, [], { detached: true, stdio: 'ignore' });
-      child.unref();
-    } else if (process.platform === 'darwin') {
-      await shell.openPath(filePath);
-    } else {
-      try { fs.chmodSync(filePath, 0o755); } catch (_) {}
-      const child = spawn(filePath, [], { detached: true, stdio: 'ignore' });
-      child.unref();
-    }
-
-    setTimeout(() => {
-      try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.removeAllListeners('close'); } catch (_) {}
-      app.quit();
-    }, 500);
-
-    return { success: true };
-  } catch (error) {
-    const message = error && error.message ? error.message : String(error);
-    console.error('[UPDATE] ❌ Error lanzando instalador:', message);
-    safeSendToRenderer('update-status', { status: 'error', error: message });
-    return { success: false, error: message };
-  }
-});
+  setInterval(() => {
+    autoUpdater.checkForUpdates().catch((err) => {
+      console.error('[UPDATE] Error en verificación periódica:', err.message);
+    });
+  }, 4 * 60 * 60 * 1000);
+}
 
 app.on('ready', () => {
   // Inicializar isPackaged ahora que app está listo
@@ -984,10 +1080,20 @@ app.on('ready', () => {
     console.log('[ELECTRON] 🎯 Modo producción - creando servidor');
     createServer();
   }
+
+  // Inicializar el sistema de actualizaciones (electron-updater + GitHub Releases)
+  setupAutoUpdater();
+
+  // Arrancar el bridge de OpenPay (proceso .NET local). Silencioso si el
+  // binario no está compilado / instalado (comercios sin PinPad OpenPay).
+  startOpenPayBridge();
 });
 
 app.on('before-quit', (event) => {
   console.log('Aplicación a punto de cerrarse');
+
+  // Detener el bridge OpenPay antes de cerrar Electron.
+  stopOpenPayBridge();
 
   // Cerrar el servidor HTTP si existe
   if (server) {

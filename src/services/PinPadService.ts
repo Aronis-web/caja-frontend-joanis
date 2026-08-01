@@ -15,6 +15,64 @@ import type {
   DEFAULT_PINPAD_CONFIG,
 } from '@/types/pinpad';
 
+/**
+ * Error lanzado cuando la petición al PinPad excede el timeout configurado.
+ * Uso típico: PPD desconectado / reiniciado durante una transacción.
+ * La UI debe cerrar el modal de "Procesando pago" y permitir reintentar.
+ */
+export class PinPadTimeoutError extends Error {
+  constructor(message = 'Tiempo de espera agotado. El PinPad no responde.') {
+    super(message);
+    this.name = 'PinPadTimeoutError';
+  }
+}
+
+/**
+ * Detecta si una respuesta corresponde a una cancelación desde el PPD por el operador.
+ * (Certificación Izipay: response_code=77 + message=CANCELADO)
+ */
+export function isCancelledByOperator(response: PinPadTransactionResponse): boolean {
+  return (
+    response?.response_code === '77' &&
+    typeof response?.message === 'string' &&
+    response.message.trim().toUpperCase() === 'CANCELADO'
+  );
+}
+
+/**
+ * Detecta si el host informó un CIERRE AUTOMATICO durante la operación.
+ * (Certificación Izipay: response_code=95 + message contiene "CIERRE" / "AUTOMAT")
+ * En este caso la UI debe informar al operador y forzar re-consulta del lote,
+ * ya que el PPD abrió un lote nuevo internamente.
+ */
+export function isAutoBatchClose(response: PinPadTransactionResponse): boolean {
+  if (!response) return false;
+  const rc = response.response_code;
+  const msg = typeof response.message === 'string' ? response.message.toUpperCase() : '';
+  return rc === '95' || msg.includes('CIERRE AUTOMAT') || msg.includes('AUTOMATICO');
+}
+
+/**
+ * Longitud máxima permitida (defensiva) para campos de texto provenientes del host.
+ * El host de Izipay puede eventualmente devolver campos con longitud mayor a la
+ * definida en la especificación; esta función los recorta para evitar que la UI
+ * se rompa al renderizarlos.
+ */
+const HOST_STRING_MAX_LENGTH = 512;
+export function sanitizePinPadResponse<T extends Record<string, unknown>>(response: T): T {
+  if (!response || typeof response !== 'object') return response;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(response)) {
+    if (typeof v === 'string' && v.length > HOST_STRING_MAX_LENGTH) {
+      // Preserva print_data completo (voucher) pero recorta el resto.
+      out[k] = k === 'print_data' ? v : v.slice(0, HOST_STRING_MAX_LENGTH);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out as T;
+}
+
 class PinPadService {
   private config: PinPadConfig;
   private token: string | null = null;
@@ -131,7 +189,11 @@ class PinPadService {
       clearTimeout(timeoutId);
 
       if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error('Tiempo de espera agotado. El PinPad no responde.');
+        // PPD no responde (posible reinicio/desconexión durante la transacción):
+        // invalidamos el token para forzar una nueva sesión en el próximo intento.
+        this.token = null;
+        this.tokenExpiresAt = null;
+        throw new PinPadTimeoutError();
       }
 
       throw error;

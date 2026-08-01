@@ -1,6 +1,13 @@
 # 📦 Sistema de Actualización - CajaGrit
 
-Índice de documentación y recursos para el sistema mejorado de actualizaciones de Electron.
+Índice de documentación y recursos para el sistema de actualizaciones de Electron.
+
+> ⚠️ **Estado actual (fuente de la verdad: [UPDATE_SYSTEM.md](./UPDATE_SYSTEM.md)).**
+> El sistema usa **`electron-updater` + GitHub Releases** (igual que
+> `admin-frontend-joanis`), cableado directamente en `electron.js`. Algunas partes
+> históricas de este índice describen un diseño previo con `UpdateService.ts`,
+> telemetría y canales beta/edge que **no están implementados**; ignóralas y guíate
+> por `UPDATE_SYSTEM.md`.
 
 ---
 
@@ -35,23 +42,17 @@
 
 ### Configuración Principal
 ```
-├── electron-builder.yml          ← Configuración del instalador
+├── electron-builder.yml          ← Config del instalador + publish github
 ├── CHANGELOG.md                  ← Historial de cambios
-├── SETUP_UPDATES.md             ← Guía rápida
-├── UPDATE_SYSTEM.md             ← Documentación técnica
-└── UPDATES_IMPLEMENTATION_SUMMARY.md ← Resumen de implementación
+└── UPDATE_SYSTEM.md              ← Documentación técnica (fuente de la verdad)
 ```
 
-### Código Fuente
+### Código Fuente (implementación real)
 
-**Servicios:**
+**Main process (Electron):**
 ```
-src/services/
-└── UpdateService.ts             ← Lógica de actualización + rollback
-
-src/main/
-├── updateHandlers.js            ← IPC handlers mejorados
-└── electron-integration-example.js ← Ejemplo de integración
+electron.js                      ← electron-updater: setupAutoUpdater() + IPC
+preload.js                       ← expone window.electronAPI (check/download/install)
 ```
 
 **Componentes React:**
@@ -60,23 +61,13 @@ src/components/
 └── UpdateModal.tsx              ← UI modal para actualizaciones
 
 src/hooks/
-└── useAppUpdater.ts             ← Hook personalizado
-
-src/config/
-└── updateConfig.ts              ← Configuración centralizada
+└── useAppUpdater.ts             ← Hook (Electron por IPC; Android por HTTP)
 ```
 
 **Scripts de Desarrollo:**
 ```
 scripts/
-├── version-manager.js           ← Manejo automático de versiones
-└── publish-release.js           ← Publicación multi-canal
-```
-
-**CI/CD:**
-```
-.github/workflows/
-└── release.yml                  ← Automatización GitHub Actions
+└── version-manager.js           ← Manejo automático de versiones (npm run version)
 ```
 
 ---

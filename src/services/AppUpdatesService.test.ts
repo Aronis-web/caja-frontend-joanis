@@ -79,7 +79,7 @@ const run = async () => {
   assertEqual(calls.length, 1, 'check() debe hacer 1 fetch');
   const checkUrl = calls[0].url;
   assert(
-    checkUrl.startsWith(`${FAKE_API_URL}/api/pos/app-updates/check?`),
+    checkUrl.startsWith(`${FAKE_API_URL}/api/app-updates/check?`),
     `URL de check incorrecta: ${checkUrl}`
   );
   assert(checkUrl.includes('appId=pos'), 'check debe incluir appId=pos');
@@ -129,7 +129,7 @@ const run = async () => {
   ];
   nextResponse = { ok: true, status: 200, body: releasesBody };
   const all = await appUpdatesService.latestAll();
-  assertEqual(calls[0].url, `${FAKE_API_URL}/api/pos/app-updates/latest`, 'URL latestAll');
+  assertEqual(calls[0].url, `${FAKE_API_URL}/api/app-updates/latest`, 'URL latestAll');
   assertEqual(all.length, 1, 'latestAll parseado');
 
   // 5) latest(appId, platform) codifica path params
@@ -138,7 +138,7 @@ const run = async () => {
   await appUpdatesService.latest('po s', 'windows');
   assertEqual(
     calls[0].url,
-    `${FAKE_API_URL}/api/pos/app-updates/latest/po%20s/windows`,
+    `${FAKE_API_URL}/api/app-updates/latest/po%20s/windows`,
     'URL latest debe encode-uri'
   );
 
@@ -146,13 +146,13 @@ const run = async () => {
   resetCalls();
   nextResponse = { ok: true, status: 200, body: releasesBody };
   await appUpdatesService.releases('pos');
-  assertEqual(calls[0].url, `${FAKE_API_URL}/api/pos/app-updates/releases/pos`, 'releases sin filtro');
+  assertEqual(calls[0].url, `${FAKE_API_URL}/api/app-updates/releases/pos`, 'releases sin filtro');
   resetCalls();
   nextResponse = { ok: true, status: 200, body: releasesBody };
   await appUpdatesService.releases('pos', 'android');
   assertEqual(
     calls[0].url,
-    `${FAKE_API_URL}/api/pos/app-updates/releases/pos?platform=android`,
+    `${FAKE_API_URL}/api/app-updates/releases/pos?platform=android`,
     'releases con filtro'
   );
 
@@ -160,8 +160,8 @@ const run = async () => {
   const dl = appUpdatesService.buildDownloadUrl('pos', 'android', '1.0.29');
   assertEqual(
     dl,
-    `${FAKE_API_URL}/api/pos/app-updates/download/pos/android/1.0.29`,
-    'buildDownloadUrl debe usar svc-pos'
+    `${FAKE_API_URL}/api/app-updates/download/pos/android/1.0.29`,
+    'buildDownloadUrl debe usar svc-admin'
   );
 
   console.log('✅ AppUpdatesService tests: OK (7 suites)');

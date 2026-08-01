@@ -37,6 +37,12 @@ interface PinPadStoreState {
   connect: () => Promise<boolean>;
   disconnect: () => void;
   testConnection: () => Promise<boolean>;
+  /**
+   * Sonda silenciosa: intenta login + /test sin marcar status=ERROR si falla.
+   * Útil para detectar si el PinPad está conectado y decidir si usar el flujo PinPad
+   * o el flujo manual. No genera ruido en el UI cuando no hay PinPad.
+   */
+  probeAvailability: () => Promise<boolean>;
 
   // Acciones de transacción
   processSale: (
@@ -156,6 +162,35 @@ export const usePinPadStore = create<PinPadStoreState>((set, get) => ({
         lastErrorAt: new Date().toISOString(),
       });
       console.error('❌ [PINPAD_STORE] Error en test:', errorMessage);
+      return false;
+    }
+  },
+
+  probeAvailability: async () => {
+    try {
+      // Login silencioso si no hay token
+      if (!get().isAuthenticated) {
+        try {
+          await pinPadService.login();
+          set({ isAuthenticated: true });
+        } catch {
+          set({ isAvailable: false });
+          console.warn('🔌 [PINPAD_STORE] Gateway no disponible (login falló)');
+          return false;
+        }
+      }
+
+      const isAvailable = await pinPadService.testConnection();
+      set({ isAvailable });
+      console.log(
+        isAvailable
+          ? '✅ [PINPAD_STORE] PinPad detectado y disponible'
+          : '🔌 [PINPAD_STORE] PinPad no detectado — se usará flujo manual'
+      );
+      return isAvailable;
+    } catch {
+      set({ isAvailable: false });
+      console.warn('🔌 [PINPAD_STORE] PinPad no disponible — se usará flujo manual');
       return false;
     }
   },

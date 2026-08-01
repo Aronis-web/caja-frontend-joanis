@@ -1,7 +1,7 @@
 /**
  * AppUpdatesService
- * Cliente HTTP para los endpoints publicos /api/pos/app-updates/*
- * expuestos por svc-pos (espejo de solo lectura de svc-admin).
+ * Cliente HTTP para los endpoints publicos /api/app-updates/*
+ * expuestos por svc-admin.
  *
  * No requiere Authorization: los endpoints son publicos.
  */
@@ -13,7 +13,7 @@ import type {
   CheckUpdateResponse,
 } from '@/types/appUpdates';
 
-const BASE_PATH = '/api/pos/app-updates';
+const BASE_PATH = '/api/app-updates';
 
 class AppUpdatesService {
   private baseURL: string;
@@ -91,9 +91,9 @@ class AppUpdatesService {
   }
 
   /**
-   * P5. Construye la URL absoluta para forzar la descarga desde svc-pos.
-   * Usar como fallback cuando downloadUrl del check apunta a svc-admin y
-   * queremos garantizar disponibilidad aunque svc-admin este caido.
+   * P5. Construye la URL absoluta de descarga contra el endpoint de app-updates.
+   * Usar como fallback cuando downloadUrl del check no viene o queremos
+   * garantizar que la descarga pase por el mismo host del API.
    */
   buildDownloadUrl(
     appId: string,

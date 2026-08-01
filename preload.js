@@ -57,18 +57,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAppVersion: () => {
     return ipcRenderer.invoke('get-app-version');
   },
-  // Actualizaciones desde el servidor (svc-pos)
-  // El check lo hace el renderer via HTTP; aquí solo se descarga e instala.
-  downloadAppUpdate: (args) => {
-    return ipcRenderer.invoke('download-app-update', args);
+  // Actualizaciones automáticas (electron-updater + GitHub Releases)
+  // El check/descarga/instalación los maneja el main process vía electron-updater.
+  checkForUpdates: () => {
+    return ipcRenderer.invoke('check-for-updates');
   },
-  installAppUpdate: (args) => {
-    return ipcRenderer.invoke('install-app-update', args);
+  downloadUpdate: () => {
+    return ipcRenderer.invoke('download-update');
   },
-  cancelAppUpdate: () => {
-    return ipcRenderer.invoke('cancel-app-update');
+  installUpdate: () => {
+    return ipcRenderer.invoke('install-update');
   },
-  // Escuchar eventos de descarga/instalación
+  // Escuchar eventos de estado y progreso de descarga
   onUpdateStatus: (callback) => {
     ipcRenderer.on('update-status', (event, status) => callback(status));
   },

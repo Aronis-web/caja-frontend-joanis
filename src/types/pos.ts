@@ -120,6 +120,70 @@ export interface SalePayment {
   paymentMethodId: string;
   paymentMethodName?: string;
   amount: number;
+  // Metadatos opcionales cuando el pago proviene de un cobro PinPad
+  // (Izipay/Openpay) previamente registrado en el backend.
+  pinpadOperationId?: string;
+  pinpadProvider?: PinPadProvider;
+  cardLast4?: string;
+  approvalCode?: string;
+}
+
+// ============ PinPad (cobro antes de la venta) ============
+
+export type PinPadProvider = 'IZIPAY' | 'OPENPAY';
+
+export type PinPadLifecycle = 'UNCONSUMED' | 'CONSUMED' | 'VOIDED';
+
+/**
+ * Payload para POST /pos/pinpad/operations.
+ * Se llama apenas el PinPad fisico aprueba, ANTES de crear la venta.
+ * Nunca se envia el PAN completo; solo la tarjeta enmascarada.
+ */
+export interface RegisterPinPadOperationRequest {
+  provider: PinPadProvider;
+  cashRegisterSessionId: string;
+  amountCents: number;
+  status?: 'APPROVED' | string;
+  responseCode?: string;
+  approvalCode?: string;
+  operationNumber?: string;
+  traceNumber?: string;
+  batchNumber?: string;
+  terminalId?: string;
+  merchantId?: string;
+  cardBrand?: string;
+  cardMasked?: string;
+  cardLast4?: string;
+  accountType?: string;
+  transactionAt?: string;
+  rawResponse?: Record<string, unknown>;
+}
+
+export interface RegisterPinPadOperationResponse {
+  id: string;
+  provider: PinPadProvider;
+  lifecycle: PinPadLifecycle;
+}
+
+export interface OrphanPinPadOperation {
+  id: string;
+  provider: PinPadProvider;
+  amountCents: number;
+  cardLast4?: string;
+  approvalCode?: string;
+  operationNumber?: string;
+  transactionAt?: string;
+  createdAt: string;
+}
+
+export interface OrphanPinPadOperationsResponse {
+  count: number;
+  totalCents: number;
+  operations: OrphanPinPadOperation[];
+}
+
+export interface VoidPinPadOperationResponse {
+  voided: boolean;
 }
 
 export interface Sale {
@@ -355,6 +419,10 @@ export interface CreateSaleRequest {
     amountCents: number;
     referenceNumber?: string;
     notes?: string;
+    // Opcional: si el pago proviene de un cobro PinPad ya registrado
+    // (POST /pos/pinpad/operations), el backend lo consume al crear la venta.
+    pinpadOperationId?: string;
+    pinpadProvider?: PinPadProvider;
   }[];
   notes?: string;
   customerNotes?: string;

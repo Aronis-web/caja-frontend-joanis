@@ -26,6 +26,7 @@ import {
   ALERT_LEVEL_CONFIGS,
 } from '@/types/collections';
 import { useTheme, useThemedStyles, type Theme } from '@/design-system';
+import { PinPadOrphansModal } from '@/components/pinpad/PinPadOrphansModal';
 
 // Importación condicional de QRCode para web/Electron
 let QRCode: React.ComponentType<{ value: string; size?: number; level?: string }> | null = null;
@@ -41,7 +42,16 @@ if (Platform.OS === 'web') {
 export default function CashCollectionScreen() {
   const navigation = useNavigation();
   const route = useRoute();
-  const { currentSession, selectedCashRegister } = usePOSStore();
+  const {
+    currentSession,
+    selectedCashRegister,
+    pinpadOrphans,
+    pinpadOrphansTotalCents,
+    isPinpadOrphansLoading,
+    pinpadOrphansError,
+    fetchOrphanPinPadOperations,
+    voidPinPadOperation,
+  } = usePOSStore();
   const logout = useAuthStore((state) => state.logout);
   const theme = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -61,6 +71,10 @@ export default function CashCollectionScreen() {
 
   const [countdown, setCountdown] = useState<number>(0);
   const [showConfirmCancel, setShowConfirmCancel] = useState(false);
+  const [showPinpadOrphansModal, setShowPinpadOrphansModal] = useState(false);
+  // Cuando true, indica que el usuario reintenta el cierre y debemos saltar la
+  // pre-verificacion de huerfanos (ya la resolvio en la modal).
+  const skipOrphansCheckRef = useRef(false);
   const [closureLogoutCountdown, setClosureLogoutCountdown] = useState<number>(10);
   const completedRequestIdRef = useRef<string | null>(null);
   const closureTicketPrintedForRequestRef = useRef<string | null>(null);
@@ -421,6 +435,28 @@ export default function CashCollectionScreen() {
   const handleRequestCollection = useCallback(async () => {
     if (!currentSession?.id) return;
 
+    // Compuerta de reconciliación: si es cierre de caja, verificar que no
+    // haya cobros PinPad aprobados sin venta (huérfanos). El backend también
+    // bloquea, pero preguntamos antes para dar una UI clara.
+    if (isClosureMode && !skipOrphansCheckRef.current) {
+      try {
+        const orphans = await fetchOrphanPinPadOperations(currentSession.id);
+        if (orphans.count > 0) {
+          setShowPinpadOrphansModal(true);
+          // Permitir reintento manual del cierre; el auto-start no volverá a
+          // dispararse en este render pero al presionar "Continuar cierre" en
+          // la modal marcaremos skipOrphansCheckRef y llamaremos de nuevo.
+          return;
+        }
+      } catch (orphErr) {
+        console.error('❌ Error consultando cobros PinPad huérfanos:', orphErr);
+        // Si no se pudo consultar (por ejemplo, red caída), dejamos que el
+        // backend responda con su 400 defensivo más abajo.
+      }
+    }
+
+    skipOrphansCheckRef.current = false;
+
     try {
       const reason = isClosureMode
         ? CollectionRequestReason.END_OF_SHIFT
@@ -443,11 +479,29 @@ export default function CashCollectionScreen() {
       );
     } catch (error) {
       console.error('Error al solicitar recaudación:', error);
+      // Defensivo: si el backend rechaza el cierre porque hay cobros PinPad
+      // al aire, abrir la compuerta de reconciliación.
+      const msg = error instanceof Error ? error.message.toLowerCase() : '';
+      if (isClosureMode && currentSession?.id && msg.includes('pinpad')) {
+        try {
+          await fetchOrphanPinPadOperations(currentSession.id);
+          setShowPinpadOrphansModal(true);
+          return;
+        } catch (fetchErr) {
+          console.error('❌ Error consultando huérfanos tras 400:', fetchErr);
+        }
+      }
       if (Platform.OS === 'web') {
         window.alert('Error al solicitar recaudación. Por favor, intente nuevamente.');
       }
     }
-  }, [currentSession?.id, cashStatus, createCollectionRequest, isClosureMode]);
+  }, [
+    currentSession?.id,
+    cashStatus,
+    createCollectionRequest,
+    isClosureMode,
+    fetchOrphanPinPadOperations,
+  ]);
 
   // Resetear trigger cuando se fuerza el flujo desde Dashboard
   useEffect(() => {
@@ -1211,6 +1265,43 @@ export default function CashCollectionScreen() {
       </View>
 
       {renderContent()}
+
+      <PinPadOrphansModal
+        visible={showPinpadOrphansModal}
+        orphans={pinpadOrphans}
+        totalCents={pinpadOrphansTotalCents}
+        isLoading={isPinpadOrphansLoading}
+        error={pinpadOrphansError}
+        onRefresh={async () => {
+          if (currentSession?.id) {
+            try {
+              await fetchOrphanPinPadOperations(currentSession.id);
+            } catch (err) {
+              console.error('❌ Error refrescando huérfanos:', err);
+            }
+          }
+        }}
+        onVoid={async (provider, id, reason) => {
+          const voided = await voidPinPadOperation(provider, id, reason);
+          if (voided && currentSession?.id) {
+            // Sincronizar contadores del backend.
+            try {
+              await fetchOrphanPinPadOperations(currentSession.id);
+            } catch (err) {
+              console.error('❌ Error refrescando huérfanos tras anular:', err);
+            }
+          }
+          return voided;
+        }}
+        onClose={() => setShowPinpadOrphansModal(false)}
+        onProceed={() => {
+          setShowPinpadOrphansModal(false);
+          // Reintentar cierre saltando la pre-verificación (ya está en 0).
+          skipOrphansCheckRef.current = true;
+          autoStartTriggeredRef.current = false;
+          void handleRequestCollection();
+        }}
+      />
     </View>
   );
 }

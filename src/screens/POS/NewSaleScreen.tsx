@@ -27,6 +27,7 @@ import { usePOSStore } from '@/store/pos';
 import { useAuthStore } from '@/store/auth';
 import { useOfflineStore } from '@/store/offline';
 import { usePinPadStore } from '@/store/pinpad';
+import { useOpenPayStore } from '@/store/openpay';
 import { useCollectionsStore } from '@/store/collections';
 import { posService } from '@/services/POSService';
 import { networkMonitor } from '@/services/NetworkMonitor';
@@ -34,6 +35,7 @@ import { offlineLoginService } from '@/services/OfflineLoginService';
 import QRCode from 'qrcode';
 import { OfflineModeSwitch } from '@/components/offline';
 import type { PinPadTransactionResponse } from '@/types/pinpad';
+import { extractCardLast4 } from '@/types/openpay';
 import type {
   Product,
   Customer,
@@ -50,7 +52,13 @@ import type {
 import { ROUTES } from '@/constants/routes';
 import { mapOfflineProductToProduct } from '@/utils/posMappers';
 import { CashAlertLevel } from '@/types/collections';
-import { calculateRemainingCents, isIzipayAmountValid, toCents } from '@/utils/paymentFlow';
+import {
+  calculateRemainingCents,
+  derivePinPadProvider,
+  isIzipayAmountValid,
+  isPinPadCardMethod,
+  toCents,
+} from '@/utils/paymentFlow';
 import { useTheme, useThemedStyles, type Theme } from '@/design-system';
 
 export default function NewSaleScreen() {
@@ -108,12 +116,26 @@ export default function NewSaleScreen() {
   // PinPad store
   const {
     status: pinPadStatus,
+    isAvailable: isPinPadAvailable,
     isProcessing: isPinPadProcessing,
     lastTransaction: lastPinPadTransaction,
     lastError: pinPadError,
     connect: connectPinPad,
     processSale: processPinPadSale,
+    probeAvailability: probePinPadAvailability,
   } = usePinPadStore();
+
+  // OpenPay store (PinPad OpenPay Perú vía SDK EGlobal + openpay-bridge local).
+  // Convive con el store Izipay: se elige uno u otro según
+  // `derivePinPadProvider(paymentMethod.code)`.
+  const {
+    isAvailable: isOpenPayAvailable,
+    processSale: processOpenPaySale,
+    processSaleQR: processOpenPaySaleQR,
+    cancelSaleQR: cancelOpenPaySaleQR,
+    connect: connectOpenPay,
+    probeAvailability: probeOpenPayAvailability,
+  } = useOpenPayStore();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Product[]>([]);
@@ -235,8 +257,41 @@ export default function NewSaleScreen() {
   const [pinPadAmountPending, setPinPadAmountPending] = useState(0);
   const [pinPadMethodPending, setPinPadMethodPending] = useState<string | null>(null);
   const [pinPadMethodNamePending, setPinPadMethodNamePending] = useState<string>('');
+  // Flag para saber si el flujo en curso es un QR OpenPay (habilita el botón
+  // "Cancelar QR" en el modal, que llama al bridge /openpay/venta-qr/cancel).
+  const [pinPadQrActive, setPinPadQrActive] = useState(false);
+  const [pinPadCancelling, setPinPadCancelling] = useState(false);
+  // Guard síncrono anti doble-presión del botón "Cancelar QR". El estado de
+  // React se actualiza de forma asíncrona, así que un doble-tap muy rápido
+  // podría disparar dos onPress antes de que el botón se deshabilite. Este ref
+  // se marca de inmediato (mismo tick) y bloquea cualquier llamada extra.
+  const pinPadCancelInFlightRef = useRef(false);
 
   const { cashStatus, fetchCashStatus } = useCollectionsStore();
+
+  // Detección automática de PinPad: hace una sonda silenciosa al montar y
+  // cada 30s. Si el PinPad no responde, el flujo de Izipay cae al manual.
+  useEffect(() => {
+    let cancelled = false;
+    const probe = async () => {
+      try {
+        // Sondas en paralelo: ambos PinPads (Izipay / OpenPay) pueden estar
+        // desconectados independientemente. Cada sonda es silenciosa y no
+        // rompe el UI si el gateway/bridge respectivo no está corriendo.
+        await Promise.allSettled([probePinPadAvailability(), probeOpenPayAvailability()]);
+      } catch {
+        // silencio: la sonda no debe romper el UI
+      }
+    };
+    void probe();
+    const intervalId = setInterval(() => {
+      if (!cancelled) void probe();
+    }, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [probePinPadAvailability, probeOpenPayAvailability]);
 
   // Initialize store from AsyncStorage on mount
   useEffect(() => {
@@ -2926,20 +2981,73 @@ export default function NewSaleScreen() {
                       parentMethod?.submethods && parentMethod.submethods.length > 0
                         ? parentMethod.submethods.find((sm) => sm.id === selectedSubmethod)
                         : parentMethod;
-                    const isIzipay =
-                      selectedMethod?.code?.includes('IZIPAY') || selectedMethod?.isIzipay;
+                    const isIzipay = isPinPadCardMethod(selectedMethod);
 
                     return isIzipay ? (
-                      <View style={styles.izipayWarningBox}>
-                        <Text style={styles.izipayWarningIcon}>⚠️</Text>
-                        <View style={styles.izipayWarningContent}>
-                          <Text style={styles.izipayWarningTitle}>Pago con Tarjeta (Izipay)</Text>
-                          <Text style={styles.izipayWarningText}>
-                            El monto máximo permitido es el total de la venta:{' '}
-                            {formatCurrency(getCartTotal())}
-                          </Text>
+                      <>
+                        <View style={styles.izipayWarningBox}>
+                          <Text style={styles.izipayWarningIcon}>⚠️</Text>
+                          <View style={styles.izipayWarningContent}>
+                            <Text style={styles.izipayWarningTitle}>Pago con Tarjeta (Izipay)</Text>
+                            <Text style={styles.izipayWarningText}>
+                              El monto máximo permitido es el total de la venta:{' '}
+                              {formatCurrency(getCartTotal())}
+                            </Text>
+                          </View>
                         </View>
-                      </View>
+
+                        {/* Indicador de estado del PinPad (proveedor según el código del método) */}
+                        {(() => {
+                          const providerHere = derivePinPadProvider(selectedMethod?.code);
+                          const isProviderAvailable =
+                            providerHere === 'OPENPAY' ? isOpenPayAvailable : isPinPadAvailable;
+                          const providerLabel =
+                            providerHere === 'OPENPAY' ? 'OpenPay' : 'Izipay (Verifone P400)';
+                          return (
+                            <View
+                              style={[
+                                styles.pinpadStatusBox,
+                                isProviderAvailable
+                                  ? styles.pinpadStatusBoxOk
+                                  : styles.pinpadStatusBoxOff,
+                              ]}
+                            >
+                              <View
+                                style={[
+                                  styles.pinpadStatusDot,
+                                  isProviderAvailable
+                                    ? styles.pinpadStatusDotOk
+                                    : styles.pinpadStatusDotOff,
+                                ]}
+                              />
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.pinpadStatusTitle}>
+                                  {isProviderAvailable
+                                    ? `✅ PinPad ${providerLabel} detectado`
+                                    : `🔌 PinPad ${providerLabel} no detectado`}
+                                </Text>
+                                <Text style={styles.pinpadStatusText}>
+                                  {isProviderAvailable
+                                    ? `El cobro se procesará automáticamente por el terminal ${providerLabel}.`
+                                    : `Se usará el flujo manual. Verifique conexión USB / servicio local si esperaba usar el PinPad ${providerLabel}.`}
+                                </Text>
+                              </View>
+                              <TouchableOpacity
+                                style={styles.pinpadStatusRetry}
+                                onPress={() => {
+                                  if (providerHere === 'OPENPAY') {
+                                    void probeOpenPayAvailability();
+                                  } else {
+                                    void probePinPadAvailability();
+                                  }
+                                }}
+                              >
+                                <Text style={styles.pinpadStatusRetryText}>Reintentar</Text>
+                              </TouchableOpacity>
+                            </View>
+                          );
+                        })()}
+                      </>
                     ) : null;
                   })()}
 
@@ -3001,8 +3109,7 @@ export default function NewSaleScreen() {
                           : parentMethod;
 
                       // Validar Izipay: deshabilitar si el monto excede el total
-                      const isIzipay =
-                        selectedMethod?.code?.includes('IZIPAY') || selectedMethod?.isIzipay;
+                      const isIzipay = isPinPadCardMethod(selectedMethod);
                       const amount = parseFloat(paymentAmount);
                       const remaining =
                         calculateRemainingCents(getCartTotal(), getPaymentsTotal()) / 100;
@@ -3044,10 +3151,17 @@ export default function NewSaleScreen() {
                         : parentMethod;
 
                     // Validar monto según tipo de método de pago
-                    const isIzipayMethod =
-                      selectedMethod?.code?.includes('IZIPAY') || selectedMethod?.isIzipay;
+                    const isIzipayMethod = isPinPadCardMethod(selectedMethod);
                     const isCash = selectedMethod?.code === 'CASH' || selectedMethod?.isCash;
-                    const usePinPadFlow = isIzipayMethod;
+                    // Proveedor PinPad esperado según el código del método: cualquier
+                    // código que contenga OPENPAY se enruta al bridge OpenPay; el
+                    // resto (IZIPAY_*) al gateway Izipay.
+                    const pinpadProvider = derivePinPadProvider(selectedMethod?.code);
+                    // Solo usar el flujo PinPad cuando el dispositivo del proveedor
+                    // correspondiente está conectado. Si no, se cae al flujo manual.
+                    const usePinPadFlow =
+                      isIzipayMethod &&
+                      (pinpadProvider === 'OPENPAY' ? isOpenPayAvailable : isPinPadAvailable);
                     const total = getCartTotal();
                     const paid = getPaymentsTotal();
                     const remaining = calculateRemainingCents(total, paid) / 100;
@@ -3061,6 +3175,21 @@ export default function NewSaleScreen() {
                       amount,
                       total,
                     });
+
+                    // Defensa: si el método es de PinPad pero el terminal del proveedor
+                    // esperado NO está disponible, NO caemos al flujo manual (agregar
+                    // el pago sin cobrar por el PPD). Cortamos con un error explícito
+                    // para que el operador arregle el bridge/terminal en vez de
+                    // registrar una venta "aprobada" que nunca pasó por el PinPad.
+                    if (isIzipayMethod && !usePinPadFlow) {
+                      const providerLabel =
+                        pinpadProvider === 'OPENPAY' ? 'OpenPay' : 'Izipay (Verifone P400)';
+                      Alert.alert(
+                        `PinPad ${providerLabel} no disponible`,
+                        `No se puede cobrar con este método porque el terminal ${providerLabel} no está detectado.\n\nVerifique la conexión del PinPad o el bridge local antes de reintentar.`
+                      );
+                      return;
+                    }
 
                     // Si es IZIPAY (tarjeta), validar que no exceda el restante de la venta
                     if (isIzipayMethod && !isIzipayAmountValid(amount, total, paid)) {
@@ -3092,8 +3221,14 @@ export default function NewSaleScreen() {
                       setPinPadProcessing(true);
 
                       try {
-                        // Conectar si no está conectado
-                        if (pinPadStatus !== 'CONNECTED' && pinPadStatus !== 'AUTHENTICATED') {
+                        // Conectar si no está conectado (según proveedor).
+                        if (pinpadProvider === 'OPENPAY') {
+                          setPinPadMessage('Conectando con PinPad OpenPay...');
+                          await connectOpenPay();
+                        } else if (
+                          pinPadStatus !== 'CONNECTED' &&
+                          pinPadStatus !== 'AUTHENTICATED'
+                        ) {
                           setPinPadMessage('Conectando con PinPad...');
                           await connectPinPad();
                         }
@@ -3104,35 +3239,167 @@ export default function NewSaleScreen() {
                           'Esperando pago en el PinPad...\n\n📱 Escanee QR o\n💳 Inserte, deslice o acerque la tarjeta'
                         );
 
-                        const response = await processPinPadSale(amountCents);
+                        // Normalizamos ambas respuestas (Izipay vs OpenPay) al
+                        // mismo shape antes de registrar el cobro y agregar el pago
+                        // al carrito. Así el resto del flujo (registerPinPadOperation,
+                        // addPaymentToCart, mensaje de éxito) es idéntico para ambos.
+                        let approved = false;
+                        let responseCode = '';
+                        let responseMessage = '';
+                        let approvalCode: string | undefined;
+                        let operationNumber: string | undefined;
+                        let merchantId: string | undefined;
+                        let cardMasked: string | undefined;
+                        let cardLast4: string | undefined;
+                        let rawResponse: Record<string, unknown> = {};
 
-                        if (response.response_code === '00') {
-                          // Transacción aprobada
-                          setPinPadMessage('✅ Transacción Aprobada');
-
-                          // Agregar el pago al carrito con info de la transacción
-                          addPaymentToCart(methodToUse, amount);
-
-                          // Limpiar estados
-                          setPaymentAmount('');
-                          setSelectedParentMethod(null);
-                          setSelectedSubmethod(null);
-
-                          // Mostrar éxito brevemente y cerrar
-                          setTimeout(() => {
-                            setShowPinPadModal(false);
-                            setPinPadProcessing(false);
-                            Alert.alert(
-                              '✅ Pago Aprobado',
-                              `Tarjeta: ${response.card || '****'}\nAutorización: ${response.approval_code || 'N/A'}\nMonto: S/ ${amount.toFixed(2)}`,
-                              [{ text: 'OK' }]
+                        if (pinpadProvider === 'OPENPAY') {
+                          // Ruteo QR vs tarjeta: si el código del método
+                          // contiene "QR" (p.ej. OPENPAY_QR, OPENPAY_YAPE)
+                          // usamos el flujo dos-pasos GenerarQR + FinalizarVentaQR;
+                          // si no, va por Venta con tarjeta presente.
+                          const isQr = /QR|YAPE|PLIN|BILLETERA|WALLET/i.test(
+                            selectedMethod?.code || ''
+                          );
+                          if (isQr) {
+                            setPinPadMessage(
+                              'Generando código QR...\n\n📱 Escanee el QR desde su wallet'
                             );
-                          }, 1500);
+                            // Reset del guard anti doble-presión al arrancar un
+                            // nuevo QR (por si un flujo previo quedó marcado).
+                            pinPadCancelInFlightRef.current = false;
+                            setPinPadCancelling(false);
+                            setPinPadQrActive(true);
+                          }
+                          let r: Awaited<ReturnType<typeof processOpenPaySaleQR>>;
+                          try {
+                            r = isQr
+                              ? await processOpenPaySaleQR(amountCents)
+                              : await processOpenPaySale(amountCents);
+                          } finally {
+                            setPinPadQrActive(false);
+                            // El flujo QR terminó: liberamos el guard anti
+                            // doble-presión para el próximo cobro.
+                            setPinPadCancelling(false);
+                            pinPadCancelInFlightRef.current = false;
+                          }
+                          console.log('📥 [OPENPAY] Respuesta del bridge:', {
+                            isQr,
+                            ok: r.ok,
+                            responseCode: r.responseCode,
+                            legend: r.legend,
+                            authorization: r.authorization,
+                            transactionId: r.transactionId,
+                          });
+                          approved = r.ok === true;
+                          responseCode = r.responseCode;
+                          responseMessage = r.legend;
+                          approvalCode = r.authorization || undefined;
+                          // En OpenPay la referencia para futuras anulaciones es
+                          // `financialReference`; la usamos como operationNumber
+                          // para mantener trazabilidad del cobro.
+                          operationNumber = r.financialReference || r.sequence || undefined;
+                          merchantId = r.merchantId || undefined;
+                          cardMasked = r.cardNumber || undefined;
+                          cardLast4 = extractCardLast4(cardMasked);
+                          rawResponse = r as unknown as Record<string, unknown>;
                         } else {
-                          // Transacción rechazada
+                          const response = await processPinPadSale(amountCents);
+                          approved = response.response_code === '00';
+                          responseCode = response.response_code;
+                          responseMessage = response.message || '';
+                          approvalCode = response.approval_code;
+                          operationNumber = response.ecr_data_adicional;
+                          merchantId = response.merchant_id;
+                          cardMasked = response.card;
+                          cardLast4 = cardMasked ? cardMasked.slice(-4) : undefined;
+                          rawResponse = response as unknown as Record<string, unknown>;
+                        }
+
+                        if (approved) {
+                          // Transacción aprobada por el terminal.
+                          // Registrar el cobro en el backend ANTES de agregar el pago
+                          // al carrito para obtener el pinpadOperationId que se enviará
+                          // al crear la venta (consumo del cobro).
+                          setPinPadMessage('✅ Transacción Aprobada\nRegistrando cobro...');
+
+                          const provider = pinpadProvider;
+
+                          if (!currentSession?.id) {
+                            setPinPadProcessing(false);
+                            setPinPadMessage(
+                              '❌ No hay sesión de caja activa para registrar el cobro'
+                            );
+                            setTimeout(() => setShowPinPadModal(false), 3000);
+                            return;
+                          }
+
+                          try {
+                            const registered = await posService.registerPinPadOperation({
+                              provider,
+                              cashRegisterSessionId: currentSession.id,
+                              amountCents,
+                              status: 'APPROVED',
+                              responseCode,
+                              approvalCode,
+                              operationNumber,
+                              merchantId,
+                              cardMasked,
+                              cardLast4,
+                              transactionAt: new Date().toISOString(),
+                              rawResponse,
+                            });
+
+                            console.log(
+                              '✅ Cobro PinPad registrado:',
+                              registered.id,
+                              registered.lifecycle
+                            );
+
+                            // Agregar el pago al carrito atado al cobro PinPad.
+                            addPaymentToCart(methodToUse, amount, {
+                              pinpadOperationId: registered.id,
+                              pinpadProvider: registered.provider,
+                              cardLast4,
+                              approvalCode,
+                            });
+
+                            // Limpiar estados
+                            setPaymentAmount('');
+                            setSelectedParentMethod(null);
+                            setSelectedSubmethod(null);
+
+                            // Mostrar éxito brevemente y cerrar
+                            setTimeout(() => {
+                              setShowPinPadModal(false);
+                              setPinPadProcessing(false);
+                              Alert.alert(
+                                '✅ Pago Aprobado',
+                                `Tarjeta: ${cardMasked || '****'}\nAutorización: ${approvalCode || 'N/A'}\nMonto: S/ ${amount.toFixed(2)}`,
+                                [{ text: 'OK' }]
+                              );
+                            }, 1500);
+                          } catch (regError) {
+                            // El PPD ya cobró pero el backend rechazó el registro.
+                            // NO agregamos el pago al carrito para no crear una venta
+                            // sin trazabilidad. El cobro quedará "al aire" y aparecerá
+                            // como huérfano en la compuerta de reconciliación al cierre.
+                            const regMsg =
+                              regError instanceof Error
+                                ? regError.message
+                                : 'Error registrando el cobro en el backend';
+                            console.error('❌ Error registrando cobro PinPad:', regError);
+                            setPinPadProcessing(false);
+                            setPinPadMessage(
+                              `⚠️ Cobro aprobado por el terminal pero no se pudo registrar en el sistema.\n\n${regMsg}\n\nRevise la reconciliación antes de cerrar caja.`
+                            );
+                            setTimeout(() => setShowPinPadModal(false), 5000);
+                          }
+                        } else {
+                          // Transacción rechazada por el host / cancelada por el operador.
                           setPinPadProcessing(false);
                           setPinPadMessage(
-                            `❌ Transacción Rechazada\n\n${response.message || 'Error desconocido'}\nCódigo: ${response.response_code}`
+                            `❌ Transacción Rechazada\n\n${responseMessage || 'Error desconocido'}\nCódigo: ${responseCode}`
                           );
 
                           setTimeout(() => {
@@ -4712,6 +4979,45 @@ export default function NewSaleScreen() {
               <Text style={styles.pinPadModalMessage}>{pinPadMessage}</Text>
             </View>
 
+            {pinPadProcessing && pinPadQrActive && (
+              <TouchableOpacity
+                style={[
+                  styles.pinPadModalCloseButton,
+                  { backgroundColor: '#dc2626' },
+                  pinPadCancelling && { opacity: 0.5 },
+                ]}
+                disabled={pinPadCancelling}
+                onPress={async () => {
+                  // Guard síncrono: bloquea el doble-tap antes de que React
+                  // re-renderice con disabled=true. El endpoint /cancel responde
+                  // muy rápido, pero la VentaQR sigue bloqueada esperando el
+                  // FinalizarVentaQR del SDK; por eso NO liberamos el guard al
+                  // terminar la petición: la cancelación ya fue solicitada y el
+                  // botón debe quedar inactivo hasta que el flujo QR termine
+                  // (setPinPadQrActive(false) en el finally de la venta).
+                  if (pinPadCancelInFlightRef.current) {
+                    return;
+                  }
+                  pinPadCancelInFlightRef.current = true;
+                  setPinPadCancelling(true);
+                  setPinPadMessage('Cancelando QR en el PinPad...');
+                  try {
+                    await cancelOpenPaySaleQR();
+                  } catch {
+                    // Si la petición de cancelación falla, liberamos el guard
+                    // para permitir reintentar. En caso de éxito el guard se
+                    // mantiene y se limpia al iniciar/terminar el flujo QR.
+                    setPinPadCancelling(false);
+                    pinPadCancelInFlightRef.current = false;
+                  }
+                }}
+              >
+                <Text style={styles.pinPadModalCloseButtonText}>
+                  {pinPadCancelling ? 'Cancelando...' : 'Cancelar QR'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
             {!pinPadProcessing && (
               <TouchableOpacity
                 style={styles.pinPadModalCloseButton}
@@ -5859,6 +6165,59 @@ const createStyles = (theme: Theme) =>
       fontSize: 18,
       color: theme.color.state.warning.text,
       lineHeight: 24,
+    },
+    pinpadStatusBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.space[3],
+      padding: theme.space[4],
+      borderRadius: theme.radii.lg,
+      borderWidth: 2,
+      marginBottom: theme.space[6],
+    },
+    pinpadStatusBoxOk: {
+      backgroundColor: theme.color.state.success.background,
+      borderColor: theme.color.icon.success,
+    },
+    pinpadStatusBoxOff: {
+      backgroundColor: theme.color.surface.subtle,
+      borderColor: theme.color.border.subtle,
+    },
+    pinpadStatusDot: {
+      width: 14,
+      height: 14,
+      borderRadius: 7,
+      marginRight: theme.space[2],
+    },
+    pinpadStatusDotOk: {
+      backgroundColor: theme.color.icon.success,
+    },
+    pinpadStatusDotOff: {
+      backgroundColor: theme.color.icon.muted,
+    },
+    pinpadStatusTitle: {
+      fontSize: 16,
+      fontWeight: 'bold',
+      color: theme.color.text.base,
+      marginBottom: 2,
+    },
+    pinpadStatusText: {
+      fontSize: 14,
+      color: theme.color.text.muted,
+      lineHeight: 18,
+    },
+    pinpadStatusRetry: {
+      paddingHorizontal: theme.space[3],
+      paddingVertical: theme.space[2],
+      borderRadius: theme.radii.md,
+      backgroundColor: theme.color.surface.base,
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+    },
+    pinpadStatusRetryText: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: theme.color.text.link,
     },
     amountContainer: {
       flexDirection: 'row',

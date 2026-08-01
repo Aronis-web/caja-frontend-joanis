@@ -1,6 +1,6 @@
 /**
- * Tipos para el modulo de actualizacion de la app via /api/pos/app-updates/*
- * Espejo de solo lectura expuesto por svc-pos.
+ * Tipos para el modulo de actualizacion de la app via /api/app-updates/*
+ * Endpoints publicos expuestos por svc-admin.
  */
 
 export type AppUpdatePlatform = 'android' | 'ios' | 'windows' | 'mac' | 'linux' | 'web';

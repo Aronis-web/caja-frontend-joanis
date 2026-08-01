@@ -16,6 +16,16 @@ files:
 extraResources:
   - from: web-build
     to: web-build
+  # openpay-bridge: proceso .NET local (SDK EGlobal.TotalPOS.Peru.SDK) que
+  # arranca `electron.js` para el PinPad OpenPay. Se empaqueta solo si el
+  # bridge fue compilado (bin/Release/openpay-bridge.exe). Requiere que la
+  # DLL del SDK esté copiada en openpay-bridge/lib/ antes de compilar.
+  - from: openpay-bridge/bin/Release
+    to: openpay-bridge
+    filter:
+      - '**/*'
+    # Nota: si la carpeta no existe (dev sin compilar el bridge),
+    # electron-builder emite un warning pero no falla el build.
 
 win:
   artifactName: '${productName}-${version}-installer.${ext}'
@@ -44,5 +54,9 @@ nsis:
 portable:
   artifactName: '${productName}-${version}-portable.${ext}'
 
-# Sin publish provider: las actualizaciones se sirven desde svc-pos (/api/pos/app-updates/*).
-# Los artefactos generados deben subirse manualmente al backend de releases.
+# Actualizaciones automáticas vía electron-updater (igual que admin-frontend-joanis).
+# electron-builder genera latest.yml y `npm run publish` lo sube a GitHub Releases.
+publish:
+  provider: github
+  owner: Aronis-web
+  repo: caja-frontend-joanis

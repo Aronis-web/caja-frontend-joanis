@@ -29,6 +29,11 @@ import type {
   ApiPeruRUCResponse,
   CreateCustomerRequest,
   TopSellersResponse,
+  PinPadProvider,
+  RegisterPinPadOperationRequest,
+  RegisterPinPadOperationResponse,
+  OrphanPinPadOperationsResponse,
+  VoidPinPadOperationResponse,
 } from '@/types/pos';
 
 class POSService {
@@ -224,6 +229,52 @@ class POSService {
   async getTransactions(sessionId: string): Promise<{ data: Transaction[]; total: number }> {
     return this.request<{ data: Transaction[]; total: number }>(
       `/pos/transactions?sessionId=${sessionId}`
+    );
+  }
+
+  // ============ PinPad (cobro antes de la venta) ============
+
+  /**
+   * Registra un cobro aprobado en el PinPad ANTES de crear la venta.
+   * El backend responde con { id, lifecycle: 'UNCONSUMED' }; ese id es el
+   * pinpadOperationId que luego se envia dentro del pago en createSale.
+   *
+   * NUNCA enviar el PAN completo en cardMasked; el backend rechaza con 400.
+   */
+  async registerPinPadOperation(
+    body: RegisterPinPadOperationRequest
+  ): Promise<RegisterPinPadOperationResponse> {
+    return this.request<RegisterPinPadOperationResponse>('/pos/pinpad/operations', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  /**
+   * Lista los cobros PinPad aprobados y aun sin venta para una sesion.
+   * Usado por la compuerta de reconciliacion antes del cierre de caja.
+   */
+  async getOrphanPinPadOperations(sessionId: string): Promise<OrphanPinPadOperationsResponse> {
+    return this.request<OrphanPinPadOperationsResponse>(
+      `/pos/pinpad/operations/orphans/${sessionId}`
+    );
+  }
+
+  /**
+   * Anula un cobro huerfano con motivo (cliente desistio, reverso, etc.).
+   * Requiere reason no vacio.
+   */
+  async voidPinPadOperation(
+    provider: PinPadProvider,
+    id: string,
+    reason: string
+  ): Promise<VoidPinPadOperationResponse> {
+    return this.request<VoidPinPadOperationResponse>(
+      `/pos/pinpad/operations/${provider}/${id}/void`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      }
     );
   }
 

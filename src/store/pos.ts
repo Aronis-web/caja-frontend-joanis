@@ -15,6 +15,9 @@ import type {
   SaleItem,
   SalePayment,
   CreateSaleResponse,
+  OrphanPinPadOperation,
+  OrphanPinPadOperationsResponse,
+  PinPadProvider,
 } from '@/types/pos';
 
 interface POSState {
@@ -60,7 +63,16 @@ interface POSState {
   removeCartItem: (index: number) => void;
   clearCart: () => void;
 
-  addPaymentToCart: (paymentMethodId: string, amount: number) => void;
+  addPaymentToCart: (
+    paymentMethodId: string,
+    amount: number,
+    extra?: {
+      pinpadOperationId?: string;
+      pinpadProvider?: PinPadProvider;
+      cardLast4?: string;
+      approvalCode?: string;
+    }
+  ) => void;
   updateCartPayment: (index: number, amount: number) => void;
   removeCartPayment: (index: number) => void;
   clearPayments: () => void;
@@ -77,6 +89,16 @@ interface POSState {
     documentType?: '01' | '03',
     notes?: string
   ) => Promise<CreateSaleResponse>;
+
+  // PinPad orphans (cobros aprobados sin venta)
+  pinpadOrphans: OrphanPinPadOperation[];
+  pinpadOrphansTotalCents: number;
+  isPinpadOrphansLoading: boolean;
+  pinpadOrphansError: string | null;
+
+  // Actions - PinPad operations
+  fetchOrphanPinPadOperations: (sessionId: string) => Promise<OrphanPinPadOperationsResponse>;
+  voidPinPadOperation: (provider: PinPadProvider, id: string, reason: string) => Promise<boolean>;
 
   // Actions - Top sellers
   loadTopSellers: (cashRegisterId?: string, limit?: number) => Promise<void>;
@@ -227,6 +249,10 @@ export const usePOSStore = create<POSState>((set, get) => ({
   cartPayments: [],
   isLoading: false,
   error: null,
+  pinpadOrphans: [],
+  pinpadOrphansTotalCents: 0,
+  isPinpadOrphansLoading: false,
+  pinpadOrphansError: null,
 
   // Cash Register actions
   setSelectedCashRegister: async (cashRegister) => {
@@ -493,7 +519,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
     persistCart(get());
   },
 
-  addPaymentToCart: (paymentMethodId, amount) => {
+  addPaymentToCart: (paymentMethodId, amount, extra) => {
     const { cartPayments, paymentMethods } = get();
     const paymentMethod = paymentMethods.find((pm) => pm.id === paymentMethodId);
 
@@ -501,6 +527,10 @@ export const usePOSStore = create<POSState>((set, get) => ({
       paymentMethodId,
       paymentMethodName: paymentMethod?.name,
       amount,
+      ...(extra?.pinpadOperationId ? { pinpadOperationId: extra.pinpadOperationId } : {}),
+      ...(extra?.pinpadProvider ? { pinpadProvider: extra.pinpadProvider } : {}),
+      ...(extra?.cardLast4 ? { cardLast4: extra.cardLast4 } : {}),
+      ...(extra?.approvalCode ? { approvalCode: extra.approvalCode } : {}),
     };
     set({ cartPayments: [...cartPayments, newPayment] });
     persistCart(get());
@@ -658,6 +688,8 @@ export const usePOSStore = create<POSState>((set, get) => ({
           amountCents: number;
           referenceNumber: string;
           notes: string;
+          pinpadOperationId?: string;
+          pinpadProvider?: PinPadProvider;
         }[];
         notes?: string;
         customerId?: string;
@@ -696,6 +728,42 @@ export const usePOSStore = create<POSState>((set, get) => ({
       set({ error: errorMessage, isLoading: false });
       throw error;
     }
+  },
+
+  // PinPad orphan operations (cobros aprobados sin venta)
+  fetchOrphanPinPadOperations: async (sessionId) => {
+    set({ isPinpadOrphansLoading: true, pinpadOrphansError: null });
+    try {
+      const response = await posService.getOrphanPinPadOperations(sessionId);
+      set({
+        pinpadOrphans: response.operations,
+        pinpadOrphansTotalCents: response.totalCents,
+        isPinpadOrphansLoading: false,
+      });
+      return response;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Error al consultar cobros PinPad huerfanos';
+      set({ pinpadOrphansError: errorMessage, isPinpadOrphansLoading: false });
+      throw error;
+    }
+  },
+
+  voidPinPadOperation: async (provider, id, reason) => {
+    const trimmed = (reason || '').trim();
+    if (!trimmed) {
+      throw new Error('Debe indicar un motivo para anular el cobro.');
+    }
+    const response = await posService.voidPinPadOperation(provider, id, trimmed);
+    // Refrescar la lista local removiendo el anulado (si voided) o
+    // dejandola tal cual (si ya no estaba en UNCONSUMED).
+    if (response.voided) {
+      const { pinpadOrphans } = get();
+      const remaining = pinpadOrphans.filter((op) => op.id !== id);
+      const totalCents = remaining.reduce((sum, op) => sum + op.amountCents, 0);
+      set({ pinpadOrphans: remaining, pinpadOrphansTotalCents: totalCents });
+    }
+    return response.voided;
   },
 
   // Top sellers actions
