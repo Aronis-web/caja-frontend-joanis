@@ -16,6 +16,12 @@ if (typeof electronModule === 'string') {
 
 const { app, BrowserWindow, protocol, dialog, ipcMain, shell } = electronModule;
 const path = require('path');
+
+// Windows: fija el AppUserModelID (== appId de electron-builder.yml) para que la
+// barra de tareas use el MISMO icono que el acceso directo del instalador.
+if (process.platform === 'win32') {
+  app.setAppUserModelId('e28208b8-89b4-4682-80dc-925059424b1f');
+}
 const url = require('url');
 const fs = require('fs');
 const http = require('http');
@@ -307,7 +313,7 @@ function createWindow(port) {
     minWidth: 1024,
     minHeight: 768,
     title: 'CajaGrit - Sistema POS',
-    icon: path.join(__dirname, 'assets/icon.png'),
+    icon: path.join(__dirname, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,

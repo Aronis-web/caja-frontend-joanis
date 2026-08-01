@@ -1,0 +1,10 @@
+﻿{
+    "curl_exit_code":  28,
+    "elapsed_s":  60.084077,
+    "http_headers":  {
+
+                     },
+    "raw_body":  "",
+    "ok":  false,
+    "error":  "TIMEOUT (curl 28) - servidor no respondio en 60 s"
+}
