@@ -1,4 +1,0 @@
-curl: (6) Could not resolve host: application
-curl: (6) Could not resolve host: Bearer
-curl: (6) Could not resolve host: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJpemlwYXkiLCJleHAiOjE3ODMxNDIwMjMsImlhdCI6MTc4MzA5ODgyM30.i3wNF_uIjA4NvfLFifMp67Pp2llz3B1e_-9GIA0kES4
-curl: (3) URL rejected: Malformed input to a URL function

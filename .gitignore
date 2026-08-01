@@ -25,6 +25,15 @@ web-build/
 *.log
 *.tmp
 
+# Artefactos temporales de tests y sesiones de Firebender (no versionar)
+.tmp-tests/
+.firebender/.session/
+.firebender/plans/
+electron-output.txt
+electron-error.txt
+_*.log
+_fix_*.ps1
+
 # PinPad Gateway (binarios grandes ~220MB)
 pinpad-gateway/
 temp_integracion/
