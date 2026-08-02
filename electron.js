@@ -565,6 +565,74 @@ function createWindow(port) {
   });
 }
 
+// ===== DIVISIÓN DE PDF POR ALTURA (BOLETAS LARGAS) =====
+
+// Puntos PDF por centímetro (1 pt = 1/72 pulgada, 1 pulgada = 2.54 cm)
+const PT_PER_CM = 72 / 2.54;
+// Altura máxima por segmento: 25 cm. Si la boleta mide más, se divide en
+// tantas partes de 25 cm como sea necesario (>50cm => 3 partes, etc.)
+const MAX_SEGMENT_HEIGHT_CM = 25;
+const MAX_SEGMENT_HEIGHT_PT = MAX_SEGMENT_HEIGHT_CM * PT_PER_CM;
+
+/**
+ * Divide las páginas de un PDF cuya altura supere MAX_SEGMENT_HEIGHT_PT en
+ * varios segmentos verticales (de arriba hacia abajo). Devuelve un nuevo
+ * PDFDocument con las páginas divididas. Si ninguna página supera el límite,
+ * devuelve el documento original sin cambios.
+ */
+async function splitPdfByHeight(sourceDoc, maxSegmentHeightPt) {
+  const sourcePages = sourceDoc.getPages();
+
+  // Tolerancia de 1pt para evitar divisiones por errores de redondeo
+  const needsSplit = sourcePages.some(
+    (p) => p.getSize().height > maxSegmentHeightPt + 1
+  );
+
+  if (!needsSplit) {
+    return sourceDoc;
+  }
+
+  const newDoc = await PDFDocument.create();
+
+  for (let pageIndex = 0; pageIndex < sourcePages.length; pageIndex++) {
+    const page = sourcePages[pageIndex];
+    const { width, height } = page.getSize();
+
+    // Página dentro del límite: se copia tal cual
+    if (height <= maxSegmentHeightPt + 1) {
+      const [copied] = await newDoc.copyPages(sourceDoc, [pageIndex]);
+      newDoc.addPage(copied);
+      continue;
+    }
+
+    const numSegments = Math.ceil(height / maxSegmentHeightPt);
+    console.log(
+      `[ELECTRON] ✂️ Boleta de ${(height / PT_PER_CM).toFixed(1)}cm supera ${MAX_SEGMENT_HEIGHT_CM}cm, dividiendo en ${numSegments} partes`
+    );
+
+    // Se recorre de arriba (parte 1) hacia abajo. En coordenadas PDF el
+    // origen está abajo, por lo que la parte superior es la de mayor Y.
+    for (let i = 0; i < numSegments; i++) {
+      const clipTop = height - i * maxSegmentHeightPt;
+      const clipBottom = Math.max(0, height - (i + 1) * maxSegmentHeightPt);
+      const segmentHeight = clipTop - clipBottom;
+
+      // embedPage recorta al boundingBox y traslada el contenido al origen
+      const embedded = await newDoc.embedPage(page, {
+        left: 0,
+        bottom: clipBottom,
+        right: width,
+        top: clipTop,
+      });
+
+      const newPage = newDoc.addPage([width, segmentHeight]);
+      newPage.drawPage(embedded, { x: 0, y: 0 });
+    }
+  }
+
+  return newDoc;
+}
+
 // ===== MANEJADOR DE IMPRESIÓN DE PDF =====
 
 ipcMain.handle('print-pdf', async (event, { base64Data, filename }) => {
@@ -610,8 +678,11 @@ ipcMain.handle('print-pdf', async (event, { base64Data, filename }) => {
         page.translateContent(xOffset, 0);
       });
 
-      // Guardar el PDF modificado
-      const modifiedPdfBytes = await pdfDoc.save();
+      // Dividir la boleta en partes de 25cm si es demasiado larga
+      const docToPrint = await splitPdfByHeight(pdfDoc, MAX_SEGMENT_HEIGHT_PT);
+
+      // Guardar el PDF modificado (escalado y, si aplica, dividido)
+      const modifiedPdfBytes = await docToPrint.save();
       const modifiedFilePath = path.join(downloadsPath, `scaled_${filename}`);
       fs.writeFileSync(modifiedFilePath, modifiedPdfBytes);
 
