@@ -571,7 +571,7 @@ function createWindow(port) {
 const PT_PER_CM = 72 / 2.54;
 // Altura máxima por segmento: 25 cm. Si la boleta mide más, se divide en
 // tantas partes de 25 cm como sea necesario (>50cm => 3 partes, etc.)
-const MAX_SEGMENT_HEIGHT_CM = 25;
+const MAX_SEGMENT_HEIGHT_CM = 35;
 const MAX_SEGMENT_HEIGHT_PT = MAX_SEGMENT_HEIGHT_CM * PT_PER_CM;
 
 /**
