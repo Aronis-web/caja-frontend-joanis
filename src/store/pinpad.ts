@@ -167,32 +167,12 @@ export const usePinPadStore = create<PinPadStoreState>((set, get) => ({
   },
 
   probeAvailability: async () => {
-    try {
-      // Login silencioso si no hay token
-      if (!get().isAuthenticated) {
-        try {
-          await pinPadService.login();
-          set({ isAuthenticated: true });
-        } catch {
-          set({ isAvailable: false });
-          console.warn('🔌 [PINPAD_STORE] Gateway no disponible (login falló)');
-          return false;
-        }
-      }
-
-      const isAvailable = await pinPadService.testConnection();
-      set({ isAvailable });
-      console.log(
-        isAvailable
-          ? '✅ [PINPAD_STORE] PinPad detectado y disponible'
-          : '🔌 [PINPAD_STORE] PinPad no detectado — se usará flujo manual'
-      );
-      return isAvailable;
-    } catch {
-      set({ isAvailable: false });
-      console.warn('🔌 [PINPAD_STORE] PinPad no disponible — se usará flujo manual');
-      return false;
-    }
+    // TEMP: PinPad Izipay deshabilitado. Forzamos flujo manual devolviendo false
+    // sin intentar login/test contra el gateway. Restaurar el bloque original
+    // cuando se quiera reactivar el PinPad.
+    set({ isAvailable: false });
+    console.warn('🚫 [PINPAD_STORE] PinPad Izipay deshabilitado temporalmente — flujo manual');
+    return false;
   },
 
   // ============ TRANSACCIONES ============

@@ -96,19 +96,11 @@ export const useOpenPayStore = create<OpenPayStoreState>((set) => ({
   },
 
   probeAvailability: async () => {
-    try {
-      const ok = await openPayService.probeAvailability();
-      set({ isAvailable: ok, initialized: ok });
-      console.log(
-        ok
-          ? '✅ [OPENPAY_STORE] PinPad OpenPay disponible'
-          : '🔌 [OPENPAY_STORE] PinPad OpenPay no disponible — se usará flujo manual'
-      );
-      return ok;
-    } catch {
-      set({ isAvailable: false, initialized: false });
-      return false;
-    }
+    // TEMP: PinPad OpenPay deshabilitado. Forzamos flujo manual devolviendo false
+    // sin invocar al bridge. Restaurar el bloque original cuando se quiera reactivar.
+    set({ isAvailable: false, initialized: false });
+    console.warn('🚫 [OPENPAY_STORE] PinPad OpenPay deshabilitado temporalmente — flujo manual');
+    return false;
   },
 
   processSale: async (amountCents) => {
