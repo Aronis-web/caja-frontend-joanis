@@ -1052,7 +1052,7 @@ ipcMain.handle('check-for-updates', async () => {
 
   try {
     console.log('[UPDATE] Verificando actualizaciones...');
-    const result = await autoUpdater.checkForUpdates();
+    const result = await checkForUpdatesWithFallback();
 
     if (result && result.updateInfo) {
       updateInfo = result.updateInfo;
@@ -1110,6 +1110,35 @@ ipcMain.handle('download-update', async () => {
     return { success: false, error: message };
   }
 });
+
+// ===== Origen de las actualizaciones =====
+// Primero el servidor propio (Versiones de App del admin, sin token de GitHub);
+// si no responde o no tiene instalador, GitHub Releases como respaldo.
+const UPDATE_FEED_URL =
+  process.env.CAJAGRIT_UPDATE_FEED_URL || 'https://pos-erp-aio.com/api/app-updates/feed/pos/windows';
+let updateFeedSource = null;
+
+function setUpdateFeed(source) {
+  if (updateFeedSource === source) return;
+  if (source === 'server') {
+    autoUpdater.setFeedURL({ provider: 'generic', url: UPDATE_FEED_URL });
+  } else {
+    autoUpdater.setFeedURL({ provider: 'github', owner: 'Aronis-web', repo: 'caja-frontend-joanis' });
+  }
+  updateFeedSource = source;
+  console.log(`[UPDATE] Origen de actualizaciones: ${source}`);
+}
+
+async function checkForUpdatesWithFallback() {
+  try {
+    setUpdateFeed('server');
+    return await autoUpdater.checkForUpdates();
+  } catch (err) {
+    console.warn('[UPDATE] Servidor propio sin actualizaciones disponibles, usando GitHub:', err && err.message);
+    setUpdateFeed('github');
+    return autoUpdater.checkForUpdates();
+  }
+}
 
 // Estado del actualizador (lo consulta la orden remota de actualizacion)
 ipcMain.handle('get-update-state', async () => ({
@@ -1187,13 +1216,13 @@ function setupAutoUpdater() {
 
   // Verificar al iniciar (tras 5s) y luego cada 4 horas
   setTimeout(() => {
-    autoUpdater.checkForUpdates().catch((err) => {
+    checkForUpdatesWithFallback().catch((err) => {
       console.error('[UPDATE] Error en verificación inicial:', err.message);
     });
   }, 5000);
 
   setInterval(() => {
-    autoUpdater.checkForUpdates().catch((err) => {
+    checkForUpdatesWithFallback().catch((err) => {
       console.error('[UPDATE] Error en verificación periódica:', err.message);
     });
   }, 4 * 60 * 60 * 1000);
