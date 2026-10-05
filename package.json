@@ -34,7 +34,9 @@
     "test:app-updates": "tsc -p tsconfig.app-updates-tests.json && node .tmp-tests/services/AppUpdatesService.test.js",
     "test:api-errors": "tsc -p tsconfig.api-errors-tests.json && node .tmp-tests/utils/apiErrorMessage.test.js",
     "test:offline-sync-rejection": "tsc -p tsconfig.offline-sync-rejection-tests.json && node .tmp-tests/utils/offlineSyncRejection.test.js",
-    "test:all": "npm run test:payment-flow && npm run test:pos-mappers && npm run test:app-updates && npm run test:crypto-offline && npm run test:offline-login && npm run test:api-errors && npm run test:offline-sync-rejection",
+    "test:offline-self-test": "tsc -p tsconfig.offline-self-test-tests.json && node .tmp-tests/utils/offlineSelfTest.test.js",
+    "test:offline-access-flow": "tsc -p tsconfig.offline-access-flow-tests.json && node .tmp-tests/utils/offlineAccessFlow.test.js",
+    "test:all": "npm run test:payment-flow && npm run test:pos-mappers && npm run test:app-updates && npm run test:crypto-offline && npm run test:offline-login && npm run test:api-errors && npm run test:offline-sync-rejection && npm run test:offline-self-test && npm run test:offline-access-flow",
     "test:crypto-offline": "tsc -p tsconfig.crypto-tests.json && node .tmp-tests/utils/cryptoOffline.test.js",
     "test:offline-login": "tsc -p tsconfig.offline-login-tests.json && node .tmp-tests/services/OfflineLoginService.test.js"
   },
