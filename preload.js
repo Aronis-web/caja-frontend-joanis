@@ -60,6 +60,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     set: (key, value) => ipcRenderer.invoke('secure-store-set', key, value),
     delete: (key) => ipcRenderer.invoke('secure-store-delete', key),
   },
+  // Estado del actualizador: { currentVersion, downloaded, latestVersion }
+  getUpdateState: () => ipcRenderer.invoke('get-update-state'),
   // Versión de la app
   getAppVersion: () => {
     return ipcRenderer.invoke('get-app-version');

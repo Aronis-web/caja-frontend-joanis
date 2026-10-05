@@ -1111,6 +1111,13 @@ ipcMain.handle('download-update', async () => {
   }
 });
 
+// Estado del actualizador (lo consulta la orden remota de actualizacion)
+ipcMain.handle('get-update-state', async () => ({
+  currentVersion: app.getVersion(),
+  downloaded: updateDownloaded,
+  latestVersion: (updateInfo && updateInfo.version) || null,
+}));
+
 // Instalar actualización descargada (electron-updater hace quitAndInstall)
 ipcMain.handle('install-update', async () => {
   if (!updateDownloaded) {
