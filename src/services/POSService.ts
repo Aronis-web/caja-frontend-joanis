@@ -393,6 +393,21 @@ class POSService {
     return response.results.map((product) => this.mapProductForPOS(product));
   }
 
+  /**
+   * Escaneo exacto por codigo (barcode principal, codigo alterno o codigo de
+   * variante). Si el codigo es de una variante, el resultado trae variantId y
+   * availableStock de esa variante. Devuelve null si no hay match con stock.
+   */
+  async searchByBarcode(barcode: string, cashRegisterId: string): Promise<Product | null> {
+    const response = await this.request<Product | { message: string }>(
+      `/pos/cash-registers/products/search/barcode?cashRegisterId=${cashRegisterId}&barcode=${encodeURIComponent(barcode)}`
+    );
+    if (!response || !('id' in response) || !response.id) {
+      return null;
+    }
+    return this.mapProductForPOS(response);
+  }
+
   async getTopSellers(cashRegisterId: string, limit: number = 40): Promise<Product[]> {
     if (!cashRegisterId) {
       throw new Error('cashRegisterId es requerido para obtener productos más vendidos');

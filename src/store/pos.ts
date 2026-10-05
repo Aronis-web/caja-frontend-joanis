@@ -7,6 +7,7 @@ import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { posService } from '@/services/POSService';
 import { buildSalePayments, toCents } from '@/utils/paymentFlow';
+import { isSameCartLine, toSellableProduct } from '@/utils/productVariants';
 import type {
   CashRegister,
   Session,
@@ -442,17 +443,24 @@ export const usePOSStore = create<POSState>((set, get) => ({
   // Cart actions
   addItemToCart: (product, quantity) => {
     const { cartItems } = get();
-    const existingIndex = cartItems.findIndex((item) => item.productId === product.id);
+    // La linea es (producto, variante): solo variantes con stock propio
+    // conservan variantId; el resto se vende contra el saldo del producto.
+    const line = toSellableProduct(product);
+    const variantId = line.variantId ?? null;
+    const existingIndex = cartItems.findIndex((item) =>
+      isSameCartLine(item, product.id, variantId)
+    );
     const availableStock =
-      typeof product.availableStock === 'number'
-        ? product.availableStock
-        : typeof product.stock === 'number'
-          ? product.stock
+      typeof line.availableStock === 'number'
+        ? line.availableStock
+        : typeof line.stock === 'number'
+          ? line.stock
           : undefined;
 
     console.log('🛒 Agregando al carrito:', {
       name: product.name,
       code: product.code,
+      variantId,
       price: product.price,
       imageUrl: product.imageUrl,
       taxRate: product.taxRate,
@@ -477,6 +485,8 @@ export const usePOSStore = create<POSState>((set, get) => ({
         typeof availableStock === 'number' ? Math.min(quantity, availableStock) : quantity;
       const newItem: SaleItem = {
         productId: product.id,
+        variantId,
+        variantName: line.variantName ?? null,
         productName: product.name,
         productCode: product.code,
         quantity: cappedQty,
@@ -663,6 +673,8 @@ export const usePOSStore = create<POSState>((set, get) => ({
       // Convertir items al formato del nuevo endpoint
       const items = cartItems.map((item) => ({
         productId: item.productId,
+        // Solo se envia la variante con stock propio; el backend descuenta su saldo
+        ...(item.variantId ? { variantId: item.variantId } : {}),
         quantity: item.quantity,
         unitPriceCents: Math.round((item.unitPrice || 0) * 100),
         discountCents: Math.round((item.discount || 0) * 100),
@@ -679,6 +691,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
         saleType: 'B2C' | 'B2B';
         items: {
           productId: string;
+          variantId?: string;
           quantity: number;
           unitPriceCents: number;
           discountCents: number;

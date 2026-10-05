@@ -51,6 +51,16 @@ import type {
 } from '@/types/offline';
 import { ROUTES } from '@/constants/routes';
 import { mapOfflineProductToProduct } from '@/utils/posMappers';
+import {
+  NO_VARIANT_LABEL,
+  buildVariantChoices,
+  cartLineKey,
+  formatLineName,
+  getProductTotalStock,
+  isSameCartLine,
+  requiresVariantSelection,
+  toSellableProduct,
+} from '@/utils/productVariants';
 import { CashAlertLevel } from '@/types/collections';
 import {
   calculateRemainingCents,
@@ -143,6 +153,9 @@ export default function NewSaleScreen() {
   const [showBarcodeSelectionModal, setShowBarcodeSelectionModal] = useState(false);
   const [barcodeSelectionProducts, setBarcodeSelectionProducts] = useState<Product[]>([]);
   const [lastScannedBarcode, setLastScannedBarcode] = useState('');
+  // El mismo modal sirve para elegir entre productos con el mismo codigo o
+  // para elegir el color de un producto con variantes que llevan stock propio.
+  const [selectionMode, setSelectionMode] = useState<'products' | 'variants'>('products');
 
   const [documentType, setDocumentType] = useState<'03' | '01'>('03');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -453,8 +466,8 @@ export default function NewSaleScreen() {
         const offlineResults = await searchProductsOffline(query, 20);
         if (isStale()) return;
         const mapped: Product[] = offlineResults
-          .filter((p) => p.localStock > 0)
-          .map(mapOfflineProductToProduct);
+          .map(mapOfflineProductToProduct)
+          .filter((p) => getProductTotalStock(p) > 0);
         console.log('✅ Productos encontrados (offline):', mapped.length);
         setSearchResults(mapped);
         return;
@@ -470,7 +483,9 @@ export default function NewSaleScreen() {
       console.log('🚀 Iniciando búsqueda de productos...');
       const results = await posService.searchProducts(query, 20, currentSession.cashRegisterId);
       if (isStale()) return;
-      const filtered = results.filter((p) => (p.stock ?? p.availableStock ?? 0) > 0);
+      // Un producto con todo su stock en variantes trae availableStock 0 y
+      // totalAvailableStock > 0: se muestra y al agregarlo se elige el color.
+      const filtered = results.filter((p) => getProductTotalStock(p) > 0);
       console.log(`✅ Productos encontrados: ${results.length} (con stock: ${filtered.length})`);
       setSearchResults(filtered);
     } catch (error) {
@@ -536,8 +551,9 @@ export default function NewSaleScreen() {
           ? [byBarcode]
           : await searchProductsOffline(query, 20);
 
-        const inStock = offlineProducts.filter((p) => p.localStock > 0);
-        const mapped: Product[] = inStock.map(mapOfflineProductToProduct);
+        const mapped: Product[] = offlineProducts
+          .map(mapOfflineProductToProduct)
+          .filter((p) => getProductTotalStock(p) > 0);
 
         if (mapped.length === 0) {
           Alert.alert(
@@ -552,6 +568,7 @@ export default function NewSaleScreen() {
           setSearchResults([]);
         } else {
           setLastScannedBarcode(query);
+          setSelectionMode('products');
           setBarcodeSelectionProducts(mapped);
           setShowBarcodeSelectionModal(true);
           setSearchResults([]);
@@ -603,9 +620,24 @@ export default function NewSaleScreen() {
         }
       }
 
+      // Escaneo exacto: resuelve tambien el codigo propio de una variante
+      // (variantId). Si no hay match exacto, se cae a la busqueda por texto.
       console.log('🔍 Buscando producto por código de barras...');
+      try {
+        const scanned = await posService.searchByBarcode(query, currentSession.cashRegisterId);
+        if (scanned && getProductTotalStock(scanned) > 0) {
+          console.log('✅ Código exacto encontrado, agregando al carrito');
+          await handleAddProduct(scanned);
+          setSearchQuery('');
+          setSearchResults([]);
+          return;
+        }
+      } catch (scanError) {
+        console.log('⚠️ Error en escaneo exacto, continuando con búsqueda por texto');
+      }
+
       const results = await posService.searchProducts(query, 20, currentSession.cashRegisterId);
-      const inStock = results.filter((p) => (p.stock ?? p.availableStock ?? 0) > 0);
+      const inStock = results.filter((p) => getProductTotalStock(p) > 0);
 
       if (inStock.length === 0) {
         console.log('❌ No se encontró producto con stock para ese código');
@@ -623,6 +655,7 @@ export default function NewSaleScreen() {
       } else {
         console.log(`⚠️ Se encontraron ${inStock.length} productos con el mismo código`);
         setLastScannedBarcode(query);
+        setSelectionMode('products');
         setBarcodeSelectionProducts(inStock);
         setShowBarcodeSelectionModal(true);
         setSearchResults([]);
@@ -649,28 +682,47 @@ export default function NewSaleScreen() {
       console.log(`📦 Agregando producto: ${product.name}`);
       console.log(`📸 Imagen del producto: ${product.imageUrl || 'Sin imagen'}`);
       console.log(`💰 Precio de venta: S/ ${product.price || 0}`);
-      console.log(`📊 Stock disponible: ${product.stock || 0} unidades`);
 
-      // El nuevo endpoint ya incluye el stock disponible
-      const stock = product.stock || 0;
+      // Producto con variantes que llevan stock propio y sin variante resuelta
+      // (busqueda por texto o barcode del producto): el cajero elige el color.
+      if (requiresVariantSelection(product)) {
+        const choices = buildVariantChoices(product);
+        if (choices.length === 0) {
+          Alert.alert('Sin Stock', `El producto "${product.name}" no tiene stock disponible.`);
+          return;
+        }
+        setLastScannedBarcode(product.name || '');
+        setSelectionMode('variants');
+        setBarcodeSelectionProducts(choices);
+        setShowBarcodeSelectionModal(true);
+        setSearchResults([]);
+        return;
+      }
+
+      // Stock de la dimension que se vende (variante con stock propio o producto)
+      const line = toSellableProduct(product);
+      const stock = line.stock || 0;
+      const lineName = formatLineName(product.name, line.variantName);
+      console.log(`📊 Stock disponible: ${stock} unidades`);
 
       if (!stock || stock <= 0) {
-        Alert.alert('Sin Stock', `El producto "${product.name}" no tiene stock disponible.`);
+        Alert.alert('Sin Stock', `El producto "${lineName}" no tiene stock disponible.`);
         return;
       }
 
       // Verificar si la cantidad ya en carrito alcanza el stock disponible
-      const currentCartQty = cartItems.find((item) => item.productId === product.id)?.quantity || 0;
+      const currentCartQty =
+        cartItems.find((item) => isSameCartLine(item, line.id, line.variantId))?.quantity || 0;
       if (currentCartQty >= stock) {
         Alert.alert(
           'Stock máximo alcanzado',
-          `Solo hay ${stock} unidad(es) disponible(s) de "${product.name}" y ya están en el carrito.`
+          `Solo hay ${stock} unidad(es) disponible(s) de "${lineName}" y ya están en el carrito.`
         );
         return;
       }
 
       // El producto ya viene con toda la información necesaria del endpoint
-      addItemToCart(product, 1);
+      addItemToCart(line, 1);
       setSearchQuery('');
       setSearchResults([]);
     } catch (error) {
@@ -680,16 +732,20 @@ export default function NewSaleScreen() {
   };
 
   const handleSelectBarcodeProduct = async (product: Product) => {
-    await handleAddProduct(product);
     setShowBarcodeSelectionModal(false);
     setBarcodeSelectionProducts([]);
     setLastScannedBarcode('');
+    setSelectionMode('products');
+    // Si el producto elegido tiene colores, handleAddProduct reabre el modal
+    // en modo variantes.
+    await handleAddProduct(product);
   };
 
   const handleCloseBarcodeSelectionModal = () => {
     setShowBarcodeSelectionModal(false);
     setBarcodeSelectionProducts([]);
     setLastScannedBarcode('');
+    setSelectionMode('products');
   };
 
   const handleSearchCustomers = async (query: string) => {
@@ -1085,6 +1141,8 @@ export default function NewSaleScreen() {
         // Convertir items del carrito al formato offline
         const offlineItems: OfflineSaleItem[] = cartItems.map((item) => ({
           productId: item.productId,
+          variantId: item.variantId ?? null,
+          variantName: item.variantName ?? null,
           productName: item.productName || '',
           productCode: item.productCode || '',
           quantity: item.quantity,
@@ -1446,7 +1504,10 @@ export default function NewSaleScreen() {
             const limitQuantity = getCreditNoteItemLimitQuantity(item, index);
             const quantity = getCreditNoteEditedQuantity(productId, limitQuantity);
             const unitPrice = getCreditNoteProductUnitPrice(item, selectedSaleForCreditNote, index);
+            // saleItemId: el backend repone el stock a la variante de esa linea
+            const saleItemId = getCreditNoteSaleItemId(item);
             return {
+              ...(saleItemId ? { saleItemId } : {}),
               sku: getCreditNoteProductSku(item),
               descripcion: getCreditNoteProductName(item),
               cantidad: quantity,
@@ -1546,6 +1607,15 @@ export default function NewSaleScreen() {
         item.productCode ||
         index
     );
+
+  // Id de la linea original de la venta (UUID). Las lineas de active-sales
+  // traen `id`; algunas respuestas usan `saleItemId`.
+  const getCreditNoteSaleItemId = (item: any): string | undefined => {
+    const candidate = String(item?.saleItemId || item?.id || '');
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidate)
+      ? candidate
+      : undefined;
+  };
 
   const getCreditNoteProductName = (item: any) =>
     item.productName ||
@@ -2021,7 +2091,7 @@ export default function NewSaleScreen() {
       .map(
         (item) => `
         <tr>
-          <td style="text-align:left;padding:2px 0;">${item.productName}</td>
+          <td style="text-align:left;padding:2px 0;">${formatLineName(item.productName, item.variantName)}</td>
           <td style="text-align:center;">${item.quantity}</td>
           <td style="text-align:right;">S/ ${(item.unitPriceCents / 100).toFixed(2)}</td>
           <td style="text-align:right;">S/ ${((item.quantity * item.unitPriceCents - item.discountCents) / 100).toFixed(2)}</td>
@@ -2257,7 +2327,7 @@ export default function NewSaleScreen() {
   const safeTopSellerCardSize = Math.min(Math.max(topSellerCardSize, 90), 280);
 
   const renderProductItem = ({ item }: { item: Product }) => {
-    const stock = item.availableStock ?? item.stock ?? 0;
+    const stock = getProductTotalStock(item);
     const isOutOfStock = stock <= 0;
     const isLowStock = stock > 0 && stock <= 5;
     const stockStyle = isOutOfStock
@@ -2335,7 +2405,7 @@ export default function NewSaleScreen() {
       if (typeof availableStock === 'number') {
         Alert.alert(
           'Stock máximo alcanzado',
-          `Solo hay ${availableStock} unidad(es) disponible(s) de "${item.productName}".`
+          `Solo hay ${availableStock} unidad(es) disponible(s) de "${formatLineName(item.productName, item.variantName)}".`
         );
       }
     };
@@ -2402,6 +2472,9 @@ export default function NewSaleScreen() {
             <View style={styles.cartItemHeader}>
               <View style={styles.cartItemNameContainer}>
                 <Text style={styles.cartItemName}>{item.productName}</Text>
+                {item.variantName ? (
+                  <Text style={styles.cartItemSku}>Color: {item.variantName}</Text>
+                ) : null}
                 {item.productCode && (
                   <Text style={styles.cartItemSku}>SKU: {item.productCode}</Text>
                 )}
@@ -3883,7 +3956,9 @@ export default function NewSaleScreen() {
         <View style={styles.barcodeSelectionModalOverlay}>
           <View style={styles.barcodeSelectionModalContent}>
             <View style={styles.barcodeSelectionModalHeader}>
-              <Text style={styles.barcodeSelectionTitle}>Selecciona un producto</Text>
+              <Text style={styles.barcodeSelectionTitle}>
+                {selectionMode === 'variants' ? 'Selecciona el color' : 'Selecciona un producto'}
+              </Text>
               <TouchableOpacity
                 style={styles.barcodeSelectionCloseButton}
                 onPress={handleCloseBarcodeSelectionModal}
@@ -3893,12 +3968,14 @@ export default function NewSaleScreen() {
             </View>
 
             <Text style={styles.barcodeSelectionSubtitle}>
-              Se encontraron varios productos con el código: {lastScannedBarcode}
+              {selectionMode === 'variants'
+                ? `${lastScannedBarcode} tiene stock por color. Elige cuál se vende:`
+                : `Se encontraron varios productos con el código: ${lastScannedBarcode}`}
             </Text>
 
             <FlatList
               data={barcodeSelectionProducts}
-              keyExtractor={(item) => item.id}
+              keyExtractor={(item) => cartLineKey(item.id, item.variantId)}
               numColumns={2}
               columnWrapperStyle={styles.barcodeSelectionRow}
               contentContainerStyle={styles.barcodeSelectionListContent}
@@ -3919,7 +3996,9 @@ export default function NewSaleScreen() {
                     </View>
                   )}
                   <Text style={styles.barcodeSelectionProductName} numberOfLines={2}>
-                    {item.name}
+                    {selectionMode === 'variants'
+                      ? item.variantName || NO_VARIANT_LABEL
+                      : item.name}
                   </Text>
                   <Text style={styles.barcodeSelectionProductCode}>
                     Código: {item.code || item.barcode}
@@ -3927,7 +4006,10 @@ export default function NewSaleScreen() {
                   <Text style={styles.barcodeSelectionProductPrice}>
                     {formatCurrency(item.price || 0)}
                   </Text>
-                  <Text style={styles.barcodeSelectionProductStock}>Stock: {item.stock || 0}</Text>
+                  <Text style={styles.barcodeSelectionProductStock}>
+                    Stock:{' '}
+                    {selectionMode === 'variants' ? item.stock || 0 : getProductTotalStock(item)}
+                  </Text>
                 </TouchableOpacity>
               )}
             />

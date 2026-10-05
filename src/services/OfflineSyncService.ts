@@ -256,7 +256,16 @@ class OfflineSyncService {
         throw new Error('Respuesta vacía del servidor');
       }
 
-      if (!response.products) {
+      // El FULL trae `products`; el delta trae newProducts/updatedProducts,
+      // deletedProductIds y stockUpdates.
+      const isDeltaResponse =
+        !response.products &&
+        (Array.isArray(response.newProducts) || Array.isArray(response.updatedProducts));
+      const rawProducts = response.products
+        ? response.products
+        : [...(response.newProducts || []), ...(response.updatedProducts || [])];
+
+      if (!response.products && !isDeltaResponse) {
         console.error('❌ [SYNC] Respuesta sin productos:', response);
         throw new Error('La respuesta no contiene productos');
       }
@@ -266,7 +275,7 @@ class OfflineSyncService {
         throw new Error('La respuesta no contiene metadata de sincronización');
       }
 
-      console.log(`📦 [SYNC] Procesando ${response.products.length} productos...`);
+      console.log(`📦 [SYNC] Procesando ${rawProducts.length} productos...`);
 
       // Guardar companyInfo si viene en la respuesta
       if (response.companyInfo) {
@@ -278,7 +287,7 @@ class OfflineSyncService {
 
       // Mapear productos al formato local con validación
       // El backend envía "title" en lugar de "name" y "availableStock" en lugar de "serverStock"
-      const products: OfflineProduct[] = response.products.map((p: any, index) => {
+      const products: OfflineProduct[] = rawProducts.map((p: any, index) => {
         // Obtener nombre del producto (puede venir como "title" o "name")
         const productName = p.title || p.name;
         // Obtener stock (puede venir como "availableStock" o "serverStock")
@@ -310,12 +319,41 @@ class OfflineSyncService {
           imageUrl: p.imageUrl || null,
           syncId: response.syncMetadata.syncId,
           updatedAt: new Date().toISOString(),
+          // Variantes: stock propio solo en las que tienen tracksStock
+          variants: Array.isArray(p.variants)
+            ? p.variants.map((v: any) => {
+                const variantStock = v.tracksStock ? Number(v.availableStock ?? 0) : 0;
+                return {
+                  id: v.id,
+                  name: v.name || '',
+                  sku: v.sku || null,
+                  barcode: v.barcode || null,
+                  tracksStock: !!v.tracksStock,
+                  serverStock: variantStock,
+                  localStock: variantStock,
+                };
+              })
+            : undefined,
+          altCodes: Array.isArray(p.altCodes) ? p.altCodes : undefined,
         };
       });
 
       // Guardar productos
       console.log(`💾 [SYNC] Guardando ${products.length} productos en BD local...`);
       await offlineDatabase.saveProducts(products, response.syncMetadata.syncId);
+
+      if (isDeltaResponse) {
+        if (response.deletedProductIds && response.deletedProductIds.length > 0) {
+          await offlineDatabase.deleteProducts(response.deletedProductIds);
+        }
+        // Saldo del producto (newStock) y de cada variante con stock propio
+        for (const update of response.stockUpdates || []) {
+          await offlineDatabase.updateLocalStock(update.productId, Number(update.newStock ?? 0));
+          if (update.variants && update.variants.length > 0) {
+            await offlineDatabase.updateVariantsLocalStock(update.productId, update.variants);
+          }
+        }
+      }
 
       // Si vienen tokens, guardarlos
       const tokens = response.tokenPool?.tokens;
@@ -366,7 +404,11 @@ class OfflineSyncService {
 
       // Actualizar stock en productos
       for (const update of response.updates) {
+        // stock = saldo del producto; variants = saldo propio de cada variante
         await offlineDatabase.updateLocalStock(update.productId, update.stock);
+        if (update.variants && update.variants.length > 0) {
+          await offlineDatabase.updateVariantsLocalStock(update.productId, update.variants);
+        }
       }
 
       // Guardar metadata
@@ -972,6 +1014,8 @@ class OfflineSyncService {
       offlineTicketCode: sale.offlineTicketCode,
       items: sale.items.map((item) => ({
         productId: item.productId,
+        // Variante con stock propio vendida offline: el backend descuenta su saldo
+        ...(item.variantId ? { variantId: item.variantId } : {}),
         quantity: item.quantity,
         unitPriceCents: item.unitPriceCents,
         discountCents: item.discountCents,

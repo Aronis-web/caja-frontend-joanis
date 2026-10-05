@@ -7,6 +7,25 @@
 
 export type TaxType = 'GRAVADO' | 'EXONERADO' | 'INAFECTO' | 'gravado' | 'exonerado' | 'inafecto';
 
+/** Variante guardada en el catalogo local (stock propio solo si tracksStock). */
+export interface OfflineProductVariant {
+  id: string;
+  name: string;
+  sku: string | null;
+  barcode: string | null;
+  tracksStock: boolean;
+  serverStock: number; // 0 en variantes descriptivas
+  localStock: number;
+}
+
+/** Codigo alterno del catalogo offline (puede apuntar a una variante). */
+export interface OfflineProductCode {
+  type: string; // BARCODE | SKU | NAME
+  value: string;
+  presentationId?: string | null;
+  variantId?: string | null;
+}
+
 export interface OfflineProduct {
   id: string;
   sku: string | null;
@@ -22,6 +41,12 @@ export interface OfflineProduct {
   imageUrl?: string | null;
   syncId: string;
   updatedAt: string;
+  // Variantes no borradas del producto. undefined = el backend no las envio
+  // (no se tocan las guardadas); [] = el producto no tiene variantes.
+  variants?: OfflineProductVariant[];
+  altCodes?: OfflineProductCode[];
+  // Variante resuelta por el codigo escaneado (solo en getProductByBarcode).
+  resolvedVariantId?: string | null;
 }
 
 // ============ TOKENS OFFLINE ============
@@ -44,6 +69,9 @@ export type OfflineSaleStatus = 'PENDING' | 'SYNCING' | 'SYNCED' | 'FAILED';
 
 export interface OfflineSaleItem {
   productId: string;
+  // Variante con stock propio vendida (null/undefined = saldo del producto)
+  variantId?: string | null;
+  variantName?: string | null;
   productName: string;
   productCode: string;
   quantity: number;
@@ -127,10 +155,31 @@ export interface ApiProduct {
   unitOfMeasure?: string;
   codigoAfectacionIgv?: string;
   imageUrl?: string | null;
+  totalAvailableStock?: number;
+  variants?: {
+    id: string;
+    name: string;
+    sku: string | null;
+    barcode: string | null;
+    tracksStock: boolean;
+    availableStock: number | null;
+  }[];
+  altCodes?: OfflineProductCode[];
 }
 
 export interface OfflineCatalogResponse {
-  products: ApiProduct[];
+  // Catalogo FULL
+  products?: ApiProduct[];
+  // Delta (GET :cashRegisterId/delta)
+  newProducts?: ApiProduct[];
+  updatedProducts?: ApiProduct[];
+  deletedProductIds?: string[];
+  stockUpdates?: {
+    productId: string;
+    newStock: number;
+    totalStock?: number;
+    variants?: VariantStockUpdate[];
+  }[];
   syncMetadata: {
     syncId: string;
     syncTimestamp: string;
@@ -168,8 +217,19 @@ export interface PreGeneratedToken {
   expiresAt: string;
 }
 
+export interface VariantStockUpdate {
+  variantId: string;
+  availableStock: number;
+}
+
 export interface StockUpdateResponse {
-  updates: { productId: string; stock: number }[];
+  // stock = saldo del producto; variants = saldo propio de variantes con stock
+  updates: {
+    productId: string;
+    stock: number;
+    totalStock?: number;
+    variants?: VariantStockUpdate[];
+  }[];
   timestamp: string;
   nextSyncRecommendedMs: number;
 }

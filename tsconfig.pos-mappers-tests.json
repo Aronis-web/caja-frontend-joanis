@@ -12,6 +12,8 @@
   "include": [
     "src/utils/posMappers.ts",
     "src/utils/posMappers.test.ts",
+    "src/utils/productVariants.ts",
+    "src/utils/productVariants.test.ts",
     "src/types/pos.ts",
     "src/types/offline.ts"
   ]
