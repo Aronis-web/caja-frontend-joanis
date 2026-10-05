@@ -7,6 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { config } from '@/utils/config';
 import { authService } from './AuthService';
 import { useAuthStore } from '@/store/auth';
+import { buildApiErrorMessage } from '@/utils/apiErrorMessage';
 import type {
   CashRegister,
   PaymentMethod,
@@ -129,7 +130,7 @@ class POSService {
         fullUrl,
       });
 
-      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+      throw new Error(buildApiErrorMessage(errorData, response.status));
     }
 
     return response.json();
