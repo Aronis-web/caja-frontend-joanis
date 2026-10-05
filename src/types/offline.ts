@@ -40,7 +40,9 @@ export interface OfflineToken {
 
 // ============ VENTAS OFFLINE ============
 
-export type OfflineSaleStatus = 'PENDING' | 'SYNCING' | 'SYNCED' | 'FAILED';
+// REJECTED: el backend la rechazo de forma definitiva (token invalido); no se
+// reintenta y queda visible como "requiere atencion".
+export type OfflineSaleStatus = 'PENDING' | 'SYNCING' | 'SYNCED' | 'FAILED' | 'REJECTED';
 
 export interface OfflineSaleItem {
   productId: string;
@@ -249,6 +251,8 @@ export interface OfflineSystemState {
   // Contadores
   availableTokens: number;
   pendingSales: number;
+  /** Ventas rechazadas de forma definitiva al sincronizar (requieren atención). */
+  rejectedSales: number;
   totalProducts: number;
 
   // Errores

@@ -75,6 +75,7 @@ export default function POSDashboardScreen() {
     totalProducts,
     availableTokens,
     pendingSales,
+    rejectedSales,
     lastProductSync,
     isInitialized: offlineInitialized,
     refreshStats,
@@ -381,9 +382,16 @@ export default function POSDashboardScreen() {
 
     try {
       console.log('📤 [SETTINGS] Sincronizando ventas pendientes...');
-      await offlineSyncService.syncPendingSales(syncCashRegisterId);
+      const summary = await offlineSyncService.syncPendingSales(syncCashRegisterId);
       await refreshStats();
-      setSyncSuccess('Ventas pendientes sincronizadas correctamente');
+      if (summary.rejected > 0) {
+        setSyncError(
+          `${summary.rejected} venta(s) offline fueron rechazadas y no se reintentarán. ` +
+            'Requieren atención: avisa a tu supervisor.'
+        );
+      } else {
+        setSyncSuccess('Ventas pendientes sincronizadas correctamente');
+      }
     } catch (error) {
       console.error('❌ [SETTINGS] Error sincronizando ventas:', error);
       setSyncError(
@@ -716,6 +724,14 @@ export default function POSDashboardScreen() {
                         </Text>
                         <Text style={styles.statLabel}>Ventas Pendientes</Text>
                       </View>
+                      {rejectedSales > 0 && (
+                        <View style={styles.statBox}>
+                          <Text style={[styles.statNumber, styles.statPending]}>
+                            {rejectedSales}
+                          </Text>
+                          <Text style={styles.statLabel}>Requieren atención</Text>
+                        </View>
+                      )}
                     </View>
 
                     <View style={styles.lastSyncRow}>

@@ -864,6 +864,20 @@ class OfflineDatabaseService {
   }
 
   /**
+   * Cuenta ventas rechazadas de forma definitiva (requieren atención)
+   */
+  async getRejectedSalesCount(): Promise<number> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const results = this.db.exec(`
+      SELECT COUNT(*) as count FROM offline_sales
+      WHERE syncStatus = 'REJECTED'
+    `);
+
+    return (results[0]?.values[0]?.[0] as number) || 0;
+  }
+
+  /**
    * Actualiza el estado de sincronización de una venta
    */
   async updateSaleSyncStatus(

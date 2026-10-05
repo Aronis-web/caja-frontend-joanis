@@ -11,6 +11,7 @@ import { offlineLoginService } from './OfflineLoginService';
 import { offlineUsersBundleService } from './OfflineUsersBundleService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { config } from '@/utils/config';
+import { isPermanentSyncRejection } from '@/utils/offlineSyncRejection';
 import type { Session } from '@/types/pos';
 import type {
   OfflineProduct,
@@ -513,13 +514,15 @@ class OfflineSyncService {
   /**
    * Sincroniza ventas pendientes con control de avalancha
    */
-  async syncPendingSales(cashRegisterId: string): Promise<void> {
+  async syncPendingSales(
+    cashRegisterId: string
+  ): Promise<{ synced: number; rejected: number; total: number }> {
     await this.ensureDb();
     const resolvedCashRegisterId = await this.resolveCashRegisterId(cashRegisterId);
     const pendingSales = await offlineDatabase.getPendingSales();
     if (pendingSales.length === 0) {
       console.log('✅ [SYNC] No hay ventas pendientes');
-      return;
+      return { synced: 0, rejected: 0, total: 0 };
     }
 
     this.emit('sales:sync:start', { count: pendingSales.length });
@@ -592,6 +595,7 @@ class OfflineSyncService {
       // 3. Enviar ventas en lotes
       console.log('📤 [SYNC] Turno asignado, enviando ventas...');
       let syncedCount = 0;
+      let rejectedCount = 0;
 
       for (let i = 0; i < pendingSales.length; i += this.config.salesBatchSize) {
         const batch = pendingSales.slice(i, i + this.config.salesBatchSize);
@@ -666,6 +670,15 @@ class OfflineSyncService {
               );
               await offlineDatabase.updateSaleSyncStatus(result.localId, 'SYNCED');
               syncedCount++;
+            } else if (isPermanentSyncRejection(result)) {
+              // Reintentar no la arregla: queda como "requiere atención".
+              console.warn(
+                `⚠️ [SYNC] Venta ${result.localId} rechazada (${result.errorCode}); no se reintentará`
+              );
+              await offlineDatabase.updateSaleSyncStatus(result.localId, 'REJECTED', {
+                error: result.error || result.errorCode || 'Venta rechazada',
+              });
+              rejectedCount++;
             } else {
               await offlineDatabase.updateSaleSyncStatus(result.localId, 'FAILED', {
                 error: result.error || result.errorCode || 'Venta rechazada',
@@ -703,8 +716,13 @@ class OfflineSyncService {
         resolvedCashRegisterId
       );
 
-      this.emit('sales:sync:complete', { synced: syncedCount, total: pendingSales.length });
+      this.emit('sales:sync:complete', {
+        synced: syncedCount,
+        rejected: rejectedCount,
+        total: pendingSales.length,
+      });
       console.log(`✅ [SYNC] ${syncedCount}/${pendingSales.length} ventas sincronizadas`);
+      return { synced: syncedCount, rejected: rejectedCount, total: pendingSales.length };
     } catch (error) {
       this.emit('sales:sync:error', { error });
       console.error('❌ [SYNC] Error sincronizando ventas:', error);
