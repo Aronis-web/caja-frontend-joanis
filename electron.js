@@ -14,7 +14,7 @@ if (typeof electronModule === 'string') {
   process.exit(relaunchResult.status ?? 0);
 }
 
-const { app, BrowserWindow, protocol, dialog, ipcMain, shell } = electronModule;
+const { app, BrowserWindow, protocol, dialog, ipcMain, shell, safeStorage } = electronModule;
 const path = require('path');
 
 // Windows: fija el AppUserModelID (== appId de electron-builder.yml) para que la
@@ -213,6 +213,9 @@ function findFile(dir, filename) {
   return null;
 }
 
+const LOCAL_SERVER_PORT = Number(process.env.CAJAGRIT_LOCAL_PORT) || 47321;
+const SQL_JS_DIST = path.join(__dirname, 'node_modules', 'sql.js', 'dist');
+
 // Crear servidor HTTP simple para servir archivos estáticos
 function createServer() {
   // Use process.resourcesPath to get the correct path when packaged
@@ -234,7 +237,35 @@ function createServer() {
     // Remover query strings
     requestPath = requestPath.split('?')[0];
 
+    // sql.js empaquetado: la base offline arranca aunque no haya internet.
+    if (requestPath.startsWith('/vendor/sql.js/')) {
+      const vendorFile = path.join(SQL_JS_DIST, path.basename(requestPath));
+      if (fs.existsSync(vendorFile)) {
+        fs.readFile(vendorFile, (err, data) => {
+          if (err) {
+            res.writeHead(500);
+            res.end('Error reading file');
+            return;
+          }
+          res.writeHead(200, {
+            'Content-Type': mime.lookup(vendorFile) || 'application/octet-stream',
+            'Cache-Control': 'public, max-age=31536000',
+          });
+          res.end(data);
+        });
+        return;
+      }
+    }
+
     let filePath = path.join(webBuildPath, requestPath === '/' ? 'index.html' : requestPath);
+
+    // No servir nada fuera de web-build (p. ej. /%2e%2e/...).
+    const resolvedPath = path.resolve(filePath);
+    if (resolvedPath !== path.resolve(webBuildPath) && !resolvedPath.startsWith(path.resolve(webBuildPath) + path.sep)) {
+      res.writeHead(403);
+      res.end('Forbidden');
+      return;
+    }
 
     // Log para debug
     console.log('Request:', requestPath);
@@ -296,11 +327,23 @@ function createServer() {
     res.end('File not found');
   });
 
-  server.listen(0, 'localhost', () => {
+  // Puerto fijo: localStorage (base offline, ventas pendientes, sesion) es por
+  // origen, y con un puerto aleatorio se perdia en cada reinicio. Si el puerto
+  // esta ocupado se usa uno libre, como antes.
+  const onListening = () => {
     const port = server.address().port;
     console.log(`Local server running on http://localhost:${port}`);
     createWindow(port);
+  };
+  server.once('error', (err) => {
+    if (err && err.code === 'EADDRINUSE') {
+      console.warn(`[SERVER] Puerto ${LOCAL_SERVER_PORT} ocupado; usando uno libre (los datos locales no se compartiran)`);
+      server.listen(0, 'localhost', onListening);
+      return;
+    }
+    throw err;
   });
+  server.listen(LOCAL_SERVER_PORT, 'localhost', onListening);
 }
 
 function createWindow(port) {
@@ -944,6 +987,53 @@ function isNetworkError(message) {
     message.includes('ETIMEDOUT')
   );
 }
+
+// ===== Almacen seguro (device token, codigo de retiro, etc.) =====
+// Cifrado con safeStorage (DPAPI en Windows) en un archivo de userData, para que
+// no dependa del localStorage del renderer ni quede en texto plano.
+const secureStoreFile = () => path.join(app.getPath('userData'), 'secure-store.json');
+
+function readSecureStore() {
+  try {
+    return JSON.parse(fs.readFileSync(secureStoreFile(), 'utf8'));
+  } catch (_) {
+    return {};
+  }
+}
+
+function writeSecureStore(data) {
+  const file = secureStoreFile();
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data));
+  fs.renameSync(tmp, file);
+}
+
+ipcMain.handle('secure-store-available', async () => safeStorage.isEncryptionAvailable());
+
+ipcMain.handle('secure-store-get', async (_event, key) => {
+  const value = readSecureStore()[key];
+  if (!value) return null;
+  try {
+    return safeStorage.decryptString(Buffer.from(value, 'base64'));
+  } catch (err) {
+    console.error('[SECURE_STORE] No se pudo descifrar', key, err.message);
+    return null;
+  }
+});
+
+ipcMain.handle('secure-store-set', async (_event, key, value) => {
+  const data = readSecureStore();
+  data[key] = safeStorage.encryptString(String(value)).toString('base64');
+  writeSecureStore(data);
+});
+
+ipcMain.handle('secure-store-delete', async (_event, key) => {
+  const data = readSecureStore();
+  if (key in data) {
+    delete data[key];
+    writeSecureStore(data);
+  }
+});
 
 ipcMain.handle('get-app-version', async () => ({
   version: app.getVersion(),
