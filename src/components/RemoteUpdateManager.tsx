@@ -40,6 +40,7 @@ interface DesktopUpdaterApi {
   }>;
   downloadUpdate?: () => Promise<{ success: boolean; error?: string; message?: string }>;
   installUpdate?: () => Promise<{ success: boolean; message?: string }>;
+  setUpdateApiBase?: (apiBase: string) => Promise<void>;
 }
 
 const desktopApi = (): DesktopUpdaterApi | null => {
@@ -187,7 +188,10 @@ export default function RemoteUpdateManager() {
 
   // Bucle de reporte: más frecuente mientras haya una orden.
   useEffect(() => {
-    if (!desktopApi()) return;
+    const api = desktopApi();
+    if (!api) return;
+    // El actualizador busca primero en este mismo servidor (sin GitHub).
+    void api.setUpdateApiBase?.(config.API_URL)?.catch?.(() => undefined);
     let timer: ReturnType<typeof setTimeout>;
     let stopped = false;
     const loop = async () => {

@@ -62,6 +62,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   // Estado del actualizador: { currentVersion, downloaded, latestVersion }
   getUpdateState: () => ipcRenderer.invoke('get-update-state'),
+  // Base del API para el feed propio de actualizaciones
+  setUpdateApiBase: (apiBase) => ipcRenderer.invoke('set-update-api-base', apiBase),
   // Versión de la app
   getAppVersion: () => {
     return ipcRenderer.invoke('get-app-version');

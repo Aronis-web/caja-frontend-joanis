@@ -1114,9 +1114,21 @@ ipcMain.handle('download-update', async () => {
 // ===== Origen de las actualizaciones =====
 // Primero el servidor propio (Versiones de App del admin, sin token de GitHub);
 // si no responde o no tiene instalador, GitHub Releases como respaldo.
-const UPDATE_FEED_URL =
-  process.env.CAJAGRIT_UPDATE_FEED_URL || 'https://pos-erp-aio.com/api/app-updates/feed/pos/windows';
+// El renderer manda su API_URL (la misma base que usan las llamadas /pos/*).
+let UPDATE_FEED_URL =
+  process.env.CAJAGRIT_UPDATE_FEED_URL || 'https://pos-erp-aio.com/app-updates/feed/pos/windows';
 let updateFeedSource = null;
+
+ipcMain.handle('set-update-api-base', async (_event, apiBase) => {
+  if (process.env.CAJAGRIT_UPDATE_FEED_URL || typeof apiBase !== 'string') return;
+  if (!/^https?:\/\//.test(apiBase)) return;
+  const next = `${apiBase.replace(/\/+$/, '')}/app-updates/feed/pos/windows`;
+  if (next !== UPDATE_FEED_URL) {
+    UPDATE_FEED_URL = next;
+    updateFeedSource = null;
+    console.log(`[UPDATE] Feed propio: ${UPDATE_FEED_URL}`);
+  }
+});
 
 function setUpdateFeed(source) {
   if (updateFeedSource === source) return;
