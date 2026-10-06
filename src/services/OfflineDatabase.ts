@@ -8,6 +8,7 @@
 
 import type {
   OfflineProduct,
+  OfflineProductVariant,
   OfflineToken,
   OfflineSale,
   SyncMetadata,
@@ -185,6 +186,37 @@ class OfflineDatabaseService {
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)`);
+
+    // Variantes (color) de cada producto. localStock solo aplica a variantes
+    // con stock propio (tracksStock=1); las descriptivas usan el del producto.
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS product_variants (
+        id TEXT PRIMARY KEY,
+        productId TEXT NOT NULL,
+        name TEXT NOT NULL,
+        sku TEXT,
+        barcode TEXT,
+        tracksStock INTEGER DEFAULT 0,
+        serverStock INTEGER DEFAULT 0,
+        localStock INTEGER DEFAULT 0
+      )
+    `);
+    this.db.run(
+      `CREATE INDEX IF NOT EXISTS idx_product_variants_product ON product_variants(productId)`
+    );
+
+    // Codigos alternos (SKU/barcode/nombre extra). variantId apunta a la
+    // variante cuando el codigo es de un color concreto.
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS product_codes (
+        productId TEXT NOT NULL,
+        type TEXT NOT NULL,
+        value TEXT NOT NULL,
+        variantId TEXT
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_product_codes_product ON product_codes(productId)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_product_codes_value ON product_codes(value)`);
 
     // Tabla de tokens
     this.db.run(`
@@ -467,6 +499,8 @@ class OfflineDatabaseService {
         syncId,
         new Date().toISOString(),
       ]);
+      this.replaceProductVariants(product);
+      this.replaceProductCodes(product);
     }
 
     stmt.free();
@@ -480,24 +514,40 @@ class OfflineDatabaseService {
   async searchProducts(query: string, limit: number = 20): Promise<OfflineProduct[]> {
     if (!this.db) throw new Error('Database not initialized');
 
+    // Tambien busca por codigos alternos y por nombre/SKU/barcode de variante.
+    // Con stock = saldo del producto o de alguna variante con stock propio.
     const searchQuery = `%${query.toLowerCase()}%`;
     const results = this.db.exec(
       `
-      SELECT * FROM products
-      WHERE (LOWER(name) LIKE ?
-         OR LOWER(sku) LIKE ?
-         OR barcode LIKE ?)
-        AND localStock > 0
+      SELECT p.* FROM products p
+      WHERE (LOWER(p.name) LIKE ?
+         OR LOWER(p.sku) LIKE ?
+         OR p.barcode LIKE ?
+         OR EXISTS (
+           SELECT 1 FROM product_codes c
+           WHERE c.productId = p.id AND LOWER(c.value) LIKE ?
+         )
+         OR EXISTS (
+           SELECT 1 FROM product_variants v
+           WHERE v.productId = p.id
+             AND (LOWER(v.name) LIKE ? OR LOWER(v.sku) LIKE ? OR LOWER(v.barcode) LIKE ?)
+         ))
+        AND (p.localStock > 0 OR EXISTS (
+          SELECT 1 FROM product_variants v
+          WHERE v.productId = p.id AND v.tracksStock = 1 AND v.localStock > 0
+        ))
       LIMIT ?
     `,
-      [searchQuery, searchQuery, query, limit]
+      [searchQuery, searchQuery, query, searchQuery, searchQuery, searchQuery, searchQuery, limit]
     );
 
     if (results.length === 0 || results[0].values.length === 0) {
       return [];
     }
 
-    return results[0].values.map((row: any[]) => this.rowToProduct(row, results[0].columns));
+    return results[0].values.map((row: any[]) =>
+      this.withVariants(this.rowToProduct(row, results[0].columns))
+    );
   }
 
   /**
@@ -512,7 +562,7 @@ class OfflineDatabaseService {
       return null;
     }
 
-    return this.rowToProduct(results[0].values[0], results[0].columns);
+    return this.withVariants(this.rowToProduct(results[0].values[0], results[0].columns));
   }
 
   /**
@@ -521,13 +571,45 @@ class OfflineDatabaseService {
   async getProductByBarcode(barcode: string): Promise<OfflineProduct | null> {
     if (!this.db) throw new Error('Database not initialized');
 
+    // Misma precedencia que el escaneo online: barcode principal del producto,
+    // luego codigo alterno BARCODE y luego SKU. Si el codigo es de una
+    // variante, se devuelve resolvedVariantId para vender ese color.
     const results = this.db.exec(`SELECT * FROM products WHERE barcode = ?`, [barcode]);
 
-    if (results.length === 0 || results[0].values.length === 0) {
+    if (results.length > 0 && results[0].values.length > 0) {
+      return this.withVariants(this.rowToProduct(results[0].values[0], results[0].columns));
+    }
+
+    const codeMatch = this.db.exec(
+      `
+      SELECT productId, variantId FROM (
+        SELECT c.productId, c.variantId,
+               CASE c.type WHEN 'BARCODE' THEN 1 ELSE 2 END AS prio
+          FROM product_codes c
+         WHERE c.type IN ('BARCODE', 'SKU') AND LOWER(c.value) = LOWER(?)
+        UNION ALL
+        SELECT v.productId, v.id AS variantId,
+               CASE WHEN LOWER(v.barcode) = LOWER(?) THEN 1 ELSE 2 END AS prio
+          FROM product_variants v
+         WHERE LOWER(v.barcode) = LOWER(?) OR LOWER(v.sku) = LOWER(?)
+      )
+      ORDER BY prio, CASE WHEN variantId IS NULL THEN 1 ELSE 0 END
+      LIMIT 1
+    `,
+      [barcode, barcode, barcode, barcode]
+    );
+
+    if (codeMatch.length === 0 || codeMatch[0].values.length === 0) {
       return null;
     }
 
-    return this.rowToProduct(results[0].values[0], results[0].columns);
+    const [productId, variantId] = codeMatch[0].values[0] as [string, string | null];
+    const product = await this.getProductById(productId);
+    if (!product) {
+      return null;
+    }
+    const variantExists = !!variantId && (product.variants || []).some((v) => v.id === variantId);
+    return { ...product, resolvedVariantId: variantExists ? variantId : null };
   }
 
   /**
@@ -541,16 +623,132 @@ class OfflineDatabaseService {
   }
 
   /**
-   * Reduce el stock local de un producto
+   * Actualiza el stock local de las variantes con stock propio de un producto
    */
-  async decrementLocalStock(productId: string, quantity: number): Promise<void> {
+  async updateVariantsLocalStock(
+    productId: string,
+    variants: { variantId: string; availableStock: number }[]
+  ): Promise<void> {
     if (!this.db) throw new Error('Database not initialized');
 
-    this.db.run(`UPDATE products SET localStock = MAX(0, localStock - ?) WHERE id = ?`, [
-      quantity,
-      productId,
-    ]);
+    for (const variant of variants) {
+      this.db.run(
+        `UPDATE product_variants SET serverStock = ?, localStock = ?
+          WHERE id = ? AND productId = ? AND tracksStock = 1`,
+        [variant.availableStock, variant.availableStock, variant.variantId, productId]
+      );
+    }
     this.saveToStorage();
+  }
+
+  /**
+   * Reduce el stock local de un producto, o de su variante si la venta lleva
+   * una variante con stock propio.
+   */
+  async decrementLocalStock(
+    productId: string,
+    quantity: number,
+    variantId?: string | null
+  ): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    if (variantId) {
+      this.db.run(
+        `UPDATE product_variants SET localStock = MAX(0, localStock - ?)
+          WHERE id = ? AND productId = ? AND tracksStock = 1`,
+        [quantity, variantId, productId]
+      );
+    } else {
+      this.db.run(`UPDATE products SET localStock = MAX(0, localStock - ?) WHERE id = ?`, [
+        quantity,
+        productId,
+      ]);
+    }
+    this.saveToStorage();
+  }
+
+  /**
+   * Elimina productos dados de baja (delta-sync)
+   */
+  async deleteProducts(productIds: string[]): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    for (const id of productIds) {
+      this.db.run(`DELETE FROM products WHERE id = ?`, [id]);
+      this.db.run(`DELETE FROM product_variants WHERE productId = ?`, [id]);
+      this.db.run(`DELETE FROM product_codes WHERE productId = ?`, [id]);
+    }
+    this.saveToStorage();
+  }
+
+  /**
+   * Reemplaza las variantes guardadas del producto con las recibidas.
+   * Si el backend no envio `variants` (undefined) no se tocan.
+   */
+  private replaceProductVariants(product: OfflineProduct): void {
+    if (!this.db || !product.variants) return;
+
+    this.db.run(`DELETE FROM product_variants WHERE productId = ?`, [product.id]);
+    for (const variant of product.variants) {
+      this.db.run(
+        `INSERT OR REPLACE INTO product_variants
+          (id, productId, name, sku, barcode, tracksStock, serverStock, localStock)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          variant.id,
+          product.id,
+          variant.name,
+          variant.sku,
+          variant.barcode,
+          variant.tracksStock ? 1 : 0,
+          variant.serverStock,
+          variant.localStock,
+        ]
+      );
+    }
+  }
+
+  /**
+   * Reemplaza los codigos alternos del producto (el delta siempre trae el
+   * arreglo completo). Si no vino `altCodes` (undefined) no se tocan.
+   */
+  private replaceProductCodes(product: OfflineProduct): void {
+    if (!this.db || !product.altCodes) return;
+
+    this.db.run(`DELETE FROM product_codes WHERE productId = ?`, [product.id]);
+    for (const code of product.altCodes) {
+      if (!code?.value) continue;
+      this.db.run(
+        `INSERT INTO product_codes (productId, type, value, variantId) VALUES (?, ?, ?, ?)`,
+        [product.id, code.type, code.value, code.variantId ?? null]
+      );
+    }
+  }
+
+  /**
+   * Agrega al producto sus variantes guardadas
+   */
+  private withVariants(product: OfflineProduct): OfflineProduct {
+    if (!this.db) return product;
+
+    const results = this.db.exec(
+      `SELECT id, name, sku, barcode, tracksStock, serverStock, localStock
+         FROM product_variants WHERE productId = ? ORDER BY name`,
+      [product.id]
+    );
+    const variants: OfflineProductVariant[] =
+      results.length === 0
+        ? []
+        : results[0].values.map((row: any[]) => ({
+            id: row[0],
+            name: row[1],
+            sku: row[2] ?? null,
+            barcode: row[3] ?? null,
+            tracksStock: row[4] === 1,
+            serverStock: Number(row[5] ?? 0),
+            localStock: Number(row[6] ?? 0),
+          }));
+    return { ...product, variants };
   }
 
   /**
@@ -1010,6 +1208,8 @@ class OfflineDatabaseService {
     if (!this.db) throw new Error('Database not initialized');
 
     this.db.run(`DELETE FROM products`);
+    this.db.run(`DELETE FROM product_variants`);
+    this.db.run(`DELETE FROM product_codes`);
     this.saveToStorage();
     console.log('🗑️ [OFFLINE_DB] Todos los productos eliminados');
   }
@@ -1033,6 +1233,8 @@ class OfflineDatabaseService {
     if (!this.db) throw new Error('Database not initialized');
 
     this.db.run(`DELETE FROM products`);
+    this.db.run(`DELETE FROM product_variants`);
+    this.db.run(`DELETE FROM product_codes`);
     this.db.run(`DELETE FROM tokens`);
     this.db.run(`DELETE FROM offline_sales`);
     this.db.run(`DELETE FROM sync_metadata`);

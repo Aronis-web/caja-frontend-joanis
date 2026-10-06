@@ -464,7 +464,7 @@ export const useOfflineStore = create<OfflineStoreState>((set, get) => ({
 
     // Actualizar stock local de productos
     for (const item of params.items) {
-      await offlineDatabase.decrementLocalStock(item.productId, item.quantity);
+      await offlineDatabase.decrementLocalStock(item.productId, item.quantity, item.variantId);
     }
 
     // Actualizar contadores

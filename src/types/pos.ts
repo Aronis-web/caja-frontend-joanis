@@ -103,6 +103,10 @@ export interface Transaction {
 
 export interface SaleItem {
   productId: string;
+  // Variante (color) vendida. Solo se guarda si la variante tiene stock propio
+  // (tracksStock=true); las descriptivas se venden contra el saldo del producto.
+  variantId?: string | null;
+  variantName?: string | null;
   productName?: string;
   productCode?: string;
   quantity: number;
@@ -284,6 +288,20 @@ export interface ProductPriceProfile {
   prices: ProductPresentationPrice[];
 }
 
+/**
+ * Variante (color) de un producto tal como la devuelven la busqueda/escaneo POS
+ * y el catalogo offline. `availableStock` solo tiene valor si la variante lleva
+ * saldo propio (tracksStock=true); en las descriptivas es null.
+ */
+export interface ProductVariantOption {
+  variantId: string;
+  name: string;
+  sku?: string | null;
+  barcode?: string | null;
+  tracksStock: boolean;
+  availableStock: number | null;
+}
+
 export interface ProductCategory {
   id: string;
   name: string;
@@ -305,7 +323,15 @@ export interface Product {
   // Campos del nuevo endpoint de búsqueda POS
   name?: string;
   salePriceCents?: number;
+  // Disponible de la dimension que se vende: la variante resuelta (si lleva
+  // stock propio) o el saldo del producto (filas sin variante).
   availableStock?: number;
+  // Producto + todas sus variantes. Decide si el producto se muestra.
+  totalAvailableStock?: number;
+  variants?: ProductVariantOption[];
+  // Variante resuelta por el codigo escaneado (o elegida por el cajero).
+  variantId?: string | null;
+  variantName?: string | null;
   imageUrl?: string;
   imageDataUrl?: string;
   categoryName?: string;
@@ -410,6 +436,7 @@ export interface CreateSaleRequest {
   warehouseId?: string;
   items: {
     productId: string;
+    variantId?: string;
     quantity: number;
     unitPriceCents: number;
     discountCents: number;
