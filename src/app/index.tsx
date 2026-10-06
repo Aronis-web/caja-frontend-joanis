@@ -11,6 +11,7 @@ import {
   Baloo2_500Medium,
 } from '@expo-google-fonts/baloo-2';
 import { Navigation } from '@/navigation';
+import RemoteUpdateManager from '@/components/RemoteUpdateManager';
 import { useAuthStore } from '@/store/auth';
 import { ThemeProvider, FloatingFooterProvider, useTheme, useThemeValue } from '@/design-system';
 
@@ -62,7 +63,12 @@ const AppContent = () => {
     );
   }
 
-  return <Navigation />;
+  return (
+    <>
+      <Navigation />
+      <RemoteUpdateManager />
+    </>
+  );
 };
 
 const ThemedStatusBar = () => {

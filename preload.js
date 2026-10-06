@@ -53,6 +53,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   printHTML: (htmlContent, filename) => {
     return ipcRenderer.invoke('print-html', { htmlContent, filename });
   },
+  // Almacen seguro cifrado con safeStorage (ver electron.js)
+  secureStore: {
+    isAvailable: () => ipcRenderer.invoke('secure-store-available'),
+    get: (key) => ipcRenderer.invoke('secure-store-get', key),
+    set: (key, value) => ipcRenderer.invoke('secure-store-set', key, value),
+    delete: (key) => ipcRenderer.invoke('secure-store-delete', key),
+  },
+  // Estado del actualizador: { currentVersion, downloaded, latestVersion }
+  getUpdateState: () => ipcRenderer.invoke('get-update-state'),
+  // Base del API para el feed propio de actualizaciones
+  setUpdateApiBase: (apiBase) => ipcRenderer.invoke('set-update-api-base', apiBase),
   // Versión de la app
   getAppVersion: () => {
     return ipcRenderer.invoke('get-app-version');

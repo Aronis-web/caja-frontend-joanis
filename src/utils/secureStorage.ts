@@ -8,18 +8,48 @@
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
+import {
+  createMigratingStore,
+  getElectronSecureStoreBridge,
+  type KeyValueStore,
+} from './electronSecureStore';
 
 const isSecureStoreAvailable = Platform.OS === 'ios' || Platform.OS === 'android';
+
+// En Electron se usa el almacen cifrado del proceso principal (safeStorage) y se
+// migran los valores que quedaron en AsyncStorage (localStorage).
+const legacyStore: KeyValueStore = {
+  get: (key) => AsyncStorage.getItem(key),
+  set: (key, value) => AsyncStorage.setItem(key, value),
+  delete: (key) => AsyncStorage.removeItem(key),
+};
+let webStorePromise: Promise<KeyValueStore> | null = null;
+const getWebStore = (): Promise<KeyValueStore> => {
+  if (!webStorePromise) {
+    webStorePromise = (async () => {
+      const bridge = getElectronSecureStoreBridge();
+      try {
+        if (bridge && (await bridge.isAvailable())) {
+          return createMigratingStore(bridge, legacyStore);
+        }
+      } catch (error) {
+        console.warn('⚠️ [SecureStorage] Almacen cifrado de Electron no disponible:', error);
+      }
+      return legacyStore;
+    })();
+  }
+  return webStorePromise;
+};
 
 export async function setSecureItem(key: string, value: string): Promise<void> {
   try {
     console.log(
-      `🔐 [SecureStorage] Guardando item: ${key} (usando ${isSecureStoreAvailable ? 'SecureStore' : 'AsyncStorage'})`
+      `🔐 [SecureStorage] Guardando item: ${key} (usando ${isSecureStoreAvailable ? 'SecureStore' : 'almacen web'})`
     );
     if (isSecureStoreAvailable) {
       await SecureStore.setItemAsync(key, value);
     } else {
-      await AsyncStorage.setItem(`secure:${key}`, value);
+      await (await getWebStore()).set(`secure:${key}`, value);
     }
     console.log(`✅ [SecureStorage] Item guardado: ${key}`);
   } catch (error) {
@@ -35,7 +65,7 @@ export async function getSecureItem(key: string): Promise<string | null> {
     if (isSecureStoreAvailable) {
       value = await SecureStore.getItemAsync(key);
     } else {
-      value = await AsyncStorage.getItem(`secure:${key}`);
+      value = await (await getWebStore()).get(`secure:${key}`);
     }
     console.log(
       `${value ? '✅' : 'ℹ️'} [SecureStorage] Item ${key}: ${value ? 'encontrado' : 'no encontrado'}`
@@ -52,7 +82,7 @@ export async function deleteSecureItem(key: string): Promise<void> {
     if (isSecureStoreAvailable) {
       await SecureStore.deleteItemAsync(key);
     } else {
-      await AsyncStorage.removeItem(`secure:${key}`);
+      await (await getWebStore()).delete(`secure:${key}`);
     }
   } catch (error) {
     console.error(`Error deleting secure item ${key}:`, error);

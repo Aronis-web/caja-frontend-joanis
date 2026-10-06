@@ -25,6 +25,7 @@ import { offlineSyncService } from '@/services/OfflineSyncService';
 import { offlineDatabase } from '@/services/OfflineDatabase';
 import { deviceTokenService } from '@/services/DeviceTokenService';
 import { offlineUsersBundleService } from '@/services/OfflineUsersBundleService';
+import OfflineAccessPanel from '@/components/offline/OfflineAccessPanel';
 import { useAppUpdater } from '@/hooks/useAppUpdater';
 import { ROUTES } from '@/constants/routes';
 import {
@@ -75,6 +76,7 @@ export default function POSDashboardScreen() {
     totalProducts,
     availableTokens,
     pendingSales,
+    rejectedSales,
     lastProductSync,
     isInitialized: offlineInitialized,
     refreshStats,
@@ -200,6 +202,11 @@ export default function POSDashboardScreen() {
       setDeviceTokenSaving(false);
     }
   }, [deviceTokenInput, selectedCashRegister?.id, selectedCashRegister?.code]);
+
+  // Acceso offline entregado por el flujo de solicitud y aprobacion
+  const handleOfflineAccessProvisioned = useCallback(() => {
+    setDeviceTokenProvisioned(true);
+  }, []);
 
   // Eliminar device token
   const handleClearDeviceToken = useCallback(() => {
@@ -381,9 +388,16 @@ export default function POSDashboardScreen() {
 
     try {
       console.log('📤 [SETTINGS] Sincronizando ventas pendientes...');
-      await offlineSyncService.syncPendingSales(syncCashRegisterId);
+      const summary = await offlineSyncService.syncPendingSales(syncCashRegisterId);
       await refreshStats();
-      setSyncSuccess('Ventas pendientes sincronizadas correctamente');
+      if (summary.rejected > 0) {
+        setSyncError(
+          `${summary.rejected} venta(s) offline fueron rechazadas y no se reintentarán. ` +
+            'Requieren atención: avisa a tu supervisor.'
+        );
+      } else {
+        setSyncSuccess('Ventas pendientes sincronizadas correctamente');
+      }
     } catch (error) {
       console.error('❌ [SETTINGS] Error sincronizando ventas:', error);
       setSyncError(
@@ -716,6 +730,14 @@ export default function POSDashboardScreen() {
                         </Text>
                         <Text style={styles.statLabel}>Ventas Pendientes</Text>
                       </View>
+                      {rejectedSales > 0 && (
+                        <View style={styles.statBox}>
+                          <Text style={[styles.statNumber, styles.statPending]}>
+                            {rejectedSales}
+                          </Text>
+                          <Text style={styles.statLabel}>Requieren atención</Text>
+                        </View>
+                      )}
                     </View>
 
                     <View style={styles.lastSyncRow}>
@@ -1153,11 +1175,20 @@ export default function POSDashboardScreen() {
               {/* ============ PESTAÑA OFFLINE / DEVICE TOKEN ============ */}
               {activeTab === 'offline' && (
                 <View style={styles.tabContent}>
+                  <OfflineAccessPanel
+                    cashRegister={
+                      selectedCashRegister?.id && selectedCashRegister?.code
+                        ? { id: selectedCashRegister.id, code: selectedCashRegister.code }
+                        : null
+                    }
+                    provisioned={deviceTokenProvisioned}
+                    onProvisioned={handleOfflineAccessProvisioned}
+                  />
                   <View style={styles.appearanceCard}>
-                    <Text style={styles.cardTitle}>🔐 Device token de la caja</Text>
+                    <Text style={styles.cardTitle}>🔐 Device token (avanzado)</Text>
                     <Text style={styles.appearanceHelper}>
-                      Este token (válido 1 año) habilita el login offline y la sincronización contra
-                      el backend. Lo genera un administrador y se pega una sola vez por caja.
+                      Usa "Solicitar acceso offline" de arriba. Pegar el token a mano queda solo
+                      como respaldo.
                     </Text>
 
                     <View style={styles.deviceTokenStatusRow}>

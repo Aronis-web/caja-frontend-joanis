@@ -116,6 +116,7 @@ export const useOfflineStore = create<OfflineStoreState>((set, get) => ({
   isOfflineModeEnabled: false,
   availableTokens: 0,
   pendingSales: 0,
+  rejectedSales: 0,
   totalProducts: 0,
   config: {
     tokenPoolSize: 1000,
@@ -501,8 +502,11 @@ export const useOfflineStore = create<OfflineStoreState>((set, get) => ({
     if (!offlineDatabase.isReady()) return;
 
     try {
-      const count = await offlineDatabase.getPendingSalesCount();
-      set({ pendingSales: count });
+      const [count, rejected] = await Promise.all([
+        offlineDatabase.getPendingSalesCount(),
+        offlineDatabase.getRejectedSalesCount(),
+      ]);
+      set({ pendingSales: count, rejectedSales: rejected });
     } catch (error) {
       console.error('❌ [OFFLINE_STORE] Error actualizando contador de ventas:', error);
     }
@@ -626,16 +630,18 @@ export const useOfflineStore = create<OfflineStoreState>((set, get) => ({
     if (!offlineDatabase.isReady()) return;
 
     try {
-      const [tokenCount, productCount, pendingSalesCount] = await Promise.all([
+      const [tokenCount, productCount, pendingSalesCount, rejectedSalesCount] = await Promise.all([
         offlineDatabase.getAvailableTokenCount(),
         offlineDatabase.getProductCount(),
         offlineDatabase.getPendingSalesCount(),
+        offlineDatabase.getRejectedSalesCount(),
       ]);
 
       set({
         availableTokens: tokenCount,
         totalProducts: productCount,
         pendingSales: pendingSalesCount,
+        rejectedSales: rejectedSalesCount,
       });
     } catch (error) {
       console.error('❌ [OFFLINE_STORE] Error actualizando estadísticas:', error);

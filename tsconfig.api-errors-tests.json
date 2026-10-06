@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "outDir": "./.tmp-tests",
+    "rootDir": "./src",
+    "noEmit": false,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2020",
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/utils/apiErrorMessage.ts", "src/utils/apiErrorMessage.test.ts"]
+}

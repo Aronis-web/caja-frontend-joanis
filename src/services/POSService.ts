@@ -7,6 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { config } from '@/utils/config';
 import { authService } from './AuthService';
 import { useAuthStore } from '@/store/auth';
+import { buildApiErrorMessage } from '@/utils/apiErrorMessage';
 import type {
   CashRegister,
   PaymentMethod,
@@ -129,7 +130,9 @@ class POSService {
         fullUrl,
       });
 
-      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+      const apiError = new Error(buildApiErrorMessage(errorData, response.status));
+      (apiError as Error & { status?: number }).status = response.status;
+      throw apiError;
     }
 
     return response.json();
@@ -675,6 +678,38 @@ class POSService {
       throw error;
     }
   }
+
+  // ============ ACCESO OFFLINE (solicitud y aprobacion) ============
+
+  async requestOfflineAccess(
+    cashRegisterId: string,
+    body: { claimSecret: string; deviceLabel?: string }
+  ): Promise<{ requestId: string; status: string }> {
+    return this.request(`/pos/offline-access/${cashRegisterId}/request`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  async claimOfflineAccess(
+    cashRegisterId: string,
+    body: { requestId: string; claimSecret: string }
+  ): Promise<OfflineAccessClaimResponse> {
+    return this.request(`/pos/offline-access/${cashRegisterId}/claim`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
 }
+
+export type OfflineAccessClaimResponse =
+  | { status: 'PENDING' | 'REJECTED' }
+  | {
+      status: 'DELIVERED';
+      deviceToken: string;
+      expiresAt: string;
+      cashRegisterId: string;
+      cashRegisterCode: string;
+    };
 
 export const posService = new POSService();

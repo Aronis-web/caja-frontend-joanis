@@ -41,6 +41,9 @@ const DB_NAME = 'offline-data.sqlite';
 // URL del CDN para sql.js
 const SQL_JS_CDN = 'https://sql.js.org/dist';
 
+// Copia empaquetada de sql.js que sirve electron.js (sin internet)
+const SQL_JS_LOCAL = '/vendor/sql.js';
+
 class OfflineDatabaseService {
   private db: SqlJsDatabase | null = null;
   private SQL: SqlJsStatic | null = null;
@@ -62,42 +65,56 @@ class OfflineDatabaseService {
   }
 
   /**
-   * Carga sql.js dinámicamente desde CDN usando script tag
-   * Esto evita que Metro bundler procese el módulo y falle con import.meta
+   * Carga sql.js dinámicamente usando script tag (evita que Metro procese el
+   * módulo y falle con import.meta). En Electron primero usa la copia
+   * empaquetada que sirve el proceso principal, así la base offline arranca
+   * aunque no haya internet; si no está, cae al CDN.
    */
   private async loadSqlJs(): Promise<SqlJsStatic> {
+    const isElectron = !!(globalThis as { electronAPI?: { isElectron?: boolean } }).electronAPI
+      ?.isElectron;
+    const sources = isElectron ? [SQL_JS_LOCAL, SQL_JS_CDN] : [SQL_JS_CDN];
+    let lastError: unknown = null;
+    for (const base of sources) {
+      try {
+        const SQL = await this.loadSqlJsFrom(base);
+        console.log(`🗄️ [OFFLINE_DB] sql.js cargado desde ${base}`);
+        return SQL;
+      } catch (error) {
+        lastError = error;
+        console.warn(`⚠️ [OFFLINE_DB] No se pudo cargar sql.js desde ${base}:`, error);
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error('Failed to load sql.js');
+  }
+
+  private loadSqlJsFrom(base: string): Promise<SqlJsStatic> {
+    const init = () =>
+      (window as any).initSqlJs({
+        locateFile: (file: string) => `${base}/${file}`,
+      }) as Promise<SqlJsStatic>;
+
     return new Promise((resolve, reject) => {
-      // Check if already loaded
       if ((window as any).initSqlJs) {
-        (window as any)
-          .initSqlJs({
-            locateFile: (file: string) => `${SQL_JS_CDN}/${file}`,
-          })
-          .then(resolve)
-          .catch(reject);
+        init().then(resolve).catch(reject);
         return;
       }
 
-      // Load script dynamically
       const script = document.createElement('script');
-      script.src = `${SQL_JS_CDN}/sql-wasm.js`;
+      script.src = `${base}/sql-wasm.js`;
       script.async = true;
 
       script.onload = () => {
         if ((window as any).initSqlJs) {
-          (window as any)
-            .initSqlJs({
-              locateFile: (file: string) => `${SQL_JS_CDN}/${file}`,
-            })
-            .then(resolve)
-            .catch(reject);
+          init().then(resolve).catch(reject);
         } else {
           reject(new Error('sql.js failed to load - initSqlJs not found'));
         }
       };
 
       script.onerror = () => {
-        reject(new Error('Failed to load sql.js script from CDN'));
+        script.remove();
+        reject(new Error(`Failed to load sql.js script from ${base}`));
       };
 
       document.head.appendChild(script);
@@ -858,6 +875,20 @@ class OfflineDatabaseService {
     const results = this.db.exec(`
       SELECT COUNT(*) as count FROM offline_sales
       WHERE syncStatus IN ('PENDING', 'FAILED')
+    `);
+
+    return (results[0]?.values[0]?.[0] as number) || 0;
+  }
+
+  /**
+   * Cuenta ventas rechazadas de forma definitiva (requieren atención)
+   */
+  async getRejectedSalesCount(): Promise<number> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const results = this.db.exec(`
+      SELECT COUNT(*) as count FROM offline_sales
+      WHERE syncStatus = 'REJECTED'
     `);
 
     return (results[0]?.values[0]?.[0] as number) || 0;
