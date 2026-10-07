@@ -42,6 +42,9 @@ import type {
   CreateSaleResponse,
   ActiveSalesResponse,
   CreateCustomerRequest,
+  PosPackView,
+  PosPackExpandResponse,
+  SaleItem,
 } from '@/types/pos';
 import type {
   OfflineProduct,
@@ -85,6 +88,8 @@ export default function NewSaleScreen() {
     addItemToCart,
     updateCartItem,
     removeCartItem,
+    addPackToCart,
+    removePackGroup,
     clearCart,
     addPaymentToCart,
     updateCartPayment,
@@ -150,6 +155,16 @@ export default function NewSaleScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Product[]>([]);
   const [searching, setSearching] = useState(false);
+
+  // Packs promocionales
+  const [showPacksModal, setShowPacksModal] = useState(false);
+  const [packs, setPacks] = useState<PosPackView[]>([]);
+  const [packsLoading, setPacksLoading] = useState(false);
+  const [packsError, setPacksError] = useState<string | null>(null);
+  const [packQtyById, setPackQtyById] = useState<Record<string, number>>({});
+  // Candado contra doble toque: Agregar y +/- del carrito no se superponen.
+  const packBusyRef = useRef(false);
+  const [packBusy, setPackBusy] = useState(false);
   const [showBarcodeSelectionModal, setShowBarcodeSelectionModal] = useState(false);
   const [barcodeSelectionProducts, setBarcodeSelectionProducts] = useState<Product[]>([]);
   const [lastScannedBarcode, setLastScannedBarcode] = useState('');
@@ -711,8 +726,10 @@ export default function NewSaleScreen() {
       }
 
       // Verificar si la cantidad ya en carrito alcanza el stock disponible
-      const currentCartQty =
-        cartItems.find((item) => isSameCartLine(item, line.id, line.variantId))?.quantity || 0;
+      // Suma todas las lineas del producto, incluidas las de packs.
+      const currentCartQty = cartItems
+        .filter((item) => isSameCartLine(item, line.id, line.variantId))
+        .reduce((sum, item) => sum + (item.quantity || 0), 0);
       if (currentCartQty >= stock) {
         Alert.alert(
           'Stock máximo alcanzado',
@@ -728,6 +745,263 @@ export default function NewSaleScreen() {
     } catch (error) {
       console.error('❌ Error al agregar producto:', error);
       Alert.alert('Error', 'No se pudo agregar el producto. Intenta nuevamente.');
+    }
+  };
+
+  // ============ PACKS PROMOCIONALES ============
+  // v1: los packs requieren conexion (el backend prorratea precios y valida stock).
+  const isPacksOffline = isOfflineModeEnabled || isOfflineSession;
+
+  const getPackRegisterId = (): string | undefined =>
+    selectedCashRegister?.id || currentSession?.cashRegisterId || undefined;
+
+  const createPackGroupId = (): string =>
+    `pack-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+  const findKnownProduct = (productId: string): Product | undefined =>
+    searchResults.find((p) => p.id === productId) || topSellers.find((p) => p.id === productId);
+
+  // Stock que la pantalla ya conoce del producto (sin variante). undefined si
+  // no se conoce: entonces se confia en availablePacks y en el backend.
+  const getKnownProductStock = (productId: string, items: SaleItem[]): number | undefined => {
+    const normalLine = items.find(
+      (i) =>
+        !i.packGroupId &&
+        i.productId === productId &&
+        !i.variantId &&
+        typeof i.availableStock === 'number'
+    );
+    if (normalLine) return normalLine.availableStock;
+    const product = findKnownProduct(productId);
+    if (!product || product.variantId || requiresVariantSelection(product)) return undefined;
+    const stock = toSellableProduct(product).stock;
+    return typeof stock === 'number' ? stock : undefined;
+  };
+
+  // Cantidad de packs (de un packId) ya en el carrito, opcionalmente sin un grupo.
+  const getPackQtyInCart = (packId: string, items: SaleItem[], excludeGroupId?: string) => {
+    const seen = new Set<string>();
+    let total = 0;
+    for (const item of items) {
+      if (!item.packGroupId || item.packId !== packId) continue;
+      if (item.packGroupId === excludeGroupId || seen.has(item.packGroupId)) continue;
+      seen.add(item.packGroupId);
+      total += item.packQty || 0;
+    }
+    return total;
+  };
+
+  // Valida la respuesta de expand: enteros y suma exacta en centavos.
+  const validatePackExpand = (res: PosPackExpandResponse | null | undefined): string | null => {
+    if (!res || !Array.isArray(res.lines) || res.lines.length === 0) {
+      return 'El servidor no devolvió los productos del pack.';
+    }
+    let sum = 0;
+    for (const l of res.lines) {
+      if (
+        !l.productId ||
+        !Number.isInteger(l.quantity) ||
+        l.quantity <= 0 ||
+        !Number.isInteger(l.unitPriceCents) ||
+        l.unitPriceCents < 0
+      ) {
+        return 'El servidor devolvió una línea de pack inválida.';
+      }
+      sum += l.quantity * l.unitPriceCents;
+    }
+    if (typeof res.totalCents === 'number' && sum !== res.totalCents) {
+      return 'El total del pack no cuadra con sus productos. Intenta nuevamente.';
+    }
+    return null;
+  };
+
+  // (lineas del pack + lineas del mismo producto ya en carrito) <= stock conocido.
+  const checkPackStock = (
+    lines: PosPackExpandResponse['lines'],
+    items: SaleItem[],
+    excludeGroupId?: string
+  ): string | null => {
+    const needed = new Map<string, { qty: number; name: string }>();
+    for (const l of lines) {
+      const prev = needed.get(l.productId);
+      needed.set(l.productId, { qty: (prev?.qty || 0) + l.quantity, name: l.name });
+    }
+    for (const [productId, { qty, name }] of Array.from(needed.entries())) {
+      const stock = getKnownProductStock(productId, items);
+      if (typeof stock !== 'number') continue;
+      const inCart = items
+        .filter(
+          (i) =>
+            i.productId === productId &&
+            !i.variantId &&
+            (!i.packGroupId || i.packGroupId !== excludeGroupId)
+        )
+        .reduce((sum, i) => sum + (i.quantity || 0), 0);
+      if (inCart + qty > stock) {
+        return `Solo hay ${stock} unidad(es) disponible(s) de "${name}"${
+          inCart > 0 ? ` y ya hay ${inCart} en el carrito` : ''
+        }.`;
+      }
+    }
+    return null;
+  };
+
+  const buildPackProductInfo = (lines: PosPackExpandResponse['lines'], items: SaleItem[]) => {
+    const info: Record<string, { taxRate?: number; imageUrl?: string; code?: string }> = {};
+    for (const l of lines) {
+      const cartLine = items.find((i) => i.productId === l.productId && !i.packGroupId);
+      const product = findKnownProduct(l.productId);
+      info[l.productId] = {
+        taxRate: cartLine?.taxRate ?? product?.taxRate,
+        imageUrl: cartLine?.imageUrl ?? product?.imageUrl,
+        code: product?.code || product?.sku,
+      };
+    }
+    return info;
+  };
+
+  const handleOpenPacks = async () => {
+    if (isPacksOffline) {
+      Alert.alert('Packs', 'Los packs necesitan conexión');
+      return;
+    }
+    const registerId = getPackRegisterId();
+    if (!registerId) {
+      Alert.alert('Error', 'No hay una caja seleccionada.');
+      return;
+    }
+    setShowPacksModal(true);
+    if (packsLoading) return;
+    setPacksLoading(true);
+    setPacksError(null);
+    try {
+      const list = await posService.getPromotionPacks(registerId);
+      setPacks(list);
+      setPackQtyById({});
+    } catch (error) {
+      console.error('❌ Error cargando packs:', error);
+      setPacksError(
+        error instanceof Error ? error.message : 'No se pudieron cargar los packs de esta caja.'
+      );
+    } finally {
+      setPacksLoading(false);
+    }
+  };
+
+  const handleAddPack = async (pack: PosPackView, quantity: number) => {
+    if (packBusyRef.current) return;
+    if (isPacksOffline) {
+      Alert.alert('Packs', 'Los packs necesitan conexión');
+      return;
+    }
+    const registerId = getPackRegisterId();
+    if (!registerId || !Number.isInteger(quantity) || quantity < 1) return;
+
+    const available = Math.max(0, Math.floor(pack.availablePacks || 0));
+    const alreadyInCart = getPackQtyInCart(pack.id, usePOSStore.getState().cartItems);
+    if (alreadyInCart + quantity > available) {
+      Alert.alert(
+        'Sin Stock',
+        `Solo alcanza para ${available} pack(s) de "${pack.name}"${
+          alreadyInCart > 0 ? ` y ya hay ${alreadyInCart} en el carrito` : ''
+        }.`
+      );
+      return;
+    }
+
+    packBusyRef.current = true;
+    setPackBusy(true);
+    try {
+      const res = await posService.expandPromotionPack(pack.id, registerId, quantity);
+      const invalid = validatePackExpand(res);
+      if (invalid) {
+        Alert.alert('No se pudo agregar el pack', invalid);
+        return;
+      }
+      const items = usePOSStore.getState().cartItems;
+      const stockError = checkPackStock(res.lines, items);
+      if (stockError) {
+        Alert.alert('Stock máximo alcanzado', stockError);
+        return;
+      }
+      addPackToCart({
+        packGroupId: createPackGroupId(),
+        packId: pack.id,
+        packName: res.pack?.name || pack.name,
+        packQty: quantity,
+        lines: res.lines,
+        productInfo: buildPackProductInfo(res.lines, items),
+      });
+      setShowPacksModal(false);
+    } catch (error) {
+      console.error('❌ Error agregando pack:', error);
+      Alert.alert(
+        'No se pudo agregar el pack',
+        error instanceof Error ? error.message : 'Intenta nuevamente.'
+      );
+    } finally {
+      packBusyRef.current = false;
+      setPackBusy(false);
+    }
+  };
+
+  const handleChangePackGroupQty = async (packGroupId: string, newQty: number) => {
+    if (packBusyRef.current) return;
+    if (!Number.isInteger(newQty) || newQty < 1) return;
+    if (isPacksOffline) {
+      Alert.alert('Packs', 'Los packs necesitan conexión');
+      return;
+    }
+    const registerId = getPackRegisterId();
+    const first = usePOSStore.getState().cartItems.find((i) => i.packGroupId === packGroupId);
+    if (!registerId || !first?.packId) return;
+    const packId = first.packId;
+    const packName = first.packName || 'Pack';
+
+    const knownPack = packs.find((p) => p.id === packId);
+    if (knownPack) {
+      const available = Math.max(0, Math.floor(knownPack.availablePacks || 0));
+      const others = getPackQtyInCart(packId, usePOSStore.getState().cartItems, packGroupId);
+      if (others + newQty > available) {
+        Alert.alert('Sin Stock', `Solo alcanza para ${available} pack(s) de "${packName}".`);
+        return;
+      }
+    }
+
+    packBusyRef.current = true;
+    setPackBusy(true);
+    try {
+      const res = await posService.expandPromotionPack(packId, registerId, newQty);
+      const invalid = validatePackExpand(res);
+      if (invalid) {
+        Alert.alert('No se pudo cambiar el pack', invalid);
+        return;
+      }
+      const items = usePOSStore.getState().cartItems;
+      // El grupo pudo quitarse (o venderse) mientras esperabamos.
+      if (!items.some((i) => i.packGroupId === packGroupId)) return;
+      const stockError = checkPackStock(res.lines, items, packGroupId);
+      if (stockError) {
+        Alert.alert('Stock máximo alcanzado', stockError);
+        return;
+      }
+      addPackToCart({
+        packGroupId,
+        packId,
+        packName: res.pack?.name || packName,
+        packQty: newQty,
+        lines: res.lines,
+        productInfo: buildPackProductInfo(res.lines, items),
+      });
+    } catch (error) {
+      console.error('❌ Error cambiando cantidad del pack:', error);
+      Alert.alert(
+        'No se pudo cambiar el pack',
+        error instanceof Error ? error.message : 'Intenta nuevamente.'
+      );
+    } finally {
+      packBusyRef.current = false;
+      setPackBusy(false);
     }
   };
 
@@ -1146,7 +1420,10 @@ export default function NewSaleScreen() {
           productName: item.productName || '',
           productCode: item.productCode || '',
           quantity: item.quantity,
-          unitPriceCents: Math.round((item.unitPrice || 0) * 100),
+          unitPriceCents:
+            typeof item.unitPriceCents === 'number'
+              ? item.unitPriceCents
+              : Math.round((item.unitPrice || 0) * 100),
           discountCents: Math.round((item.discount || 0) * 100),
           taxRate: item.taxRate || 0,
         }));
@@ -2392,14 +2669,164 @@ export default function NewSaleScreen() {
     );
   };
 
+  const renderPackGroup = (packGroupId: string) => {
+    const groupLines = cartItems.filter((i) => i.packGroupId === packGroupId);
+    const first = groupLines[0];
+    if (!first) return null;
+    const packQty = first.packQty || 1;
+    const totalCents = groupLines.reduce(
+      (sum, l) =>
+        sum +
+        l.quantity *
+          (typeof l.unitPriceCents === 'number'
+            ? l.unitPriceCents
+            : Math.round((l.unitPrice || 0) * 100)),
+      0
+    );
+    return (
+      <View style={[styles.cartItem, styles.packGroup]}>
+        <View style={styles.cartItemHeader}>
+          <View style={styles.cartItemNameContainer}>
+            <Text style={styles.cartItemName}>
+              🎁 {first.packName || 'Pack'} × {packQty} — {formatCurrency(totalCents / 100)}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.removeButtonContainer, packBusy && styles.quantityButtonDisabled]}
+            disabled={packBusy}
+            onPress={() => removePackGroup(packGroupId)}
+          >
+            <Text style={styles.removeButton}>🗑️</Text>
+          </TouchableOpacity>
+        </View>
+
+        {groupLines.map((l, i) => (
+          <Text key={`${packGroupId}-${i}`} style={styles.packComponentLine}>
+            {l.quantity} × {l.productName} @ {formatCurrency(l.unitPrice || 0)}
+          </Text>
+        ))}
+
+        <View style={styles.cartItemDetails}>
+          <View style={styles.quantityControl}>
+            <TouchableOpacity
+              style={[
+                styles.quantityButton,
+                (packBusy || packQty <= 1) && styles.quantityButtonDisabled,
+              ]}
+              disabled={packBusy || packQty <= 1}
+              onPress={() => handleChangePackGroupQty(packGroupId, packQty - 1)}
+            >
+              <Text style={styles.quantityButtonText}>-</Text>
+            </TouchableOpacity>
+            <Text style={styles.quantityText}>{packQty}</Text>
+            <TouchableOpacity
+              style={[styles.quantityButton, packBusy && styles.quantityButtonDisabled]}
+              disabled={packBusy}
+              onPress={() => handleChangePackGroupQty(packGroupId, packQty + 1)}
+            >
+              <Text style={styles.quantityButtonText}>+</Text>
+            </TouchableOpacity>
+            {packBusy && <ActivityIndicator size="small" style={styles.searchLoader} />}
+          </View>
+        </View>
+      </View>
+    );
+  };
+
+  const renderPackOption = (pack: PosPackView) => {
+    const available = Math.max(0, Math.floor(pack.availablePacks || 0));
+    const outOfStock = available < 1;
+    const qty = Math.min(Math.max(packQtyById[pack.id] ?? 1, 1), Math.max(available, 1));
+    const savingCents = (pack.referenceTotalCents || 0) - (pack.priceCents || 0);
+    const summary = (pack.components || []).map((c) => `${c.quantity}× ${c.name}`).join(' + ');
+    const setQty = (value: number) =>
+      setPackQtyById((prev) => ({
+        ...prev,
+        [pack.id]: Math.min(Math.max(value, 1), Math.max(available, 1)),
+      }));
+
+    return (
+      <View key={pack.id} style={[styles.packCard, outOfStock && styles.packCardDisabled]}>
+        <View style={styles.packCardHeader}>
+          <View style={styles.cartItemNameContainer}>
+            <Text style={styles.packName}>🎁 {pack.name}</Text>
+            {pack.description ? (
+              <Text style={styles.packDescription}>{pack.description}</Text>
+            ) : null}
+          </View>
+          <View style={styles.packPriceBox}>
+            <Text style={styles.packPrice}>{formatCurrency((pack.priceCents || 0) / 100)}</Text>
+            {savingCents > 0 && (
+              <>
+                <Text style={styles.packReference}>
+                  {formatCurrency(pack.referenceTotalCents / 100)}
+                </Text>
+                <Text style={styles.packSaving}>Ahorra {formatCurrency(savingCents / 100)}</Text>
+              </>
+            )}
+          </View>
+        </View>
+        {summary ? <Text style={styles.packComponentLine}>{summary}</Text> : null}
+        <View style={styles.packActions}>
+          {outOfStock ? (
+            <Text style={styles.packOutOfStock}>Sin stock</Text>
+          ) : (
+            <>
+              <Text style={styles.cartItemStock}>Disponibles: {available}</Text>
+              <View style={styles.quantityControl}>
+                <TouchableOpacity
+                  style={[styles.quantityButton, qty <= 1 && styles.quantityButtonDisabled]}
+                  disabled={qty <= 1}
+                  onPress={() => setQty(qty - 1)}
+                >
+                  <Text style={styles.quantityButtonText}>-</Text>
+                </TouchableOpacity>
+                <Text style={styles.quantityText}>{qty}</Text>
+                <TouchableOpacity
+                  style={[styles.quantityButton, qty >= available && styles.quantityButtonDisabled]}
+                  disabled={qty >= available}
+                  onPress={() => setQty(qty + 1)}
+                >
+                  <Text style={styles.quantityButtonText}>+</Text>
+                </TouchableOpacity>
+              </View>
+              <TouchableOpacity
+                style={[styles.packAddButton, packBusy && styles.quantityButtonDisabled]}
+                disabled={packBusy}
+                onPress={() => handleAddPack(pack, qty)}
+              >
+                {packBusy ? (
+                  <ActivityIndicator size="small" color={theme.color.text.onAction} />
+                ) : (
+                  <Text style={styles.packAddButtonText}>Agregar</Text>
+                )}
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+      </View>
+    );
+  };
+
   const renderCartItem = ({ item, index }: { item: any; index: number }) => {
+    // Lineas de pack: se muestran como un solo bloque (en la primera linea del grupo)
+    // y no se editan individualmente.
+    if (item.packGroupId) {
+      const firstIndex = cartItems.findIndex((i) => i.packGroupId === item.packGroupId);
+      return firstIndex === index ? renderPackGroup(item.packGroupId) : null;
+    }
     const unitPrice = item.unitPrice || 0; // Este precio ya incluye IGV
     const taxRate = item.taxRate || 0;
     // El total del item es simplemente cantidad * precio (que ya incluye IGV) - descuento
     const itemTotal = item.quantity * unitPrice - (item.discount || 0);
     const availableStock: number | undefined =
       typeof item.availableStock === 'number' ? item.availableStock : undefined;
-    const atStockLimit = typeof availableStock === 'number' && item.quantity >= availableStock;
+    // Unidades del mismo producto ya comprometidas en packs del carrito.
+    const packQtySameProduct = cartItems
+      .filter((i) => i.packGroupId && isSameCartLine(i, item.productId, item.variantId))
+      .reduce((sum, i) => sum + (i.quantity || 0), 0);
+    const atStockLimit =
+      typeof availableStock === 'number' && item.quantity + packQtySameProduct >= availableStock;
 
     const notifyStockLimit = () => {
       if (typeof availableStock === 'number') {
@@ -2665,6 +3092,12 @@ export default function NewSaleScreen() {
               returnKeyType="search"
             />
             {searching && <ActivityIndicator style={styles.searchLoader} />}
+            <TouchableOpacity
+              style={[styles.packsButton, isPacksOffline && styles.quantityButtonDisabled]}
+              onPress={handleOpenPacks}
+            >
+              <Text style={styles.packsButtonText}>🎁 Packs</Text>
+            </TouchableOpacity>
           </View>
 
           {searchResults.length > 0 && (
@@ -3637,6 +4070,41 @@ export default function NewSaleScreen() {
                 )}
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Packs Modal */}
+      <Modal
+        visible={showPacksModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => {
+          if (!packBusy) setShowPacksModal(false);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.salesModalContent}>
+            <View style={styles.salesModalHeader}>
+              <Text style={styles.packsModalTitle}>🎁 Packs promocionales</Text>
+              <TouchableOpacity disabled={packBusy} onPress={() => setShowPacksModal(false)}>
+                <Text style={styles.closeButton}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {packsLoading ? (
+              <ActivityIndicator size="large" color={theme.color.text.link} />
+            ) : packsError ? (
+              <View>
+                <Text style={styles.packsEmptyText}>{packsError}</Text>
+                <TouchableOpacity style={styles.packAddButton} onPress={handleOpenPacks}>
+                  <Text style={styles.packAddButtonText}>Reintentar</Text>
+                </TouchableOpacity>
+              </View>
+            ) : packs.length === 0 ? (
+              <Text style={styles.packsEmptyText}>No hay packs vigentes para esta caja.</Text>
+            ) : (
+              <ScrollView>{packs.map(renderPackOption)}</ScrollView>
+            )}
           </View>
         </View>
       </Modal>
@@ -5117,6 +5585,110 @@ export default function NewSaleScreen() {
 
 const createStyles = (theme: Theme) =>
   StyleSheet.create({
+    packsButton: {
+      marginLeft: theme.space[2],
+      paddingVertical: theme.space[4],
+      paddingHorizontal: theme.space[4],
+      borderRadius: theme.radii.lg,
+      backgroundColor: theme.color.action.primary.background,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    packsButtonText: {
+      fontSize: 16,
+      fontWeight: 'bold',
+      color: theme.color.text.onAction,
+    },
+    packsModalTitle: {
+      fontSize: 22,
+      fontWeight: 'bold',
+      color: theme.color.text.heading,
+    },
+    packsEmptyText: {
+      fontSize: 15,
+      color: theme.color.text.muted,
+      textAlign: 'center',
+      marginVertical: theme.space[4],
+    },
+    packCard: {
+      borderWidth: 1,
+      borderColor: theme.color.border.subtle,
+      borderRadius: theme.radii.md,
+      padding: theme.space[3],
+      marginBottom: theme.space[3],
+      backgroundColor: theme.color.surface.base,
+    },
+    packCardDisabled: {
+      opacity: 0.5,
+    },
+    packCardHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: theme.space[2],
+    },
+    packName: {
+      fontSize: 17,
+      fontWeight: '700',
+      color: theme.color.text.heading,
+    },
+    packDescription: {
+      fontSize: 13,
+      color: theme.color.text.muted,
+      marginTop: 2,
+    },
+    packPriceBox: {
+      alignItems: 'flex-end',
+    },
+    packPrice: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: theme.color.text.link,
+    },
+    packReference: {
+      fontSize: 13,
+      color: theme.color.text.muted,
+      textDecorationLine: 'line-through',
+    },
+    packSaving: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: theme.color.state.success.text,
+    },
+    packActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: theme.space[3],
+      marginTop: theme.space[2],
+    },
+    packOutOfStock: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: theme.color.state.danger.text,
+    },
+    packAddButton: {
+      backgroundColor: theme.color.action.success.background,
+      borderRadius: theme.radii.md,
+      paddingVertical: theme.space[2],
+      paddingHorizontal: theme.space[4],
+      minWidth: 96,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    packAddButtonText: {
+      fontSize: 15,
+      fontWeight: 'bold',
+      color: theme.color.text.onAction,
+    },
+    packGroup: {
+      borderLeftWidth: 3,
+      borderLeftColor: theme.color.action.success.background,
+    },
+    packComponentLine: {
+      fontSize: 12,
+      color: theme.color.text.muted,
+      marginTop: 2,
+    },
     container: {
       flex: 1,
       backgroundColor: theme.color.background.subtle,

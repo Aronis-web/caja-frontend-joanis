@@ -118,6 +118,53 @@ export interface SaleItem {
   total?: number;
   imageUrl?: string;
   availableStock?: number;
+  // Precio exacto en centavos cuando el backend ya lo fijo (lineas de pack).
+  // Si existe, se envia tal cual en la venta en vez de recalcular desde unitPrice.
+  unitPriceCents?: number;
+  // Lineas de un pack promocional: todas las del mismo pack agregado comparten
+  // packGroupId. No se fusionan con lineas normales ni con otros packs.
+  packGroupId?: string;
+  packId?: string;
+  packName?: string;
+  packQty?: number;
+}
+
+// ---- Packs promocionales (GET /pos/promotions/packs) ----
+export interface PosPackComponent {
+  productId: string;
+  sku: string | null;
+  name: string;
+  quantity: number;
+  referenceUnitPriceCents: number;
+}
+
+export interface PosPackView {
+  id: string;
+  name: string;
+  description: string | null;
+  priceCents: number;
+  referenceTotalCents: number;
+  imageUrl: string | null;
+  validFrom: string;
+  validTo: string;
+  components: PosPackComponent[];
+  availablePacks: number;
+}
+
+export interface PosPackExpandLine {
+  productId: string;
+  sku: string | null;
+  name: string;
+  quantity: number;
+  unitPriceCents: number;
+  lineTotalCents: number;
+  referenceUnitPriceCents: number;
+}
+
+export interface PosPackExpandResponse {
+  pack: PosPackView;
+  lines: PosPackExpandLine[];
+  totalCents: number;
 }
 
 export interface SalePayment {

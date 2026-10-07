@@ -34,6 +34,8 @@ import type {
   RegisterPinPadOperationResponse,
   OrphanPinPadOperationsResponse,
   VoidPinPadOperationResponse,
+  PosPackView,
+  PosPackExpandResponse,
 } from '@/types/pos';
 
 class POSService {
@@ -420,6 +422,28 @@ class POSService {
     );
 
     return response.results.map((product) => this.mapProductForPOS(product));
+  }
+
+  // ---- Packs promocionales ----
+  async getPromotionPacks(cashRegisterId: string): Promise<PosPackView[]> {
+    const response = await this.request<PosPackView[]>(
+      `/pos/promotions/packs?cashRegisterId=${encodeURIComponent(cashRegisterId)}`
+    );
+    return Array.isArray(response) ? response : [];
+  }
+
+  async expandPromotionPack(
+    packId: string,
+    cashRegisterId: string,
+    quantity: number
+  ): Promise<PosPackExpandResponse> {
+    return this.request<PosPackExpandResponse>(
+      `/pos/promotions/packs/${encodeURIComponent(packId)}/expand`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ cashRegisterId, quantity }),
+      }
+    );
   }
 
   private mapProductForPOS(product: Product): Product {

@@ -19,7 +19,22 @@ import type {
   OrphanPinPadOperation,
   OrphanPinPadOperationsResponse,
   PinPadProvider,
+  PosPackExpandLine,
 } from '@/types/pos';
+
+export interface PackCartGroup {
+  packGroupId: string;
+  packId: string;
+  packName: string;
+  packQty: number;
+  lines: PosPackExpandLine[];
+  // Datos opcionales por producto (tasa IGV, imagen) para mostrar totales.
+  productInfo?: Record<string, { taxRate?: number; imageUrl?: string; code?: string }>;
+}
+
+// IGV por defecto para lineas de pack cuando la caja no conoce el producto:
+// solo afecta el desglose mostrado, el backend calcula el impuesto real.
+const DEFAULT_PACK_TAX_RATE = 18;
 
 interface POSState {
   // Current state
@@ -62,6 +77,10 @@ interface POSState {
   addItemToCart: (product: Product, quantity: number) => void;
   updateCartItem: (index: number, quantity: number) => void;
   removeCartItem: (index: number) => void;
+  // Packs promocionales: agrega (o reemplaza, si packGroupId ya esta en el
+  // carrito) las lineas de un pack ya prorrateadas por el backend.
+  addPackToCart: (group: PackCartGroup) => void;
+  removePackGroup: (packGroupId: string) => void;
   clearCart: () => void;
 
   addPaymentToCart: (
@@ -447,8 +466,9 @@ export const usePOSStore = create<POSState>((set, get) => ({
     // conservan variantId; el resto se vende contra el saldo del producto.
     const line = toSellableProduct(product);
     const variantId = line.variantId ?? null;
-    const existingIndex = cartItems.findIndex((item) =>
-      isSameCartLine(item, product.id, variantId)
+    // Las lineas de pack nunca se fusionan con lineas normales.
+    const existingIndex = cartItems.findIndex(
+      (item) => !item.packGroupId && isSameCartLine(item, product.id, variantId)
     );
     const availableStock =
       typeof line.availableStock === 'number'
@@ -521,6 +541,51 @@ export const usePOSStore = create<POSState>((set, get) => ({
     const { cartItems } = get();
     const newItems = cartItems.filter((_, i) => i !== index);
     set({ cartItems: newItems });
+    persistCart(get());
+  },
+
+  addPackToCart: (group) => {
+    const { cartItems } = get();
+    const packLines: SaleItem[] = group.lines
+      .filter((line) => line.quantity > 0)
+      .map((line) => {
+        const info = group.productInfo?.[line.productId];
+        return {
+          productId: line.productId,
+          variantId: null,
+          variantName: null,
+          productName: line.name,
+          productCode: line.sku ?? info?.code ?? undefined,
+          quantity: line.quantity,
+          // Precio exacto del backend (centavos); nunca se recalcula desde el catalogo.
+          unitPriceCents: line.unitPriceCents,
+          unitPrice: line.unitPriceCents / 100,
+          discount: 0,
+          taxRate: info?.taxRate ?? DEFAULT_PACK_TAX_RATE,
+          imageUrl: info?.imageUrl,
+          packGroupId: group.packGroupId,
+          packId: group.packId,
+          packName: group.packName,
+          packQty: group.packQty,
+        };
+      });
+
+    const firstIndex = cartItems.findIndex((item) => item.packGroupId === group.packGroupId);
+    let newItems: SaleItem[];
+    if (firstIndex >= 0) {
+      // Reemplazar el grupo en su misma posicion
+      const rest = cartItems.filter((item) => item.packGroupId !== group.packGroupId);
+      newItems = [...rest.slice(0, firstIndex), ...packLines, ...rest.slice(firstIndex)];
+    } else {
+      newItems = [...cartItems, ...packLines];
+    }
+    set({ cartItems: newItems });
+    persistCart(get());
+  },
+
+  removePackGroup: (packGroupId) => {
+    const { cartItems } = get();
+    set({ cartItems: cartItems.filter((item) => item.packGroupId !== packGroupId) });
     persistCart(get());
   },
 
@@ -676,7 +741,10 @@ export const usePOSStore = create<POSState>((set, get) => ({
         // Solo se envia la variante con stock propio; el backend descuenta su saldo
         ...(item.variantId ? { variantId: item.variantId } : {}),
         quantity: item.quantity,
-        unitPriceCents: Math.round((item.unitPrice || 0) * 100),
+        unitPriceCents:
+          typeof item.unitPriceCents === 'number'
+            ? item.unitPriceCents
+            : Math.round((item.unitPrice || 0) * 100),
         discountCents: Math.round((item.discount || 0) * 100),
       }));
 
