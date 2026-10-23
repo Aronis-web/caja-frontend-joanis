@@ -1,7 +1,7 @@
 /**
  * Impresión del voucher del PinPad Izipay en la ticketera de la caja.
  * Usa el mismo canal que el ticket de venta: Electron `printHTML` (térmica directa)
- * y, en navegador, la ventana de impresión. Cada copia (comercio / cliente) va en
+ * y, en navegador, la ventana de impresión. Cada parte (refrendo / voucher cliente) va en
  * un trabajo aparte para que la térmica corte entre ellas.
  */
 

@@ -3,10 +3,11 @@
  *
  * Formato de `print_data` (PMP-API Rest Especificaciones Técnicas v2.3, sección 6):
  * - Cada línea termina en CR (0x0D) y empieza con un código de formato:
- *   'A' normal (38 col), 'B' doble tamaño (19 col), 'C'/'D' inversos (se tratan como A/B).
+ *   'A' normal (38 col), 'B' doble tamaño (19 col), 'C'/'D' inversos (como A/B, resaltados).
  * - '2' + ESC (0x1B) = línea en blanco; '2' + FS (0x1C) + tipo + archivo = imagen
  *   (p.ej. DCCOK.BMP para Visa DCC).
- * - 0x0E = corte de papel entre la copia comercio y la copia cliente.
+ * - 0x0E = corte de papel: antes va el refrendo (sello sobre la boleta), después el
+ *   voucher del cliente (sección 7 de la especificación).
  *
  * Cada copia se imprime como un trabajo aparte en la ticketera (80 mm) para que la
  * térmica corte entre copias. Si el host no envía `print_data`, se arma un voucher
@@ -37,6 +38,8 @@ export type VoucherLineFormat = 'NORMAL' | 'DOUBLE' | 'BLANK' | 'IMAGE';
 export interface VoucherLine {
   format: VoucherLineFormat;
   text: string;
+  // C/D (inversos): en el diseño oficial salen resaltados (mensaje del emisor).
+  bold?: boolean;
 }
 export type VoucherCopy = VoucherLine[];
 
@@ -62,11 +65,13 @@ function parseLine(raw: string): VoucherLine {
   const body = raw.slice(1);
   switch (raw[0]) {
     case 'A':
-    case 'C':
       return { format: 'NORMAL', text: body };
+    case 'C':
+      return { format: 'NORMAL', text: body, bold: true };
     case 'B':
-    case 'D':
       return { format: 'DOUBLE', text: body };
+    case 'D':
+      return { format: 'DOUBLE', text: body, bold: true };
     case '2':
       if (body.startsWith(IMAGE_MARK)) {
         // FS + tipo de imagen + nombre de archivo
@@ -152,7 +157,7 @@ function renderLine(line: VoucherLine): string {
     case 'DOUBLE':
       return `<div class="l d">${escapeHtml(line.text) || '&nbsp;'}</div>`;
     default:
-      return `<div class="l">${escapeHtml(line.text) || '&nbsp;'}</div>`;
+      return `<div class="l${line.bold ? ' b' : ''}">${escapeHtml(line.text) || '&nbsp;'}</div>`;
   }
 }
 
@@ -170,9 +175,12 @@ export function voucherCopyToHtml(copy: VoucherCopy, options: PinPadVoucherOptio
   @page { size: 80mm auto; margin: 0; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { width: 72mm; padding: 3mm 0 6mm; margin: 0 auto; background: #fff; color: #000; }
-  .l { font-family: 'Courier New', 'Lucida Console', monospace; font-size: 3.1mm; line-height: 1.25;
-       white-space: pre-wrap; word-break: break-all; }
-  .d { font-size: 6.2mm; font-weight: bold; line-height: 1.15; }
+  /* 38 columnas exactas en 72 mm (Courier: ancho de carácter = 0.6em), como la térmica del P400. */
+  .l { font-family: 'Courier New', 'Lucida Console', monospace; font-size: 3.15mm; line-height: 1.3;
+       font-weight: 600; white-space: pre-wrap; word-break: break-all; }
+  /* Doble tamaño: 19 columnas. */
+  .d { font-size: 6.3mm; font-weight: bold; line-height: 1.1; }
+  .b { font-weight: 900; }
   .img { text-align: center; font-weight: bold; }
 </style>
 </head>

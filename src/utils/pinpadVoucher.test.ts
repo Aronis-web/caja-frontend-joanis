@@ -39,6 +39,9 @@ assert(parseVoucher('AUNO\\rADOS\\u000EATRES').length === 2, 'escapados');
 const img = parseVoucher('A HOLA\r2\u001cBDCCOK.BMP\r');
 assert(img[0][1].format === 'IMAGE' && img[0][1].text === 'DCCOK.BMP', 'imagen');
 
+// C/D resaltados
+assert(parseVoucher('CMENSAJE EMISOR\r')[0][0].bold === true, 'C en negrita');
+
 // Código desconocido: línea tal cual
 assert(parseVoucher('XYZ\r')[0][0].text === 'XYZ', 'código desconocido');
 

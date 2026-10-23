@@ -3399,7 +3399,7 @@ export default function NewSaleScreen() {
 
                           const provider = pinpadProvider;
 
-                          // Voucher Izipay: copias comercio y cliente en la ticketera, aunque
+                          // Voucher Izipay (refrendo + copia cliente) en la ticketera, aunque
                           // falle el registro en el backend (el cliente ya fue cobrado).
                           // OpenPay imprime desde su propio terminal.
                           const izipayVoucher =
