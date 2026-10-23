@@ -51,6 +51,7 @@ import type {
 } from '@/types/offline';
 import { ROUTES } from '@/constants/routes';
 import { mapOfflineProductToProduct } from '@/utils/posMappers';
+import { printPinPadVoucher } from '@/services/PinPadVoucherPrinter';
 import {
   NO_VARIANT_LABEL,
   buildVariantChoices,
@@ -3398,6 +3399,17 @@ export default function NewSaleScreen() {
 
                           const provider = pinpadProvider;
 
+                          // Voucher Izipay (refrendo + copia cliente) en la ticketera, aunque
+                          // falle el registro en el backend (el cliente ya fue cobrado).
+                          // OpenPay imprime desde su propio terminal.
+                          const izipayVoucher =
+                            provider === 'IZIPAY'
+                              ? (rawResponse as unknown as PinPadTransactionResponse)
+                              : undefined;
+                          if (izipayVoucher) {
+                            void printPinPadVoucher(izipayVoucher, { transactionAt: new Date() });
+                          }
+
                           if (!currentSession?.id) {
                             setPinPadProcessing(false);
                             setPinPadMessage(
@@ -3449,7 +3461,17 @@ export default function NewSaleScreen() {
                               Alert.alert(
                                 '✅ Pago Aprobado',
                                 `Tarjeta: ${cardMasked || '****'}\nAutorización: ${approvalCode || 'N/A'}\nMonto: S/ ${amount.toFixed(2)}`,
-                                [{ text: 'OK' }]
+                                izipayVoucher
+                                  ? [
+                                      {
+                                        text: 'Reimprimir voucher',
+                                        onPress: () => {
+                                          void printPinPadVoucher(izipayVoucher, { reprint: true });
+                                        },
+                                      },
+                                      { text: 'OK' },
+                                    ]
+                                  : [{ text: 'OK' }]
                               );
                             }, 1500);
                           } catch (regError) {

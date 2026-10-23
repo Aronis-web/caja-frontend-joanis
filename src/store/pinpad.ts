@@ -11,6 +11,12 @@ import type {
   PinPadConfig,
   PinPadCurrencyCode,
 } from '@/types/pinpad';
+import { printPinPadVoucher } from '@/services/PinPadVoucherPrinter';
+
+/** Anulación, reimpresión, reportes y cierre: imprime el voucher si el host lo envía. */
+const printVoucherInBackground = (response: PinPadTransactionResponse): void => {
+  if (response?.print_data) void printPinPadVoucher(response);
+};
 
 interface PinPadStoreState {
   // Estado de conexión
@@ -263,6 +269,7 @@ export const usePinPadStore = create<PinPadStoreState>((set, get) => ({
         });
       }
 
+      printVoucherInBackground(response);
       return response;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Error anulando venta';
@@ -289,6 +296,7 @@ export const usePinPadStore = create<PinPadStoreState>((set, get) => ({
         lastTransactionAt: new Date().toISOString(),
       });
 
+      printVoucherInBackground(response);
       return response;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Error reimprimiendo';
@@ -317,6 +325,7 @@ export const usePinPadStore = create<PinPadStoreState>((set, get) => ({
         lastTransactionAt: new Date().toISOString(),
       });
 
+      printVoucherInBackground(response);
       return response;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Error obteniendo reporte';
@@ -343,6 +352,7 @@ export const usePinPadStore = create<PinPadStoreState>((set, get) => ({
         lastTransactionAt: new Date().toISOString(),
       });
 
+      printVoucherInBackground(response);
       return response;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Error obteniendo totales';
@@ -369,6 +379,7 @@ export const usePinPadStore = create<PinPadStoreState>((set, get) => ({
         lastTransactionAt: new Date().toISOString(),
       });
 
+      printVoucherInBackground(response);
       return response;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Error cerrando lote';
