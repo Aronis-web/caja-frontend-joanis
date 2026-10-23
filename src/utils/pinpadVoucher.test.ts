@@ -72,7 +72,7 @@ assert(
 // HTML
 const html = voucherCopyToHtml(parseVoucher('A<b>VENTA</b>\rBTOTAL\r')[0], { reprint: true });
 assert(html.includes('&lt;b&gt;VENTA&lt;/b&gt;'), 'escapa HTML');
-assert(html.includes('*** REIMPRESION ***'), 'cabecera reimpresión');
+assert(html.includes('&lt;&lt; DUPLICADO &gt;&gt;'), 'cabecera duplicado');
 assert(html.includes('class="l d"'), 'clase doble tamaño');
 
 console.log('pinpadVoucher tests OK');

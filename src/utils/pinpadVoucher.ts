@@ -164,7 +164,7 @@ function renderLine(line: VoucherLine): string {
 /** HTML de 80 mm de UNA copia, listo para `electronAPI.printHTML`. */
 export function voucherCopyToHtml(copy: VoucherCopy, options: PinPadVoucherOptions = {}): string {
   const lines = options.reprint
-    ? [{ format: 'NORMAL' as const, text: '*** REIMPRESION ***' }, ...copy]
+    ? [{ format: 'NORMAL' as const, text: '            << DUPLICADO >>' }, ...copy]
     : copy;
   return `<!DOCTYPE html>
 <html>
@@ -175,11 +175,12 @@ export function voucherCopyToHtml(copy: VoucherCopy, options: PinPadVoucherOptio
   @page { size: 80mm auto; margin: 0; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { width: 72mm; padding: 3mm 0 6mm; margin: 0 auto; background: #fff; color: #000; }
-  /* 38 columnas exactas en 72 mm (Courier: ancho de carácter = 0.6em), como la térmica del P400. */
-  .l { font-family: 'Courier New', 'Lucida Console', monospace; font-size: 3.15mm; line-height: 1.3;
+  /* 38 columnas de Izipay en 72 mm, con holgura hasta 40 (el host a veces envía 39-40).
+     Courier: ancho de carácter = 0.6em -> 72 / 40 / 0.6 = 3.0 mm. */
+  .l { font-family: 'Courier New', 'Lucida Console', monospace; font-size: 3mm; line-height: 1.3;
        font-weight: 600; white-space: pre-wrap; word-break: break-all; }
   /* Doble tamaño: 19 columnas. */
-  .d { font-size: 6.3mm; font-weight: bold; line-height: 1.1; }
+  .d { font-size: 6mm; font-weight: bold; line-height: 1.1; }
   .b { font-weight: 900; }
   .img { text-align: center; font-weight: bold; }
 </style>
