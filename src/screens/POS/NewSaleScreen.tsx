@@ -51,6 +51,7 @@ import type {
 } from '@/types/offline';
 import { ROUTES } from '@/constants/routes';
 import { mapOfflineProductToProduct } from '@/utils/posMappers';
+import { printPinPadVoucher } from '@/services/PinPadVoucherPrinter';
 import {
   NO_VARIANT_LABEL,
   buildVariantChoices,
@@ -3442,6 +3443,19 @@ export default function NewSaleScreen() {
                             setSelectedParentMethod(null);
                             setSelectedSubmethod(null);
 
+                            // Voucher Izipay: se imprime la copia cliente en la ticketera
+                            // (OpenPay imprime desde su propio terminal).
+                            const izipayVoucher =
+                              provider === 'IZIPAY'
+                                ? (rawResponse as unknown as PinPadTransactionResponse)
+                                : undefined;
+                            if (izipayVoucher) {
+                              void printPinPadVoucher(izipayVoucher, {
+                                copyLabel: 'COPIA CLIENTE',
+                                transactionAt: new Date(),
+                              });
+                            }
+
                             // Mostrar éxito brevemente y cerrar
                             setTimeout(() => {
                               setShowPinPadModal(false);
@@ -3449,7 +3463,20 @@ export default function NewSaleScreen() {
                               Alert.alert(
                                 '✅ Pago Aprobado',
                                 `Tarjeta: ${cardMasked || '****'}\nAutorización: ${approvalCode || 'N/A'}\nMonto: S/ ${amount.toFixed(2)}`,
-                                [{ text: 'OK' }]
+                                izipayVoucher
+                                  ? [
+                                      {
+                                        text: 'Reimprimir voucher',
+                                        onPress: () => {
+                                          void printPinPadVoucher(izipayVoucher, {
+                                            copyLabel: 'COPIA CLIENTE',
+                                            reprint: true,
+                                          });
+                                        },
+                                      },
+                                      { text: 'OK' },
+                                    ]
+                                  : [{ text: 'OK' }]
                               );
                             }, 1500);
                           } catch (regError) {
