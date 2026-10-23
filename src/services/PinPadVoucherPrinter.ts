@@ -1,12 +1,14 @@
 /**
  * Impresión del voucher del PinPad Izipay en la ticketera de la caja.
  * Usa el mismo canal que el ticket de venta: Electron `printHTML` (térmica directa)
- * y, en navegador, la ventana de impresión.
+ * y, en navegador, la ventana de impresión. Cada copia (comercio / cliente) va en
+ * un trabajo aparte para que la térmica corte entre ellas.
  */
 
 import { Platform } from 'react-native';
 import {
-  buildPinPadVoucherHtml,
+  getVoucherCopies,
+  voucherCopyToHtml,
   type PinPadVoucherOptions,
   type PinPadVoucherSource,
 } from '@/utils/pinpadVoucher';
@@ -22,12 +24,15 @@ export async function printPinPadVoucher(
   source: PinPadVoucherSource,
   options: PinPadVoucherOptions = {}
 ): Promise<boolean> {
-  const key = `${source.approval_code ?? ''}|${source.ecr_data_adicional ?? ''}|${options.copyLabel ?? ''}|${options.reprint ? 'R' : ''}`;
+  const key = `${source.ecr_transaccion ?? ''}|${source.approval_code ?? ''}|${source.ecr_data_adicional ?? ''}|${options.reprint ? 'R' : ''}`;
   if (inFlight.has(key)) return false;
   inFlight.add(key);
   try {
-    const html = buildPinPadVoucherHtml(source, options);
-    const filename = `voucher_izipay_${(source.approval_code || Date.now()).toString().replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+    const htmls = getVoucherCopies(source, options).map((copy) => voucherCopyToHtml(copy, options));
+    const tag = `${source.ecr_transaccion || 'tx'}_${source.approval_code || Date.now()}`.replace(
+      /[^a-zA-Z0-9_]/g,
+      '_'
+    );
 
     const electronAPI =
       Platform.OS === 'web' && typeof window !== 'undefined'
@@ -35,12 +40,14 @@ export async function printPinPadVoucher(
         : undefined;
 
     if (electronAPI?.printHTML) {
-      const result = await electronAPI.printHTML(html, filename);
-      if (!result?.success) {
-        console.error('❌ [PINPAD] Error imprimiendo voucher:', result?.error);
-        return false;
+      for (let i = 0; i < htmls.length; i++) {
+        const result = await electronAPI.printHTML(htmls[i], `voucher_izipay_${tag}_${i + 1}.pdf`);
+        if (!result?.success) {
+          console.error('❌ [PINPAD] Error imprimiendo voucher:', result?.error);
+          return false;
+        }
       }
-      console.log('✅ [PINPAD] Voucher impreso');
+      console.log(`✅ [PINPAD] Voucher impreso (${htmls.length} copia/s)`);
       return true;
     }
 
@@ -50,7 +57,12 @@ export async function printPinPadVoucher(
         console.error('❌ [PINPAD] No se pudo abrir ventana para imprimir voucher');
         return false;
       }
-      printWindow.document.write(html);
+      // En navegador: todas las copias en una ventana, con salto de página entre ellas.
+      const bodies = htmls.map((h) => h.slice(h.indexOf('<body>') + 6, h.indexOf('</body>')));
+      printWindow.document.write(
+        htmls[0].split('<body>')[0] +
+          `<body>${bodies.join('<div style="page-break-after:always"></div>')}</body></html>`
+      );
       printWindow.document.close();
       printWindow.focus();
       setTimeout(() => printWindow.print(), 250);

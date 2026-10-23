@@ -3399,6 +3399,17 @@ export default function NewSaleScreen() {
 
                           const provider = pinpadProvider;
 
+                          // Voucher Izipay: copias comercio y cliente en la ticketera, aunque
+                          // falle el registro en el backend (el cliente ya fue cobrado).
+                          // OpenPay imprime desde su propio terminal.
+                          const izipayVoucher =
+                            provider === 'IZIPAY'
+                              ? (rawResponse as unknown as PinPadTransactionResponse)
+                              : undefined;
+                          if (izipayVoucher) {
+                            void printPinPadVoucher(izipayVoucher, { transactionAt: new Date() });
+                          }
+
                           if (!currentSession?.id) {
                             setPinPadProcessing(false);
                             setPinPadMessage(
@@ -3443,19 +3454,6 @@ export default function NewSaleScreen() {
                             setSelectedParentMethod(null);
                             setSelectedSubmethod(null);
 
-                            // Voucher Izipay: se imprime la copia cliente en la ticketera
-                            // (OpenPay imprime desde su propio terminal).
-                            const izipayVoucher =
-                              provider === 'IZIPAY'
-                                ? (rawResponse as unknown as PinPadTransactionResponse)
-                                : undefined;
-                            if (izipayVoucher) {
-                              void printPinPadVoucher(izipayVoucher, {
-                                copyLabel: 'COPIA CLIENTE',
-                                transactionAt: new Date(),
-                              });
-                            }
-
                             // Mostrar éxito brevemente y cerrar
                             setTimeout(() => {
                               setShowPinPadModal(false);
@@ -3468,10 +3466,7 @@ export default function NewSaleScreen() {
                                       {
                                         text: 'Reimprimir voucher',
                                         onPress: () => {
-                                          void printPinPadVoucher(izipayVoucher, {
-                                            copyLabel: 'COPIA CLIENTE',
-                                            reprint: true,
-                                          });
+                                          void printPinPadVoucher(izipayVoucher, { reprint: true });
                                         },
                                       },
                                       { text: 'OK' },
